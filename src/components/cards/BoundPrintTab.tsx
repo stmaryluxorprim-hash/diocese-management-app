@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Loader2, Printer, Search, CheckSquare, Square, Users, Inbox, Trash2, X, IdCard } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { fetchAllEnrollments, cachedLookup } from '@/lib/queries';
+import { fetchAllEnrollments, fetchAllRows, cachedLookup } from '@/lib/queries';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import type { Church, Service, ClassRoom, EnrollmentWithPerson, CardPrintRequest } from '@/lib/types';
 import type { CardDesign, CardPrintSettings, CardTemplate, PaperSize, PaperOrientation } from '@/lib/card-types';
@@ -95,6 +95,8 @@ export default function BoundPrintTab() {
   const [deleteAfterPrint, setDeleteAfterPrint] = useState(true);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  // how many enrollments have streamed in so far (big scopes load in pages)
+  const [loadedCount, setLoadedCount] = useState(0);
   const [printing, setPrinting] = useState(false);
 
   // ---------- print settings (page-level, persisted locally) ----------
@@ -121,21 +123,26 @@ export default function BoundPrintTab() {
 
   // ---------- load everything ----------
   const load = useCallback(async () => {
+    setLoadedCount(0);
     const [tp, enr, ch, sv, cl, rq] = await Promise.all([
       supabase.from('card_templates').select('*').order('edited_at', { ascending: false }),
-      // Only the SELECTED scope, paged server-side, capped at 5000 rows
-      fetchAllEnrollments(supabase, { church: churchFilter, service: serviceFilter, class: classFilter }),
+      // Only the SELECTED scope — ALL of it, paged server-side (no cap):
+      // a church-wide print must include every child.
+      fetchAllEnrollments(supabase, { church: churchFilter, service: serviceFilter, class: classFilter }, { onProgress: setLoadedCount }),
       cachedLookup<Church>(supabase, 'churches'),
       cachedLookup<Service>(supabase, 'services'),
       cachedLookup<ClassRoom>(supabase, 'classes'),
-      supabase.from('card_print_requests').select('*').order('created_at', { ascending: false }),
+      // the whole queue too — a bare select() is cut at 1000 by PostgREST
+      fetchAllRows<CardPrintRequest>((from, to) =>
+        supabase.from('card_print_requests').select('*').order('created_at', { ascending: false }).order('id').range(from, to)
+      ).catch(() => [] as CardPrintRequest[]),
     ]);
     setTemplates((tp.data ?? []) as CardTemplate[]);
     setEnrollments(enr);
     setChurches(ch);
     setServices(sv);
     setClasses(cl);
-    setRequests((rq.data ?? []) as CardPrintRequest[]);
+    setRequests(rq);
     setLoading(false);
   }, [supabase, churchFilter, serviceFilter, classFilter]);
 
@@ -656,7 +663,10 @@ export default function BoundPrintTab() {
             />
           </div>
           {loading ? (
-            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary-500" /></div>
+            <div className="flex flex-col items-center justify-center gap-2 py-8 text-xs font-bold text-slate-500">
+              <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
+              {loadedCount > 0 && <span className="tabular-nums">تم تحميل {loadedCount.toLocaleString('ar-EG')}…</span>}
+            </div>
           ) : (
             <ul className="max-h-64 space-y-1 overflow-y-auto">
               {filtered.map((e) => {

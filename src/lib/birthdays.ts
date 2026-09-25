@@ -141,9 +141,20 @@ const scopeArgs = (scope: ScopeSelection) => ({
 export async function fetchBirthdaysInMonth(
   supabase: SupabaseClient, year: number, month: number, scope: ScopeSelection = {}
 ): Promise<BirthdayRow[]> {
-  const { data, error } = await supabase.rpc('birthdays_in_month', { p_year: year, p_month: month, ...scopeArgs(scope) });
-  if (error) throw error;
-  return ((data ?? []) as BirthdayRow[]).map((r) => ({ ...r, greetings: (r.greetings ?? []) as BirthdayGreeting[] }));
+  // Set-returning RPCs are cut at PostgREST `max_rows` (1000) like tables —
+  // page through so a big church's month (or the printing tab) gets everyone.
+  const out: BirthdayRow[] = [];
+  const size = 500;
+  for (let from = 0; ; from += size) {
+    const { data, error } = await supabase
+      .rpc('birthdays_in_month', { p_year: year, p_month: month, ...scopeArgs(scope) })
+      .range(from, from + size - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as BirthdayRow[];
+    out.push(...rows);
+    if (rows.length < size) break;
+  }
+  return out.map((r) => ({ ...r, greetings: (r.greetings ?? []) as BirthdayGreeting[] }));
 }
 
 export async function fetchUpcomingBirthdays(

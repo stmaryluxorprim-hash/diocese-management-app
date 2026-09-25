@@ -40,7 +40,7 @@ import {
   fetchEnrollmentsPage, fetchMyGroupIds, fetchMyGroupEnrollments, cachedLookup, ALL, PAGE_SIZE, type EnrollmentKind,
 } from '@/lib/queries';
 import { useNavLabel } from '@/lib/customization-context';
-import { pickScopedDefault } from '@/lib/defaults';
+import { pickScopedDefault, effectiveScope } from '@/lib/defaults';
 
 type AttendanceMode = 'add' | 'remove';
 type PointsMode = 'add' | 'subtract';
@@ -565,9 +565,13 @@ export default function ChildrenPage() {
   // the scope selectors change, unless the servant picked one himself and it
   // is still valid for the scope.
   const oneChurch = churches.length === 1 ? churches[0].id : profile?.church_id ?? null;
+  // EFFECTIVE scope: a level with a single option is shown as a disabled
+  // selector that still holds ALL — resolve it to that option, so a servant
+  // with one church / service / class gets his class (or service) default
+  // preselected exactly as if he had picked them by hand.
   const scopeSel = useMemo(
-    () => ({ church: churchFilter, service: serviceFilter, class: classFilter }),
-    [churchFilter, serviceFilter, classFilter]
+    () => effectiveScope({ church: churchFilter, service: serviceFilter, class: classFilter }, churches, services, classes),
+    [churchFilter, serviceFilter, classFilter, churches, services, classes]
   );
   // NOTE: this is the ONLY place that writes the selection automatically.
   // It must use the functional updater (reads the REAL current value) and

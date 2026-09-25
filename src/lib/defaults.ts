@@ -32,6 +32,39 @@ export interface DefaultSelection {
 const isSet = (v: string | undefined | null): v is string => !!v && v !== ALL;
 
 /**
+ * The scope the servant EFFECTIVELY works in.
+ *
+ * The selectors keep `ALL` when a level has a single option — the dropdown
+ * is disabled and shows that option's name, so the servant never "picks"
+ * it. A class servant therefore sits on (ALL, ALL, ALL) although he can only
+ * mean his one church → one service → one class. Resolve each level to the
+ * only visible option so the default resolver treats it as selected.
+ *
+ * `services` / `classes` are the lists the page shows in the dropdowns after
+ * cascading (visibleServices / visibleClasses) — already narrowed by the
+ * parent levels and by RLS.
+ */
+export function effectiveScope(
+  sel: DefaultSelection,
+  churches: { id: string }[],
+  services: { id: string; church_id: string }[],
+  classes: { id: string; church_id: string; service_id: string }[]
+): DefaultSelection {
+  let church = isSet(sel.church) ? sel.church : churches.length === 1 ? churches[0].id : ALL;
+  const svcs = isSet(church) ? services.filter((s) => s.church_id === church) : services;
+  const service = isSet(sel.service) ? sel.service : svcs.length === 1 ? svcs[0].id : ALL;
+  const cls0 = classes.filter((c) => (!isSet(church) || c.church_id === church) && (!isSet(service) || c.service_id === service));
+  const cls = isSet(sel.class) ? sel.class : cls0.length === 1 ? cls0[0].id : ALL;
+  // a single visible service / class pins its church even when several
+  // churches are listed (the servant can only mean that one)
+  if (!isSet(church)) {
+    const via = (isSet(cls) ? classes.find((c) => c.id === cls) : undefined) ?? (isSet(service) ? services.find((s) => s.id === service) : undefined);
+    if (via) church = via.church_id;
+  }
+  return { church, service, class: cls };
+}
+
+/**
  * Pick the default row for the current selection.
  *
  * - Class chosen   → its class default, else the service default, else the church default.
@@ -40,6 +73,10 @@ const isSet = (v: string | undefined | null): v is string => !!v && v !== ALL;
  * - Nothing chosen → when exactly ONE church is visible to the user (RLS) we
  *   resolve as if that church were selected; otherwise no default (we cannot
  *   guess which church the servant means).
+ *
+ * Callers should pass the EFFECTIVE selection (see `effectiveScope`) so a
+ * servant whose only service / class is shown as a disabled selector gets
+ * the service- / class-level default too — not just the church-wide one.
  *
  * `rows` is the full lookup list (already RLS-scoped); only rows whose scope
  * covers the selection are considered, so the picked row is always present in
