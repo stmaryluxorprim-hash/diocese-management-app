@@ -14,6 +14,7 @@ import {
   Church, Layers, School, CalendarDays, Coins, PhoneCall, UserCheck, ShieldCheck,
   QrCode, BarChart3, FileSpreadsheet, ClipboardList, KeyRound, ClipboardCheck, ListOrdered, Percent, Lock, FileUp, FileDown, PieChart,
   Library, BookOpen, History, Eye, Cog, FileBarChart2, LayoutTemplate, Printer, UsersRound, DoorOpen,
+  Plus, ArrowUpDown, Check, XCircle,
 } from 'lucide-react';
 
 export interface PermissionGroup {
@@ -35,11 +36,14 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   { key: 'scanner', label: 'الماسح', icon: ScanLine, color: 'text-orange-600' },
   { key: 'stats', label: 'الإحصائيات', icon: BarChart3, color: 'text-violet-600' },
   { key: 'structure', label: 'البنية (كنائس · خدمات · فصول)', icon: Church, color: 'text-emerald-600' },
-  { key: 'activity', label: 'المناسبات والأسباب ونتائج الافتقاد', icon: CalendarDays, color: 'text-cyan-600' },
+  { key: 'events', label: 'المناسبات', icon: CalendarDays, color: 'text-violet-600' },
+  { key: 'causes', label: 'أسباب النقاط', icon: Coins, color: 'text-amber-600' },
+  { key: 'feedbacks', label: 'نتائج الافتقاد', icon: PhoneCall, color: 'text-teal-600' },
+  { key: 'data_requests', label: 'طلبات تعديل البيانات', icon: ClipboardList, color: 'text-cyan-600' },
   { key: 'servants', label: 'الخدام', icon: ShieldCheck, color: 'text-rose-600' },
   { key: 'results', label: 'نتائج الامتحانات', icon: ClipboardCheck, color: 'text-emerald-600' },
   { key: 'library', label: 'المكتبة', icon: Library, color: 'text-lime-700' },
-  { key: 'activity', label: 'سجل النشاط', icon: History, color: 'text-slate-700' },
+  { key: 'activity_log', label: 'سجل النشاط', icon: History, color: 'text-slate-700' },
   { key: 'reports', label: 'تقارير وجداول', icon: FileBarChart2, color: 'text-fuchsia-600' },
   { key: 'family', label: 'العائلات', icon: UsersRound, color: 'text-teal-700' },
   { key: 'access', label: 'التحكم في الدخول', icon: DoorOpen, color: 'text-emerald-700' },
@@ -69,11 +73,33 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'structure.services', group: 'structure', label: 'إدارة الخدمات', desc: 'إضافة وتعديل وحذف الخدمات' },
   { key: 'structure.classes', group: 'structure', label: 'إدارة الفصول', desc: 'إضافة وتعديل وحذف الفصول' },
 
-  // ---- المناسبات · الأسباب · نتائج الافتقاد ----
-  { key: 'activity.events', group: 'activity', label: 'إدارة المناسبات', desc: 'المناسبات وجداولها ونقاطها' },
-  { key: 'activity.causes', group: 'activity', label: 'إدارة أسباب النقاط', desc: 'أسباب إضافة / خصم النقاط' },
-  { key: 'activity.feedbacks', group: 'activity', label: 'إدارة نتائج الافتقاد', desc: 'نتائج مكالمات المتابعة' },
-  { key: 'activity.data_requests', group: 'activity', label: 'طلبات تعديل البيانات', desc: 'قبول / رفض طلبات المخدومين' },
+  // ---- عناصر النشاط (20260925130000) — managers hold them all; a class
+  // servant VIEWS by default (he needs the event on the scanner) and needs
+  // a profile for every write. The old coarse keys `activity.events` /
+  // `activity.causes` / `activity.feedbacks` / `activity.data_requests`
+  // are still honoured (⇒ every fine key of that item) — see LEGACY_ACTIVITY_KEYS.
+  { key: 'activity.events.view', group: 'events', label: 'عرض المناسبات', desc: 'رؤية مناسبات نطاقه (افتراضي لكل خادم)' },
+  { key: 'activity.events.add', group: 'events', label: 'إضافة مناسبة', desc: 'إنشاء مناسبة جديدة في نطاقه' },
+  { key: 'activity.events.edit', group: 'events', label: 'تعديل مناسبة', desc: 'الاسم · النطاق · الجدول · النقاط' },
+  { key: 'activity.events.delete', group: 'events', label: 'حذف مناسبة', desc: 'إزالة المناسبة — سجلات الحضور تبقى' },
+  { key: 'activity.events.set_default', group: 'events', label: 'تحديد المناسبة الافتراضية', desc: 'تشغيل / إيقاف «افتراضية» لنطاقها' },
+
+  { key: 'activity.causes.view', group: 'causes', label: 'عرض أسباب النقاط', desc: 'رؤية أسباب نطاقه (افتراضي لكل خادم)' },
+  { key: 'activity.causes.add', group: 'causes', label: 'إضافة سبب', desc: 'إنشاء سبب إضافة / خصم جديد' },
+  { key: 'activity.causes.edit', group: 'causes', label: 'تعديل سبب', desc: 'الاسم · النطاق · النقاط · طريقة النقاط' },
+  { key: 'activity.causes.delete', group: 'causes', label: 'حذف سبب', desc: 'إزالة السبب — سجل النقاط يبقى' },
+  { key: 'activity.causes.set_default', group: 'causes', label: 'تحديد السبب الافتراضي', desc: 'تشغيل / إيقاف «افتراضي» لنطاقه' },
+
+  { key: 'activity.feedbacks.view', group: 'feedbacks', label: 'عرض نتائج الافتقاد', desc: 'رؤية نتائج نطاقه (افتراضي لكل خادم)' },
+  { key: 'activity.feedbacks.add', group: 'feedbacks', label: 'إضافة نتيجة', desc: 'نتيجة افتقاد جديدة باسم ولون وأيقونة' },
+  { key: 'activity.feedbacks.edit', group: 'feedbacks', label: 'تعديل نتيجة', desc: 'الاسم · اللون · الأيقونة · النطاق · المناسبة' },
+  { key: 'activity.feedbacks.delete', group: 'feedbacks', label: 'حذف نتيجة', desc: 'إزالة النتيجة — المكالمات المسجلة تبقى' },
+  { key: 'activity.feedbacks.reorder', group: 'feedbacks', label: 'ترتيب النتائج', desc: 'تحريك النتائج لأعلى / لأسفل' },
+
+  { key: 'activity.data_requests.view', group: 'data_requests', label: 'عرض الطلبات', desc: 'رؤية طلبات مخدومي نطاقه (افتراضي لكل خادم)' },
+  { key: 'activity.data_requests.approve', group: 'data_requests', label: 'الموافقة على طلب', desc: 'تطبيق التعديل على بيانات المخدوم' },
+  { key: 'activity.data_requests.reject', group: 'data_requests', label: 'رفض طلب', desc: 'رفض الطلب مع ملاحظة' },
+  { key: 'activity.data_requests.delete', group: 'data_requests', label: 'حذف طلب', desc: 'إزالة طلب من السجل' },
 
   // ---- الخدام ----
   { key: 'servants.view', group: 'servants', label: 'عرض الخدام', desc: 'قائمة الخدام في نطاقه' },
@@ -104,8 +130,8 @@ export const PERMISSIONS: PermissionDef[] = [
   // ---- سجل النشاط (0047) — owner + church managers see everything in
   // their church by default; service managers see their service; class
   // servants need `activity.view` ----
-  { key: 'activity.view', group: 'activity', label: 'عرض سجل النشاط', desc: 'رؤية العمليات في نطاقه (خادم الفصل يحتاجها؛ المديرون يملكونها)' },
-  { key: 'activity.view_all', group: 'activity', label: 'عرض سجل الكنيسة كاملاً', desc: 'مسؤول الخدمة / خادم الفصل يرى كل عمليات كنيسته لا نطاقه فقط' },
+  { key: 'activity.view', group: 'activity_log', label: 'عرض سجل النشاط', desc: 'رؤية العمليات في نطاقه (خادم الفصل يحتاجها؛ المديرون يملكونها)' },
+  { key: 'activity.view_all', group: 'activity_log', label: 'عرض سجل الكنيسة كاملاً', desc: 'مسؤول الخدمة / خادم الفصل يرى كل عمليات كنيسته لا نطاقه فقط' },
 
   // ---- تقارير وجداول (0050) — every servant who sees the module can build
   // and export reports of HIS scope (RLS bounds the data); saving templates
@@ -128,6 +154,38 @@ export const PERMISSION_BY_KEY: Record<string, PermissionDef> = Object.fromEntri
   PERMISSIONS.map((p) => [p.key, p])
 );
 
+// ---------- Activity items: legacy coarse keys → fine keys ----------
+/** Kept for profiles saved before 20260925130000: each coarse key implies every fine key of its item. */
+export const LEGACY_ACTIVITY_KEYS: Record<string, string> = {
+  'activity.events': 'المناسبات (كل الصلاحيات — مفتاح قديم)',
+  'activity.causes': 'أسباب النقاط (كل الصلاحيات — مفتاح قديم)',
+  'activity.feedbacks': 'نتائج الافتقاد (كل الصلاحيات — مفتاح قديم)',
+  'activity.data_requests': 'طلبات تعديل البيانات (كل الصلاحيات — مفتاح قديم)',
+};
+
+export type ActivityItem = 'events' | 'causes' | 'feedbacks' | 'data_requests';
+export type ActivityAction = 'view' | 'add' | 'edit' | 'delete' | 'set_default' | 'reorder' | 'approve' | 'reject';
+
+/** The legacy coarse key of a fine activity key (`activity.events.add` → `activity.events`). */
+export const activityLegacyKey = (key: string) => key.replace(/^(activity\.(?:events|causes|feedbacks|data_requests))\..*$/, '$1');
+
+/**
+ * Mirror of SQL `activity_item_can(key)`: owner / church manager / service
+ * manager hold everything; a class servant views by default and needs the
+ * fine key or the legacy coarse key for any write.
+ */
+export function activityItemCan(role: string | null | undefined, keys: Set<string>, item: ActivityItem, action: ActivityAction): boolean {
+  if (!role) return false;
+  if (role === 'owner' || role === 'church_manager' || role === 'service_manager') return true;
+  if (role !== 'class_servant') return false;
+  if (action === 'view') return true;
+  const key = `activity.${item}.${action}`;
+  return hasKey(keys, key) || hasKey(keys, activityLegacyKey(key));
+}
+
+/** Label of any key held by a profile — registry first, then the legacy coarse keys. */
+export const permissionLabel = (key: string) => PERMISSION_BY_KEY[key]?.label ?? LEGACY_ACTIVITY_KEYS[key] ?? key;
+
 export const permissionsOfGroup = (group: string) => PERMISSIONS.filter((p) => p.group === group);
 
 // A few icons the owner module can use per permission key (fallback per group)
@@ -147,10 +205,25 @@ export const PERMISSION_ICONS: Record<string, LucideIcon> = {
   'structure.churches': Church,
   'structure.services': Layers,
   'structure.classes': School,
-  'activity.events': CalendarDays,
-  'activity.causes': Coins,
-  'activity.feedbacks': PhoneCall,
-  'activity.data_requests': ClipboardList,
+  'activity.events.view': Eye,
+  'activity.events.add': Plus,
+  'activity.events.edit': Pencil,
+  'activity.events.delete': Trash2,
+  'activity.events.set_default': Star,
+  'activity.causes.view': Eye,
+  'activity.causes.add': Plus,
+  'activity.causes.edit': Pencil,
+  'activity.causes.delete': Trash2,
+  'activity.causes.set_default': Star,
+  'activity.feedbacks.view': Eye,
+  'activity.feedbacks.add': Plus,
+  'activity.feedbacks.edit': Pencil,
+  'activity.feedbacks.delete': Trash2,
+  'activity.feedbacks.reorder': ArrowUpDown,
+  'activity.data_requests.view': Eye,
+  'activity.data_requests.approve': Check,
+  'activity.data_requests.reject': XCircle,
+  'activity.data_requests.delete': Trash2,
   'servants.view': Users,
   'servants.approve': UserCheck,
   'servants.manage': ShieldCheck,

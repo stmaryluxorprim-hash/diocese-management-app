@@ -15,7 +15,7 @@ import { OwnerGate } from '@/components/ModuleGate';
 import { createClient } from '@/lib/supabase/client';
 import { usePermissions } from '@/lib/permissions-context';
 import {
-  PERMISSION_GROUPS, PERMISSIONS, PERMISSION_BY_KEY, PERMISSION_ICONS, permissionsOfGroup,
+  PERMISSION_GROUPS, PERMISSIONS, PERMISSION_ICONS, permissionsOfGroup, permissionLabel, LEGACY_ACTIVITY_KEYS,
 } from '@/lib/permissions';
 import type { PermissionProfile } from '@/lib/types';
 
@@ -94,7 +94,7 @@ export default function OwnerPermissionsPage() {
                     <div className="mt-2 flex flex-wrap gap-1">
                       {p.permissions.slice(0, 8).map((k) => (
                         <span key={k} className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-bold text-violet-700">
-                          {PERMISSION_BY_KEY[k]?.label ?? k}
+                          {permissionLabel(k)}
                         </span>
                       ))}
                       {p.permissions.length > 8 && (
@@ -141,7 +141,17 @@ function ProfileModal({
   const [name, setName] = useState(profile?.name ?? '');
   const [description, setDescription] = useState(profile?.description ?? '');
   const [color, setColor] = useState(profile?.color ?? COLORS[0]);
-  const [keys, setKeys] = useState<Set<string>>(new Set(profile?.permissions ?? []));
+  // Legacy coarse activity keys (saved before 20260925130000) are expanded
+  // to their fine keys when the profile is opened, so the owner sees and
+  // saves the granular form.
+  const [keys, setKeys] = useState<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const k of profile?.permissions ?? []) {
+      if (LEGACY_ACTIVITY_KEYS[k]) PERMISSIONS.filter((p) => p.key.startsWith(`${k}.`)).forEach((p) => s.add(p.key));
+      else s.add(k);
+    }
+    return s;
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 

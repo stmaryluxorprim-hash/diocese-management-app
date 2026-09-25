@@ -9,10 +9,11 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
-  PhoneCall, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Palette, ChevronUp, ChevronDown,
+  PhoneCall, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Palette, ChevronUp, ChevronDown, Eye,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { useAuth } from '@/lib/auth-context';
+import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import { invalidateLookup } from '@/lib/queries';
@@ -29,6 +30,11 @@ const ALL = 'all';
 
 export default function CallFeedbacksPage() {
   const { profile } = useAuth();
+  const { activityCan } = usePermissions();
+  const canAdd = activityCan('feedbacks', 'add');
+  const canEdit = activityCan('feedbacks', 'edit');
+  const canDelete = activityCan('feedbacks', 'delete');
+  const canReorder = activityCan('feedbacks', 'reorder');
   const supabase = createClient();
   const [feedbacks, setFeedbacks] = useState<CallFeedback[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
@@ -105,10 +111,18 @@ export default function CallFeedbacksPage() {
             <span className="badge bg-teal-100 text-teal-700">{feedbacks.length}</span>
           </h2>
         </div>
-        <button id="add-feedback-btn" onClick={() => setShowAdd(true)} className="btn-primary !py-2 !px-3 flex items-center gap-1 text-sm">
-          <Plus className="h-4 w-4" /> إضافة
-        </button>
+        {canAdd && (
+          <button id="add-feedback-btn" onClick={() => setShowAdd(true)} className="btn-primary !py-2 !px-3 flex items-center gap-1 text-sm">
+            <Plus className="h-4 w-4" /> إضافة
+          </button>
+        )}
       </section>
+
+      {!canAdd && !canEdit && !canDelete && !canReorder && (
+        <p className="mb-3 flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2.5 text-xs font-bold text-slate-500">
+          <Eye className="h-4 w-4" /> عرض فقط — الإضافة والتعديل تحتاج ملف صلاحيات من مسؤولك
+        </p>
+      )}
 
       <p className="mb-4 rounded-2xl bg-teal-50 px-4 py-3 text-xs font-bold text-teal-700">
         بعد الاتصال بالمخدوم للافتقاد يختار الخادم نتيجة الافتقاد (مثال: سيأتي، مريض، لم يرد، مسافر...).
@@ -148,8 +162,11 @@ export default function CallFeedbacksPage() {
                   <span className="badge bg-violet-50 text-violet-600">{eventLabel(fb)}</span>
                 </p>
               </div>
+              {(canEdit || canDelete || canReorder) && (
               <div className="flex shrink-0 flex-col gap-1">
+                {(canEdit || canDelete) && (
                 <div className="flex gap-1.5">
+                  {canEdit && (
                   <button
                     onClick={() => setEditing(fb)}
                     aria-label={`تعديل ${fb.name}`}
@@ -157,6 +174,8 @@ export default function CallFeedbacksPage() {
                   >
                     <Pencil className="h-4 w-4" />
                   </button>
+                  )}
+                  {canDelete && (
                   <button
                     onClick={() => remove(fb)}
                     aria-label={`حذف ${fb.name}`}
@@ -164,7 +183,10 @@ export default function CallFeedbacksPage() {
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
+                  )}
                 </div>
+                )}
+                {canReorder && (
                 <div className="flex gap-1.5">
                   <button
                     onClick={() => move(fb, -1)}
@@ -183,7 +205,9 @@ export default function CallFeedbacksPage() {
                     <ChevronDown className="mx-auto h-4 w-4" />
                   </button>
                 </div>
+                )}
               </div>
+              )}
             </li>
           ); }}
         />
