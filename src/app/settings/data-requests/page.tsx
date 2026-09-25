@@ -10,11 +10,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {
-  ArrowRight, Check, X, Loader2, Inbox, User, Camera, Pencil, Clock, Layers, ChevronLeft, History,
+  ArrowRight, Check, X, Loader2, Inbox, User, Camera, Pencil, Clock, Layers, ChevronLeft, History, Eye,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { ModalFrame } from '@/components/PersonDataModals';
 import { useAuth } from '@/lib/auth-context';
+import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import {
@@ -49,6 +50,9 @@ const display = (field: string, v: string | null | undefined) => {
 
 export default function DataRequestsPage() {
   const { profile } = useAuth();
+  const { activityCan } = usePermissions();
+  const canApprove = activityCan('data_requests', 'approve');
+  const canReject = activityCan('data_requests', 'reject');
   const supabase = useMemo(() => createClient(), []);
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -211,22 +215,32 @@ export default function DataRequestsPage() {
 
               {/* Actions / decision */}
               {r.status === 'pending' ? (
-                <div className="mt-3 flex gap-2">
-                  <button
-                    id={`dcr-reject-${r.id}`}
-                    onClick={() => { setDecide({ row: r, approve: false }); setNote(''); setError(''); }}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-red-50 px-3 py-2.5 text-sm font-extrabold text-red-600 hover:bg-red-100"
-                  >
-                    <X className="h-4 w-4" /> رفض
-                  </button>
-                  <button
-                    id={`dcr-approve-${r.id}`}
-                    onClick={() => { setDecide({ row: r, approve: true }); setNote(''); setError(''); }}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-500 px-3 py-2.5 text-sm font-extrabold text-white hover:bg-emerald-600"
-                  >
-                    <Check className="h-4 w-4" /> موافقة
-                  </button>
-                </div>
+                canApprove || canReject ? (
+                  <div className="mt-3 flex gap-2">
+                    {canReject && (
+                      <button
+                        id={`dcr-reject-${r.id}`}
+                        onClick={() => { setDecide({ row: r, approve: false }); setNote(''); setError(''); }}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-red-50 px-3 py-2.5 text-sm font-extrabold text-red-600 hover:bg-red-100"
+                      >
+                        <X className="h-4 w-4" /> رفض
+                      </button>
+                    )}
+                    {canApprove && (
+                      <button
+                        id={`dcr-approve-${r.id}`}
+                        onClick={() => { setDecide({ row: r, approve: true }); setNote(''); setError(''); }}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-500 px-3 py-2.5 text-sm font-extrabold text-white hover:bg-emerald-600"
+                      >
+                        <Check className="h-4 w-4" /> موافقة
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-3 flex items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-bold text-slate-500">
+                    <Eye className="h-3.5 w-3.5" /> عرض فقط — الموافقة / الرفض تحتاج ملف صلاحيات
+                  </p>
+                )
               ) : (
                 <div className="mt-3 flex items-center justify-between text-[11px] font-bold text-slate-400">
                   <span className={`badge ${STATUS_STYLE[r.status]}`}>{REQUEST_STATUS_LABELS[r.status]}</span>

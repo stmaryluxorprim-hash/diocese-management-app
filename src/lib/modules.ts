@@ -193,9 +193,13 @@ export interface ModuleAccess {
   church_id: string | null;   // null = every church
   service_id: string | null;  // null = all services of the church
   class_id: string | null;    // null = all classes of the service
+  /** PERSON grant (20260925130000): only this servant sees the module; scope columns are null */
+  servant_id?: string | null;
   created_at: string;
   created_by: string | null;
 }
+
+export const isPersonGrant = (g: ModuleAccess) => !!g.servant_id;
 
 /**
  * Mirror of the SQL `scope_overlaps` + `module_visible` rules so the UI can
@@ -203,6 +207,7 @@ export interface ModuleAccess {
  */
 export function grantOverlapsProfile(g: ModuleAccess, p: Profile): boolean {
   if (p.role === 'owner') return true;
+  if (isPersonGrant(g)) return g.servant_id === p.id;
   if (g.church_id === null) return true;
   if (g.church_id !== p.church_id) return false;
   if (p.role === 'church_manager') return true;

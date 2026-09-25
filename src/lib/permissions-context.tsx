@@ -12,7 +12,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { useDebouncedRealtime } from '@/lib/realtime';
-import { hasKey, resolvePermissionKeys } from '@/lib/permissions';
+import { hasKey, resolvePermissionKeys, activityItemCan, type ActivityItem, type ActivityAction } from '@/lib/permissions';
 import type { PermissionGrant, PermissionProfile } from '@/lib/types';
 
 interface PermissionsState {
@@ -23,6 +23,12 @@ interface PermissionsState {
   /** resolved keys of the signed-in servant ('*' = owner) */
   keys: Set<string>;
   has: (key: string) => boolean;
+  /**
+   * Activity items (مناسبات · أسباب · نتائج افتقاد · طلبات بيانات) — mirror of SQL
+   * `activity_item_can`: managers everything, class servant views by default
+   * and needs a profile (fine or legacy key) for writes.
+   */
+  activityCan: (item: ActivityItem, action: ActivityAction) => boolean;
   /** profiles held by the signed-in servant */
   myProfiles: PermissionProfile[];
   loading: boolean;
@@ -34,6 +40,7 @@ const PermissionsContext = createContext<PermissionsState>({
   grants: [],
   keys: new Set(),
   has: () => false,
+  activityCan: () => false,
   myProfiles: [],
   loading: true,
   reload: async () => {},
@@ -77,6 +84,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       grants,
       keys,
       has: (key) => hasKey(keys, key),
+      activityCan: (item, action) => activityItemCan(profile?.role, keys, item, action),
       myProfiles: profiles.filter((p) => mineIds.has(p.id)),
       loading,
       reload,

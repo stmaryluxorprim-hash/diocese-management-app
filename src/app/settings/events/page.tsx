@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
-  CalendarDays, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Star, Clock,
+  CalendarDays, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Star, Clock, Eye, Lock,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { useAuth } from '@/lib/auth-context';
+import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import { ScopeGroups, ScopeGroupFilters, useScopeGroups, toLookups } from '@/components/ScopeGroups';
@@ -20,6 +21,11 @@ const ALL = 'all';
 
 export default function EventsPage() {
   const { profile } = useAuth();
+  const { activityCan } = usePermissions();
+  const canAdd = activityCan('events', 'add');
+  const canEdit = activityCan('events', 'edit');
+  const canDelete = activityCan('events', 'delete');
+  const canSetDefault = activityCan('events', 'set_default');
   const supabase = createClient();
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
@@ -79,10 +85,18 @@ export default function EventsPage() {
             <span className="badge bg-violet-100 text-violet-700">{events.length}</span>
           </h2>
         </div>
-        <button onClick={() => setShowAdd(true)} className="btn-primary !py-2 !px-3 flex items-center gap-1 text-sm">
-          <Plus className="h-4 w-4" /> إضافة
-        </button>
+        {canAdd && (
+          <button onClick={() => setShowAdd(true)} className="btn-primary !py-2 !px-3 flex items-center gap-1 text-sm">
+            <Plus className="h-4 w-4" /> إضافة
+          </button>
+        )}
       </section>
+
+      {!canAdd && !canEdit && !canDelete && (
+        <p className="mb-3 flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2.5 text-xs font-bold text-slate-500">
+          <Eye className="h-4 w-4" /> عرض فقط — الإضافة والتعديل تحتاج ملف صلاحيات من مسؤولك
+        </p>
+      )}
 
       <p className="mb-4 rounded-2xl bg-violet-50 px-4 py-3 text-xs font-bold text-violet-700">
         الحضور يُسجَّل على مناسبة (قداس، اجتماع، رحلة...). المناسبة قد تكون مرة واحدة أو أسبوعية،
@@ -126,22 +140,28 @@ export default function EventsPage() {
                 </p>
                 {ev.description && <p className="text-xs text-slate-500 mt-1">{ev.description}</p>}
               </div>
-              <div className="flex shrink-0 gap-1.5">
-                <button
-                  onClick={() => setEditing(ev)}
-                  aria-label={`تعديل ${ev.name}`}
-                  className="rounded-xl bg-violet-50 p-2 text-violet-600 hover:bg-violet-100 transition"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => remove(ev)}
-                  aria-label={`حذف ${ev.name}`}
-                  className="rounded-xl bg-red-50 p-2 text-red-600 hover:bg-red-100 transition"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
+              {(canEdit || canDelete) && (
+                <div className="flex shrink-0 gap-1.5">
+                  {canEdit && (
+                    <button
+                      onClick={() => setEditing(ev)}
+                      aria-label={`تعديل ${ev.name}`}
+                      className="rounded-xl bg-violet-50 p-2 text-violet-600 hover:bg-violet-100 transition"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => remove(ev)}
+                      aria-label={`حذف ${ev.name}`}
+                      className="rounded-xl bg-red-50 p-2 text-red-600 hover:bg-red-100 transition"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
             </li>
           )}
         />
@@ -154,6 +174,7 @@ export default function EventsPage() {
           churches={churches}
           services={services}
           classes={classes}
+          canSetDefault={canSetDefault}
           onClose={() => setShowAdd(false)}
           onSaved={() => { setShowAdd(false); load(); }}
         />
@@ -165,6 +186,7 @@ export default function EventsPage() {
           churches={churches}
           services={services}
           classes={classes}
+          canSetDefault={canSetDefault}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
         />
@@ -174,13 +196,15 @@ export default function EventsPage() {
 }
 
 function EventModal({
-  mode, event, churches, services, classes, onClose, onSaved,
+  mode, event, churches, services, classes, canSetDefault, onClose, onSaved,
 }: {
   mode: 'add' | 'edit';
   event?: AppEvent;
   churches: Church[];
   services: Service[];
   classes: ClassRoom[];
+  /** `activity.events.set_default` — without it the default flag is read-only */
+  canSetDefault: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -424,25 +448,30 @@ function EventModal({
             </div>
           )}
 
-          {/* Default radio — preselected on children & scanner pages for THIS scope (0048) */}
-          <label className="flex flex-col gap-1 rounded-xl bg-emerald-50 px-3 py-2.5 text-sm font-bold text-emerald-700 cursor-pointer">
+          {/* Default radio — preselected on children & scanner pages for THIS scope (0048).
+              Needs `activity.events.set_default`; otherwise shown locked. */}
+          <label className={`flex flex-col gap-1 rounded-xl px-3 py-2.5 text-sm font-bold ${canSetDefault ? 'bg-emerald-50 text-emerald-700 cursor-pointer' : 'bg-slate-50 text-slate-400'}`}>
             <span className="flex items-center gap-2">
               <input
                 id="event-default-radio"
                 type="radio"
                 checked={isDefault}
-                onClick={() => setIsDefault((v) => !v)}
+                disabled={!canSetDefault}
+                onClick={() => { if (canSetDefault) setIsDefault((v) => !v); }}
                 onChange={() => {}}
                 className="h-4 w-4 accent-emerald-600"
               />
+              {!canSetDefault && <Lock className="h-3.5 w-3.5" />}
               {serviceId === ALL || !serviceId
                 ? 'جعلها المناسبة الافتراضية للكنيسة'
                 : classId === ALL || !classId
                   ? 'جعلها المناسبة الافتراضية للخدمة'
                   : 'جعلها المناسبة الافتراضية للفصل'}
             </span>
-            <span className="text-xs font-normal text-emerald-600/80">
-              تُختار تلقائياً عند تسجيل الحضور. الأولوية: افتراضي الفصل ← ثم الخدمة ← ثم الكنيسة.
+            <span className={`text-xs font-normal ${canSetDefault ? 'text-emerald-600/80' : 'text-slate-400'}`}>
+              {canSetDefault
+                ? 'تُختار تلقائياً عند تسجيل الحضور. الأولوية: افتراضي الفصل ← ثم الخدمة ← ثم الكنيسة.'
+                : 'تحديد الافتراضية يحتاج صلاحية «تحديد المناسبة الافتراضية»'}
             </span>
           </label>
 

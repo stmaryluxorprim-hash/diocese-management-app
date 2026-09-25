@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
-  Award, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Star,
+  Award, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Star, Eye, Lock,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { useAuth } from '@/lib/auth-context';
+import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import { ScopeGroups, ScopeGroupFilters, useScopeGroups, toLookups } from '@/components/ScopeGroups';
@@ -19,6 +20,11 @@ const ALL = 'all';
 
 export default function CausesPage() {
   const { profile } = useAuth();
+  const { activityCan } = usePermissions();
+  const canAdd = activityCan('causes', 'add');
+  const canEdit = activityCan('causes', 'edit');
+  const canDelete = activityCan('causes', 'delete');
+  const canSetDefault = activityCan('causes', 'set_default');
   const supabase = createClient();
   const [causes, setCauses] = useState<Cause[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
@@ -78,10 +84,18 @@ export default function CausesPage() {
             <span className="badge bg-amber-100 text-amber-700">{causes.length}</span>
           </h2>
         </div>
-        <button onClick={() => setShowAdd(true)} className="btn-primary !py-2 !px-3 flex items-center gap-1 text-sm">
-          <Plus className="h-4 w-4" /> إضافة
-        </button>
+        {canAdd && (
+          <button onClick={() => setShowAdd(true)} className="btn-primary !py-2 !px-3 flex items-center gap-1 text-sm">
+            <Plus className="h-4 w-4" /> إضافة
+          </button>
+        )}
       </section>
+
+      {!canAdd && !canEdit && !canDelete && (
+        <p className="mb-3 flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-2.5 text-xs font-bold text-slate-500">
+          <Eye className="h-4 w-4" /> عرض فقط — الإضافة والتعديل تحتاج ملف صلاحيات من مسؤولك
+        </p>
+      )}
 
       <p className="mb-4 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">
         النقاط تُسجَّل بسبب (حفظ آية، سلوك، مسابقة...) نطاقه فصل محدد أو كل الفصول أو كل الخدمات،
@@ -121,22 +135,28 @@ export default function CausesPage() {
                 </div>
                 {ca.description && <p className="text-xs text-slate-500 mt-1">{ca.description}</p>}
               </div>
-              <div className="flex shrink-0 gap-1.5">
-                <button
-                  onClick={() => setEditing(ca)}
-                  aria-label={`تعديل ${ca.name}`}
-                  className="rounded-xl bg-amber-50 p-2 text-amber-600 hover:bg-amber-100 transition"
-                >
-                  <Pencil className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={() => remove(ca)}
-                  aria-label={`حذف ${ca.name}`}
-                  className="rounded-xl bg-red-50 p-2 text-red-600 hover:bg-red-100 transition"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
+              {(canEdit || canDelete) && (
+                <div className="flex shrink-0 gap-1.5">
+                  {canEdit && (
+                    <button
+                      onClick={() => setEditing(ca)}
+                      aria-label={`تعديل ${ca.name}`}
+                      className="rounded-xl bg-amber-50 p-2 text-amber-600 hover:bg-amber-100 transition"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => remove(ca)}
+                      aria-label={`حذف ${ca.name}`}
+                      className="rounded-xl bg-red-50 p-2 text-red-600 hover:bg-red-100 transition"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
             </li>
           )}
         />
@@ -149,6 +169,7 @@ export default function CausesPage() {
           churches={churches}
           services={services}
           classes={classes}
+          canSetDefault={canSetDefault}
           onClose={() => setShowAdd(false)}
           onSaved={() => { setShowAdd(false); load(); }}
         />
@@ -160,6 +181,7 @@ export default function CausesPage() {
           churches={churches}
           services={services}
           classes={classes}
+          canSetDefault={canSetDefault}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
         />
@@ -169,13 +191,15 @@ export default function CausesPage() {
 }
 
 function CauseModal({
-  mode, cause, churches, services, classes, onClose, onSaved,
+  mode, cause, churches, services, classes, canSetDefault, onClose, onSaved,
 }: {
   mode: 'add' | 'edit';
   cause?: Cause;
   churches: Church[];
   services: Service[];
   classes: ClassRoom[];
+  /** `activity.causes.set_default` — without it the default flag is read-only */
+  canSetDefault: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -327,25 +351,30 @@ function CauseModal({
             </div>
           )}
 
-          {/* Default radio — preselected on children & scanner pages for THIS scope (0048) */}
-          <label className="flex flex-col gap-1 rounded-xl bg-emerald-50 px-3 py-2.5 text-sm font-bold text-emerald-700 cursor-pointer">
+          {/* Default radio — preselected on children & scanner pages for THIS scope (0048).
+              Needs `activity.causes.set_default`; otherwise shown locked. */}
+          <label className={`flex flex-col gap-1 rounded-xl px-3 py-2.5 text-sm font-bold ${canSetDefault ? 'bg-emerald-50 text-emerald-700 cursor-pointer' : 'bg-slate-50 text-slate-400'}`}>
             <span className="flex items-center gap-2">
               <input
                 id="cause-default-radio"
                 type="radio"
                 checked={isDefault}
-                onClick={() => setIsDefault((v) => !v)}
+                disabled={!canSetDefault}
+                onClick={() => { if (canSetDefault) setIsDefault((v) => !v); }}
                 onChange={() => {}}
                 className="h-4 w-4 accent-emerald-600"
               />
+              {!canSetDefault && <Lock className="h-3.5 w-3.5" />}
               {serviceId === ALL || !serviceId
                 ? 'جعله السبب الافتراضي للكنيسة'
                 : classId === ALL || !classId
                   ? 'جعله السبب الافتراضي للخدمة'
                   : 'جعله السبب الافتراضي للفصل'}
             </span>
-            <span className="text-xs font-normal text-emerald-600/80">
-              يُختار تلقائياً عند تسجيل النقاط. الأولوية: افتراضي الفصل ← ثم الخدمة ← ثم الكنيسة.
+            <span className={`text-xs font-normal ${canSetDefault ? 'text-emerald-600/80' : 'text-slate-400'}`}>
+              {canSetDefault
+                ? 'يُختار تلقائياً عند تسجيل النقاط. الأولوية: افتراضي الفصل ← ثم الخدمة ← ثم الكنيسة.'
+                : 'تحديد الافتراضي يحتاج صلاحية «تحديد السبب الافتراضي»'}
             </span>
           </label>
           <textarea className="input-field" placeholder="وصف السبب" rows={2} value={description}
