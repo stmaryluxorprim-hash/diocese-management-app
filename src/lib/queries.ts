@@ -135,27 +135,69 @@ export async function fetchMyGroupEnrollments(
 }
 
 /**
- * Fetch ALL enrollments of a scope in pages (used by the printing tabs,
- * which genuinely need the complete scoped set). Still filtered
- * server-side, and never more than `maxRows`.
+ * PostgREST caps every response at `max_rows` (1000 on Supabase). A page
+ * request MUST stay strictly below it: `fetchEnrollmentsPage` asks for
+ * `size + 1` rows to detect a next page, so with `size = 1000` the 1001st
+ * row was silently dropped → `hasMore` was always false → the printing tabs
+ * showed exactly 1000 children and nothing more. 500 (+1 probe) is well
+ * under the cap and keeps each payload light.
+ */
+export const FETCH_ALL_PAGE = 500;
+
+/** Safety net so a broken loop can never spin forever (≈ 100k rows). */
+const FETCH_ALL_MAX_PAGES = 200;
+
+/**
+ * Fetch ALL enrollments of a scope (used by the printing tabs, which
+ * genuinely need the complete scoped set — a church-wide print must
+ * include every child, not the first thousand). Pages of `FETCH_ALL_PAGE`
+ * are fetched sequentially until the server reports no more rows; still
+ * filtered server-side by church / service / class.
+ *
+ * `onProgress(loadedSoFar)` lets the caller show a counter while a big
+ * scope is streaming in.
  */
 export async function fetchAllEnrollments(
   supabase: SupabaseClient,
   scope: ScopeSelection,
-  maxRows = 5000,
-  kind: EnrollmentKind = 'child'
+  opts: { kind?: EnrollmentKind; onProgress?: (loaded: number) => void } = {}
 ): Promise<EnrollmentWithPerson[]> {
+  const kind = opts.kind ?? 'child';
   const out: EnrollmentWithPerson[] = [];
-  let page = 0;
-  // 1000 is PostgREST's default max-rows; stay under it.
-  const size = 1000;
-  while (out.length < maxRows) {
-    const { rows, hasMore } = await fetchEnrollmentsPage(supabase, scope, { page, pageSize: size, kind });
-    out.push(...rows);
+  const seen = new Set<string>();
+  for (let page = 0; page < FETCH_ALL_MAX_PAGES; page++) {
+    const { rows, hasMore } = await fetchEnrollmentsPage(supabase, scope, { page, pageSize: FETCH_ALL_PAGE, kind });
+    // rows are ordered totally (class, name, id) so duplicates across pages
+    // only appear if a row is inserted mid-way; skip them defensively.
+    for (const r of rows) if (!seen.has(r.id)) { seen.add(r.id); out.push(r); }
+    opts.onProgress?.(out.length);
     if (!hasMore) break;
-    page++;
   }
-  return out.slice(0, maxRows);
+  return out;
+}
+
+/**
+ * Page through ANY PostgREST query until it runs dry. `build(from, to)` must
+ * return the query with its filters + a TOTAL order (end with `.order('id')`)
+ * — `.range()` is applied here. Used where the complete set is genuinely
+ * needed (print queues, exports) and a bare `select()` would be silently cut
+ * at PostgREST's `max_rows` (1000).
+ */
+export async function fetchAllRows<T extends { id: string }>(
+  build: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+  pageSize = FETCH_ALL_PAGE
+): Promise<T[]> {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < FETCH_ALL_MAX_PAGES; page++) {
+    const from = page * pageSize;
+    const { data, error } = await build(from, from + pageSize - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as T[];
+    for (const r of rows) if (!seen.has(r.id)) { seen.add(r.id); out.push(r); }
+    if (rows.length < pageSize) break;
+  }
+  return out;
 }
 
 /**
