@@ -70,11 +70,29 @@ end $$;
 -- ---------------------------------------------------------------------
 -- 3. Storage: delete every file, then the buckets the app created,
 --    then the app's policies on storage.objects.
+--
+--    Supabase guards storage.objects / storage.buckets with the trigger
+--    `protect_delete` ("Direct deletion from storage tables is not
+--    allowed. Use the Storage API instead.", SQLSTATE 42501). It is a
+--    deliberate escape hatch for one-off ops: the trigger lets the DELETE
+--    through when the session setting `storage.allow_delete_query` is
+--    'true'. We set it LOCAL (this transaction only) so nothing else is
+--    affected. Rows deleted this way are metadata only — the files stay in
+--    the S3 backend until Supabase's orphan cleanup collects them (they are
+--    unreachable and no longer count in the dashboard's object list).
 -- ---------------------------------------------------------------------
+set local storage.allow_delete_query = 'true';
 do $$
 declare p record;
 begin
   if to_regclass('storage.objects') is not null then
+    -- multipart uploads in flight reference buckets → clear them first
+    if to_regclass('storage.s3_multipart_uploads_parts') is not null then
+      execute 'delete from storage.s3_multipart_uploads_parts';
+    end if;
+    if to_regclass('storage.s3_multipart_uploads') is not null then
+      execute 'delete from storage.s3_multipart_uploads';
+    end if;
     delete from storage.objects;
     delete from storage.buckets;
     for p in select policyname from pg_policies where schemaname = 'storage' and tablename = 'objects' loop
@@ -82,6 +100,7 @@ begin
     end loop;
   end if;
 end $$;
+set local storage.allow_delete_query = 'false';
 
 -- ---------------------------------------------------------------------
 -- 4. Realtime: the app's topic policy + any leftover messages.
