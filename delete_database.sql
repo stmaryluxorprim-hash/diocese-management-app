@@ -150,19 +150,33 @@ commit;
 
 -- ---------------------------------------------------------------------
 -- 7. Report — everything should read 0.
+--    Read-only. Every table is looked up dynamically so the report never
+--    fails on a project that lacks one of them (e.g. no
+--    supabase_migrations.schema_migrations when the migrations were applied
+--    from the SQL Editor instead of the CLI → shown as «n/a»).
 -- ---------------------------------------------------------------------
-select 'public tables'    as what, count(*) from pg_tables    where schemaname = 'public'
+create or replace function pg_temp.__count(tbl text) returns text language plpgsql as $$
+declare n bigint;
+begin
+  if to_regclass(tbl) is null then return 'n/a (table absent)'; end if;
+  execute format('select count(*) from %s', tbl) into n;
+  return n::text;
+end $$;
+
+select 'public tables'    as what, count(*)::text as count from pg_tables where schemaname = 'public'
 union all
-select 'public views',              count(*) from pg_views     where schemaname = 'public'
+select 'public views',              count(*)::text from pg_views where schemaname = 'public'
 union all
-select 'public functions',          count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'
+select 'public functions',          count(*)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'
 union all
-select 'public types',              count(*) from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typtype = 'e'
+select 'public types',              count(*)::text from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typtype = 'e'
 union all
-select 'auth users',                count(*) from auth.users
+select 'auth users',                pg_temp.__count('auth.users')
 union all
-select 'storage buckets',           count(*) from storage.buckets
+select 'storage buckets',           pg_temp.__count('storage.buckets')
 union all
-select 'storage objects',           count(*) from storage.objects
+select 'storage objects',           pg_temp.__count('storage.objects')
 union all
-select 'migration history rows',    coalesce((select count(*) from supabase_migrations.schema_migrations), 0);
+select 'cron jobs',                 pg_temp.__count('cron.job')
+union all
+select 'migration history rows',    pg_temp.__count('supabase_migrations.schema_migrations');
