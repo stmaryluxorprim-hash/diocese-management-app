@@ -1953,4 +1953,3 @@ Vercel if they were added.
 - **Platform**: Vercel + Supabase
 - **Status**: ✅ Code complete for Phase 1 + performance/scale hardening (0019) + statistics tab (0020) + child portal & data change requests (0021) + event as 4th scope level with status badge (0022) + call-feedback badge & إدارة نتائج الافتقاد (0023) + owner module & per-scope module visibility (0024) + shepherds module الأشابين & «مجموعتي» (0025) + points store module إستبدال النقاط (0026) + exams module الامتحانات (0027) + birthdays module أعياد الميلاد (0028) + messages module الرسائل (0029) + online classes module الفصول الأونلاين (0030) + achievements module الإنجازات (0031) + occasions module الفعاليات (0032/0033) + notifications module الإشعارات (0034) + app customization تخصيص التطبيق — taskbar & header (0035) + home widgets & custom page names (0036) — awaiting Supabase project + Vercel connect
 - **Last Updated**: 2026-09-12
-0
