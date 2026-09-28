@@ -278,13 +278,14 @@ export interface NewMemberInput {
   relation: FamilyRelation | null;
 }
 
-export type NewMemberError = FamilyAddError | 'name_required' | 'code_required' | 'code_taken' | 'invalid_scope' | 'invalid_gender';
+export type NewMemberError = FamilyAddError | 'name_required' | 'code_required' | 'code_taken' | 'code_is_family' | 'invalid_scope' | 'invalid_gender';
 
 export const NEW_MEMBER_ERROR_LABELS: Record<NewMemberError, string> = {
   ...FAMILY_ADD_ERROR_LABELS,
   name_required: 'اكتب الاسم',
   code_required: 'الكود مطلوب عندما لا يُسجَّل الشخص في فصل',
   code_taken: 'هذا الكود كود عائلة — لا يمكن استخدامه لشخص',
+  code_is_family: 'هذا الكود كود عائلة — لا يمكن استخدامه لشخص',
   invalid_scope: 'اختر الكنيسة والخدمة والفصل معاً',
   invalid_gender: 'النوع غير صالح',
 };

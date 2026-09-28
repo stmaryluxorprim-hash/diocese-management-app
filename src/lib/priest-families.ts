@@ -103,6 +103,7 @@ export const FAMILY_ERRORS: Record<string, string> = {
   family_not_found: 'العائلة غير موجودة',
   no_access: 'هذه العائلة خارج كنيستك',
   code_is_person: 'هذا الكود لشخص — كود العائلة يجب أن يكون مختلفًا',
+  code_is_family: 'هذا الكود كود عائلة — لا يمكن استخدامه لشخص',
   code_taken: 'هذا الكود مستخدم بالفعل',
   in_other_family: 'هذا الشخص في عائلة أخرى',
   already_member: 'هذا الشخص في العائلة بالفعل',

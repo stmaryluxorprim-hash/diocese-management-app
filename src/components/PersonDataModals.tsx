@@ -319,6 +319,9 @@ export function EditPersonModal({
 
     if (err) {
       setBusy(false);
+      if (codeChanged && /code_is_family/i.test(err.message ?? '')) {
+        return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا مختلفًا');
+      }
       if (codeChanged && (err.code === '23505' || /duplicate|unique/i.test(err.message ?? ''))) {
         return setError('هذا الكود مستخدم بالفعل لشخص آخر — اختر كودًا مختلفًا');
       }
@@ -532,6 +535,8 @@ export function EditCodeModal({
   const [qrUrl, setQrUrl] = useState('');
   const [checking, setChecking] = useState(false);
   const [takenBy, setTakenBy] = useState<string | null>(null);
+  // 20260930120000: a person code can never equal a FAMILY code
+  const [familyName, setFamilyName] = useState<string | null>(null);
 
   const trimmed = value.trim();
   const changed = trimmed !== currentCode;
@@ -544,15 +549,17 @@ export function EditCodeModal({
       .catch(() => setQrUrl(''));
   }, [trimmed]);
 
-  // Is this code already used by ANOTHER person? (debounced lookup)
+  // Is this code already used by ANOTHER person or by a FAMILY? (debounced lookup)
   useEffect(() => {
     setTakenBy(null);
+    setFamilyName(null);
     if (!trimmed || trimmed === currentCode) return;
     setChecking(true);
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc('find_person_by_national_id', { p_national_id: trimmed });
-      const found = (Array.isArray(data) ? data[0] : data) as { id: string; name: string } | null | undefined;
-      setTakenBy(found && found.id !== personId ? found.name : null);
+      const { data } = await supabase.rpc('person_code_lookup', { p_code: trimmed });
+      const res = data as { person: { id: string; name: string } | null; family: { id: string; name: string } | null } | null;
+      setTakenBy(res?.person && res.person.id !== personId ? res.person.name : null);
+      setFamilyName(res?.family?.name ?? null);
       setChecking(false);
     }, 400);
     return () => { clearTimeout(t); setChecking(false); };
@@ -566,7 +573,7 @@ export function EditCodeModal({
   };
 
   const confirmCode = () => {
-    if (!trimmed || takenBy || checking) return;
+    if (!trimmed || takenBy || familyName || checking) return;
     if (!changed) return onClose();
     const ok = confirm(
       `اعتماد الكود الجديد؟\n\nمن: ${currentCode}\nإلى: ${trimmed}\n\nسيتم وضعه في نموذج التعديل، ولن يُحفظ إلا بعد ضغط «حفظ التعديلات».`
@@ -660,7 +667,13 @@ export function EditCodeModal({
                   هذا الكود مستخدم بالفعل لـ «{takenBy}» — اختر كودًا مختلفًا
                 </p>
               )}
-              {!checking && !takenBy && changed && trimmed && (
+              {familyName && (
+                <p className="mt-1 flex items-center gap-1 rounded-xl bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600">
+                  <UserCheck className="h-4 w-4" />
+                  هذا الكود كود عائلة «{familyName}» — لا يمكن استخدامه لشخص
+                </p>
+              )}
+              {!checking && !takenBy && !familyName && changed && trimmed && (
                 <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-emerald-600">
                   <Check className="h-3.5 w-3.5" /> الكود متاح
                 </p>
@@ -680,7 +693,7 @@ export function EditCodeModal({
               id="edit-code-confirm"
               type="button"
               onClick={confirmCode}
-              disabled={!trimmed || !!takenBy || checking || !changed}
+              disabled={!trimmed || !!takenBy || !!familyName || checking || !changed}
               className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-60"
             >
               <Check className="h-5 w-5" />

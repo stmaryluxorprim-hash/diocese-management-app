@@ -4,7 +4,7 @@
 
 export type ServantAccountError =
   | 'unauthorized' | 'forbidden' | 'not_found' | 'not_configured' | 'weak_password'
-  | 'code_required' | 'code_taken' | 'failed' | 'network';
+  | 'code_required' | 'code_taken' | 'code_is_family' | 'failed' | 'network';
 
 const MESSAGES: Record<ServantAccountError, string> = {
   unauthorized: 'انتهت الجلسة — سجّل الدخول مجددًا',
@@ -14,6 +14,7 @@ const MESSAGES: Record<ServantAccountError, string> = {
   weak_password: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
   code_required: 'الكود مطلوب',
   code_taken: 'هذا الكود مستخدم بالفعل لشخص أو خادم آخر',
+  code_is_family: 'هذا الكود كود عائلة — لا يمكن استخدامه لشخص',
   failed: 'تعذر تنفيذ العملية، حاول مجددًا',
   network: 'تعذر الاتصال بالخادم',
 };

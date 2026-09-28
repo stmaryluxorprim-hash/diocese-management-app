@@ -241,6 +241,8 @@ function SingleAddTab({
   // Existing person found for the typed national id (cross-scope lookup)
   const [existingPerson, setExistingPerson] = useState<Person | null>(null);
   const [checkingId, setCheckingId] = useState(false);
+  // 20260930120000: a person code can never equal a FAMILY code
+  const [familyOwner, setFamilyOwner] = useState<string | null>(null);
 
   useEffect(() => {
     if (!code.trim()) { setQrDataUrl(''); return; }
@@ -254,12 +256,17 @@ function SingleAddTab({
   useEffect(() => {
     const nid = code.trim();
     setExistingPerson(null);
+    setFamilyOwner(null);
     if (!nid) return;
     setCheckingId(true);
     const t = setTimeout(async () => {
-      const { data } = await supabase.rpc('find_person_by_national_id', { p_national_id: nid });
+      const [{ data }, { data: lk }] = await Promise.all([
+        supabase.rpc('find_person_by_national_id', { p_national_id: nid }),
+        supabase.rpc('person_code_lookup', { p_code: nid }),
+      ]);
       const person = Array.isArray(data) ? (data[0] as Person | undefined) : (data as Person | null);
       setExistingPerson(person ?? null);
+      setFamilyOwner((lk as { family: { name: string } | null } | null)?.family?.name ?? null);
       setCheckingId(false);
     }, 450);
     return () => { clearTimeout(t); setCheckingId(false); };
@@ -369,6 +376,7 @@ function SingleAddTab({
     const cls = scope.selectedClass;
     if (!cls) { setError('اختر الكنيسة والخدمة والفصل'); return; }
     if (!name.trim()) { setError('اكتب اسم المخدوم'); return; }
+    if (familyOwner) { setError(`هذا الكود كود عائلة «${familyOwner}» — لا يمكن استخدامه لشخص، اختر كودًا آخر`); return; }
     if (phoneLocal && phoneLocal.length !== PHONE_LOCAL_LENGTH) {
       setError(`رقم الهاتف يجب أن يكون ${PHONE_LOCAL_LENGTH} رقمًا بعد ${PHONE_PREFIX}`);
       return;
@@ -405,7 +413,9 @@ function SingleAddTab({
       });
 
       if (err) {
-        setError('تعذر الحفظ، تأكد من الصلاحيات وحاول مجددًا');
+        setError(/code_is_family/i.test(err.message ?? '')
+          ? 'هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر'
+          : 'تعذر الحفظ، تأكد من الصلاحيات وحاول مجددًا');
         setSaving(false);
         return;
       }
@@ -570,6 +580,12 @@ function SingleAddTab({
           {checkingId && (
             <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-slate-400">
               <Loader2 className="h-3 w-3 animate-spin" /> جارٍ التحقق من الرقم...
+            </p>
+          )}
+          {familyOwner && (
+            <p className="mt-2 flex items-center gap-1 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+              <UserCheck className="h-4 w-4" />
+              هذا الكود كود عائلة «{familyOwner}» — لا يمكن استخدامه لشخص
             </p>
           )}
           {existingPerson && (
@@ -1141,7 +1157,9 @@ function BulkAddTab({
       const result = data as AddPersonResult | null;
       if (err) {
         const m = (err.message ?? '').toLowerCase();
-        setStatus('error', m.includes('no_access') || m.includes('not_approved') ? 'خارج صلاحياتك' : 'فشل الحفظ');
+        setStatus('error',
+          m.includes('code_is_family') ? `الكود ${codeVal} كود عائلة — لا يمكن استخدامه لشخص`
+          : m.includes('no_access') || m.includes('not_approved') ? 'خارج صلاحياتك' : 'فشل الحفظ');
         fail++;
       } else if (result?.already_enrolled) {
         setStatus('skipped', `الكود ${result.national_id} مسجّل بالفعل في الفصل`);

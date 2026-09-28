@@ -154,6 +154,8 @@ export interface SignupCodeLookup {
   address: string | null;
   image_url: string | null;
   has_account: boolean;
+  /** 20260930120000: true when the code belongs to a FAMILY (no person fields then) */
+  family?: boolean;
 }
 
 // ---------- Add servants directly (migration 0041 + /api/servants/create) ----------
@@ -179,7 +181,7 @@ export interface AddServantInput {
 
 export type AddServantError =
   | 'code_required' | 'name_required' | 'church_required' | 'weak_password'
-  | 'code_taken' | 'already_registered' | 'duplicate_in_batch'
+  | 'code_taken' | 'code_is_family' | 'already_registered' | 'duplicate_in_batch'
   | 'not_allowed' | 'invalid_scope' | 'invalid_gender' | 'failed';
 
 export type AddServantOutcome =
@@ -200,6 +202,7 @@ export const ADD_SERVANT_ERROR_LABELS: Record<AddServantError, string> = {
   church_required: 'اختر الكنيسة',
   weak_password: 'كلمة المرور أقل من 6 أحرف',
   code_taken: 'الكود مستخدم لخادم آخر',
+  code_is_family: 'الكود كود عائلة — لا يمكن استخدامه لشخص',
   already_registered: 'الحساب مسجّل بالفعل',
   duplicate_in_batch: 'كود مكرر داخل نفس الملف',
   not_allowed: 'خارج صلاحياتك (الدور أو النطاق)',
@@ -213,6 +216,8 @@ export interface AdminCodeLookup {
   user_id: string;
   login_taken: boolean;
   person: (SignupCodeLookup & { notes: string | null }) | null;
+  /** 20260930120000: name of the family that owns this code (a person can never take it) */
+  family?: string | null;
 }
 
 export type Gender = 'male' | 'female';

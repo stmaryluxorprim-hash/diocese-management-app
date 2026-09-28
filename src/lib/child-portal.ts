@@ -363,6 +363,8 @@ export interface ChildSignupLookup {
   has_password: boolean;
   pending: boolean;
   name: string | null;
+  /** 20260930120000: the code belongs to a FAMILY — a person can never take it */
+  family?: boolean;
 }
 
 export async function childSignupLookupCode(supabase: SupabaseClient, code: string): Promise<ChildSignupLookup> {

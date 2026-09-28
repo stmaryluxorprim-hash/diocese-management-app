@@ -175,6 +175,7 @@ const ERRORS: Record<string, string> = {
   person_not_found: 'لا يوجد شخص بهذا الكود',
   already_member: 'هذا الشخص من المعترفين لديك بالفعل',
   code_taken: 'هذا الكود مستخدم لعائلة — اختر كودًا آخر',
+  code_is_family: 'هذا الكود كود عائلة — لا يمكن استخدامه لشخص',
   future_date: 'لا يمكن تسجيل اعتراف بتاريخ مستقبلي',
   past_date: 'اختر تاريخًا من اليوم فصاعدًا',
   date_required: 'اختر التاريخ',

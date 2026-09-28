@@ -43,6 +43,7 @@ function adminClient() {
 /** Map a SQL / auth error to a stable machine code the UI translates. */
 function errorCode(message: string): AddServantError {
   const m = message.toLowerCase();
+  if (m.includes('code_is_family')) return 'code_is_family';
   if (m.includes('code_taken') || m.includes('already been registered') || m.includes('already registered') || m.includes('already exists')) return 'code_taken';
   if (m.includes('already_registered')) return 'already_registered';
   if (m.includes('not_allowed') || m.includes('scope_not_allowed') || m.includes('role_not_allowed')) return 'not_allowed';
