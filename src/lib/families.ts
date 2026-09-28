@@ -14,6 +14,8 @@ export interface Family {
   phone: string | null;
   address: string | null;
   notes: string | null;
+  /** 20260928120000: the church of the family (filled from the manager's scope / the area chain) */
+  church_id?: string | null;
   created_at: string;
   created_by: string | null;
   edited_at: string;
@@ -187,6 +189,18 @@ export async function fetchFamilyPermissions(supabase: SupabaseClient): Promise<
   if (error) return { view: false, manage: false };
   const r = (data ?? {}) as Partial<FamilyPermissions>;
   return { view: !!r.view, manage: !!r.manage };
+}
+
+/**
+ * 20260930130000: the churches the caller may create a family in from the
+ * servants' app — owner: all · church manager: his church(es) · others: none.
+ */
+export async function fetchFamilyManageChurches(supabase: SupabaseClient): Promise<string[]> {
+  const { data, error } = await supabase.rpc('family_manage_churches');
+  if (error) return [];
+  return ((data ?? []) as unknown[])
+    .map((x) => (typeof x === 'string' ? x : ((x as { family_manage_churches?: string }).family_manage_churches ?? '')))
+    .filter(Boolean);
 }
 
 /** All families visible to the caller with their members (persons joined). */

@@ -140,10 +140,11 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'reports.build', group: 'reports', label: 'إنشاء وتصدير التقارير', desc: 'اختيار البيانات والحقول وتصميم التقرير وتصديره PDF / Excel / طباعة (افتراضي لكل خادم يرى الوحدة)' },
   { key: 'reports.templates', group: 'reports', label: 'إدارة القوالب', desc: 'حفظ وتعديل وحذف قوالب التقارير في نطاقه' },
 
-  // ---- العائلات — managers hold them all; class servants view by default
-  // and need a profile to build / edit families ----
+  // ---- العائلات — everybody who sees the module views; since 20260930130000
+  // ONLY the owner and the church manager (and the priest from his portal)
+  // manage families — the key is kept for the label, a profile can't grant it ----
   { key: 'family.view', group: 'family', label: 'عرض العائلات', desc: 'رؤية العائلات التي لها فرد في نطاقه، وظهور العائلة عند المسح (افتراضي لكل خادم يرى الوحدة)' },
-  { key: 'family.manage', group: 'family', label: 'إدارة العائلات', desc: 'إنشاء عائلة وإضافة أفرادها بمسح الكود (QR) وتعديلها وحذفها' },
+  { key: 'family.manage', group: 'family', label: 'إدارة العائلات', desc: 'إنشاء عائلة وإضافة أفرادها وتعديلها وحذفها — لمالك التطبيق ومدير الكنيسة (في كنيسته) فقط، والكاهن من بوابته — لا يُمنح عبر ملف صلاحيات' },
 
   // ---- التحكم في الدخول — managers hold them all; class servants stand at
   // the door by default and need a profile to configure events / rules ----
