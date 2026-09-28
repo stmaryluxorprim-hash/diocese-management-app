@@ -421,6 +421,8 @@ bash supabase/build_full_schema.sh            # optional: refresh full_schema.sq
 ```
 If a push fails half-way: fix the SQL (files are idempotent), re-run the workflow (`workflow_dispatch`). To skip a file that was applied by hand: `supabase migration repair --status applied <version> --linked`.
 
+**Supabase GitHub integration with several projects (branching / «Supabase Preview» check)** — every connected project runs the pending files **independently** and reports its own check run on the commit (GitHub → commit → ✓/✗ → *Supabase Preview* → the project ref is in the link). When ONE project shows ✗ while the others show ✓, the connection is fine — a migration **failed on that database's data**. Open the check's details: it prints the SQL error and the exact statement. Everything after the failed file stays pending on that project until the cause is fixed **by a new migration** (never edit the applied file); the next push retries the whole pending list. Example (20260928150000): the family-code trigger re-validated the code on every update, so the church back-fill of 20260928120000 aborted on a database where an old family shared a code with a person — the fix migration relaxes the trigger and repeats the back-fill.
+
 ### 1b. Demo / test data — `seed_test_data.sql` & `wipe_test_data.sql`
 Two one-file scripts to **fill the whole database with realistic Arabic demo data** (every table, every module) and to **wipe it back to a clean install**. Run them in the SQL Editor after `full_schema.sql` (steps 3–5 are **not** needed — the seed creates its own login accounts).
 
