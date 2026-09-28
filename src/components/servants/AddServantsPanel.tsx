@@ -177,6 +177,8 @@ function SingleAddServant({
 
   const phoneValid = phoneLocal === '' || phoneLocal.length === PHONE_LOCAL_LENGTH;
   const loginTaken = !!lookup?.login_taken || !!lookup?.person?.has_account;
+  // 20260930120000: a person code can never equal a FAMILY code
+  const familyOwner = lookup?.family ?? null;
 
   const resetForm = () => {
     setCode(''); setLookup(null); setPrefilled(false);
@@ -192,6 +194,7 @@ function SingleAddServant({
     const scopeErr = scope.validate();
     if (scopeErr) return setError(scopeErr);
     if (!code.trim()) return setError('اكتب الكود أو امسحه أو ولّد كودًا');
+    if (familyOwner) return setError(`هذا الكود كود عائلة «${familyOwner}» — لا يمكن استخدامه لشخص`);
     if (loginTaken) return setError('هذا الكود مرتبط بحساب خادم بالفعل');
     if (!name.trim()) return setError('اكتب الاسم الكامل');
     if (!phoneValid) return setError(`رقم الهاتف يجب أن يكون ${PHONE_LOCAL_LENGTH} رقمًا بعد ${PHONE_PREFIX}`);
@@ -288,6 +291,11 @@ function SingleAddServant({
         )}
         {checking && (
           <p className="flex items-center gap-1 text-[11px] font-bold text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> جارٍ التحقق من الكود...</p>
+        )}
+        {familyOwner && (
+          <p className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> هذا الكود كود عائلة «{familyOwner}» — لا يمكن استخدامه لشخص.
+          </p>
         )}
         {lookup && loginTaken && (
           <p className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
@@ -415,7 +423,7 @@ function SingleAddServant({
 
       {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600">{error}</p>}
 
-      <button id="add-submit" type="submit" disabled={saving || loginTaken} className="btn-primary w-full flex items-center justify-center gap-2">
+      <button id="add-submit" type="submit" disabled={saving || loginTaken || !!familyOwner} className="btn-primary w-full flex items-center justify-center gap-2">
         {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
         إضافة الخادم واعتماده
       </button>

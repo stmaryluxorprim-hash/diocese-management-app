@@ -97,11 +97,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, unchanged: true });
   }
 
-  // uniqueness: another servant with the same login, or another person with the same code
-  const [{ data: dupServant }, { data: dupPerson }] = await Promise.all([
+  // uniqueness: another servant with the same login, another person with the
+  // same code, or a FAMILY that owns the code (20260930120000 — one code
+  // space: a person code can never equal a family code). Checked up-front
+  // because the auth e-mail is changed before the persons row.
+  const [{ data: dupServant }, { data: dupPerson }, { data: dupFamily }] = await Promise.all([
     admin.from(SERVANTS_TABLE).select('id').eq('user_id', userId).neq('id', servantId).maybeSingle(),
     admin.from('persons').select('id').eq('national_id', code).maybeSingle(),
+    admin.from('families').select('id').eq('code', code).maybeSingle(),
   ]);
+  if (dupFamily) return NextResponse.json({ error: 'code_is_family' }, { status: 409 });
   if (dupServant) return NextResponse.json({ error: 'code_taken' }, { status: 409 });
   if (dupPerson && dupPerson.id !== target.person_id) return NextResponse.json({ error: 'code_taken' }, { status: 409 });
 
@@ -122,7 +127,13 @@ export async function POST(req: NextRequest) {
   // 3) identity row (persons.national_id)
   if (target.person_id) {
     const { error: pErr } = await admin.from('persons').update({ national_id: code }).eq('id', target.person_id);
-    if (pErr) return NextResponse.json({ error: pErr.code === '23505' ? 'code_taken' : 'failed', detail: pErr.message }, { status: pErr.code === '23505' ? 409 : 500 });
+    if (pErr) {
+      const isFamily = /code_is_family/i.test(pErr.message ?? '');
+      return NextResponse.json(
+        { error: isFamily ? 'code_is_family' : pErr.code === '23505' ? 'code_taken' : 'failed', detail: pErr.message },
+        { status: pErr.code === '23505' ? 409 : 500 },
+      );
+    }
   }
   return NextResponse.json({ ok: true, user_id: userId, code });
 }

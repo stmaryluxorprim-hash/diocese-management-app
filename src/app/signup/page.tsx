@@ -201,6 +201,7 @@ function SignupWizard() {
       setStep(2);
     } else if (step === 2) {
       if (!code.trim()) return setError('اكتب الكود أو امسحه بالكاميرا أو ولّد كودًا');
+      if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
       if (lookup?.has_account) return setError('هذا الكود مرتبط بحساب خادم بالفعل — سجّل الدخول به');
       if (lookup && !prefilled) fillFromLookup(lookup);
       setStep(3);
@@ -384,7 +385,13 @@ function SignupWizard() {
                   <Loader2 className="h-3 w-3 animate-spin" /> جارٍ التحقق من الكود...
                 </p>
               )}
-              {lookupDone && lookup && !lookup.has_account && (
+              {lookupDone && lookup?.family && (
+                <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>هذا الكود كود عائلة — لا يمكن أن يكون كود شخص. استخدم كودًا آخر.</span>
+                </div>
+              )}
+              {lookupDone && lookup && !lookup.family && !lookup.has_account && (
                 <div className="rounded-xl bg-emerald-50 px-3 py-2">
                   <p className="flex items-center gap-1 text-xs font-extrabold text-emerald-700">
                     <UserCheck className="h-4 w-4" /> شخص مسجّل بالفعل: {lookup.name}

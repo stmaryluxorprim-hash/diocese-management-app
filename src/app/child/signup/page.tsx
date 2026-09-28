@@ -187,6 +187,7 @@ function ChildSignupWizard() {
       setStep(2);
     } else if (step === 2) {
       if (!code.trim()) return setError('اكتب الكود أو امسحه بالكاميرا أو ولّد كودًا');
+      if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
       if (lookup?.has_password) return setError('هذا الكود له حساب بالفعل — سجّل الدخول به');
       if (lookup?.pending) return setError('يوجد طلب تسجيل قيد المراجعة لهذا الكود');
       setStep(3);
@@ -371,6 +372,12 @@ function ChildSignupWizard() {
                   <p className="mt-0.5 text-[11px] font-bold text-emerald-600">سيُربط حسابك بنفس المخدوم بعد موافقة الخادم</p>
                 </div>
               )}
+              {lookupDone && lookup?.family && (
+                <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>هذا الكود كود عائلة — لا يمكن أن يكون كود شخص. استخدم كودًا آخر.</span>
+                </div>
+              )}
               {lookupDone && lookup?.has_password && (
                 <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -383,7 +390,7 @@ function ChildSignupWizard() {
                   <span>يوجد طلب تسجيل قيد المراجعة لهذا الكود — انتظر رد الخادم.</span>
                 </div>
               )}
-              {lookupDone && lookup && !lookup.exists && code.trim() && (
+              {lookupDone && lookup && !lookup.exists && !lookup.family && code.trim() && (
                 <p className="text-[11px] font-bold text-slate-400">كود جديد — ستُدخل بياناتك في الخطوة التالية</p>
               )}
             </section>
