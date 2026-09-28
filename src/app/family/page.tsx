@@ -1,12 +1,14 @@
 'use client';
 
-// ---------- FAMILY MODULE (العائلات) — servants' app: READ ONLY ----------
-// Since migration 20260928120000 the families are CREATED AND MANAGED BY THE
-// PRIEST from his portal (/priest/families — area · street · building ·
-// visits). Servants keep this page to SEE the families of their scope (with
-// their members and place) — the scanner (/scanner) still resolves ANY
-// member's code to the whole family.
-// URL: /family (the old ?tab=qr links fall back to the list)
+// ---------- FAMILY MODULE (العائلات) — servants' app ----------
+// Since migration 20260928120000 the PRIEST creates and manages families from
+// his portal (/priest/families — area · street · building · visits).
+// 20260930130000: when the owner has opened the module, مالك التطبيق and
+// مدير الكنيسة manage families here too (create · members · edit · delete —
+// the church manager inside his church). Everybody else sees the families of
+// his scope read-only — the scanner (/scanner) still resolves ANY member's
+// code to the whole family. `family_permissions()` (DB) decides `manage`.
+// URL: /family · /family?tab=qr&family=<id> (إضافة أفراد)
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -45,7 +47,7 @@ function FamilyModule() {
   const params = useSearchParams();
   const [supabase] = useState(() => createClient());
 
-  const tab = 'list' as Tab;   // the «إضافة أفراد» tab moved to the priest portal
+  const tab: Tab = params.get('tab') === 'qr' ? 'qr' : 'list';
   const qrFamilyId = params.get('family') ?? '';
   const go = (t: Tab, familyId?: string) => {
     const q = new URLSearchParams();
@@ -56,9 +58,8 @@ function FamilyModule() {
   };
 
   // ---------- data ----------
-  const [perms, setPermsRaw] = useState<FamilyPermissions>({ view: false, manage: false });
-  // the servants' app is read-only now — management lives in the priest portal
-  const setPerms = (p: FamilyPermissions) => setPermsRaw({ view: p.view, manage: false });
+  // `manage` = owner / church manager with the module open (DB: family_can)
+  const [perms, setPerms] = useState<FamilyPermissions>({ view: false, manage: false });
   const [families, setFamilies] = useState<Family[]>([]);
   const [members, setMembers] = useState<FamilyMemberWithPerson[]>([]);
   const [loading, setLoading] = useState(true);
@@ -146,7 +147,9 @@ function FamilyModule() {
             <UsersRound className="h-5 w-5 text-teal-700" /> {pageName}
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            عائلات نطاقك وأفرادها — وعند مسح كود أي فرد في الماسح تظهر العائلة كلها لاختيار الشخص والخدمة
+            {perms.manage
+              ? 'أنشئ العائلة بكودها وأضف أفرادها — وعند مسح كود أي فرد في الماسح تظهر العائلة كلها لاختيار الشخص والخدمة'
+              : 'عائلات نطاقك وأفرادها — وعند مسح كود أي فرد في الماسح تظهر العائلة كلها لاختيار الشخص والخدمة'}
           </p>
         </div>
         <Link href="/scanner" className="btn-secondary flex items-center gap-1.5 !py-2 !px-3 text-xs" title="الماسح">
@@ -162,8 +165,26 @@ function FamilyModule() {
 
       <p id="family-moved" className="mb-4 flex items-start gap-2 rounded-2xl bg-violet-50 px-3 py-2.5 text-xs font-bold text-violet-800">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>إنشاء العائلات وإضافة أفرادها وربطها بالمنطقة والشارع والعمارة وتسجيل الزيارات — كله انتقل إلى <b>بوابة الكاهن</b> (الافتقاد الأسري). هنا ترى عائلات نطاقك فقط.</span>
+        {perms.manage ? (
+          <span>الكاهن يربط العائلة بالمنطقة والشارع والعمارة ويسجّل الزيارات من <b>بوابته</b> (الافتقاد الأسري) — ومن هنا تنشئ العائلات وتضيف أفرادها وتعدّلها كمالك للتطبيق أو مدير للكنيسة.</span>
+        ) : (
+          <span>إنشاء العائلات وإضافة أفرادها يقوم به <b>الكاهن</b> من بوابته (الافتقاد الأسري) أو <b>مالك التطبيق / مدير الكنيسة</b>. هنا ترى عائلات نطاقك فقط.</span>
+        )}
       </p>
+
+      {/* ================= tabs (managers only) ================= */}
+      {perms.manage && (
+        <div className="mb-4 grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1">
+          <button id="family-tab-list" type="button" onClick={() => go('list')}
+            className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-sm font-extrabold transition ${tab === 'list' ? 'bg-white text-teal-700 shadow' : 'text-slate-500'}`}>
+            <UsersRound className="h-4 w-4" /> العائلات
+          </button>
+          <button id="family-tab-qr" type="button" onClick={() => go('qr', qrFamilyId || undefined)}
+            className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-sm font-extrabold transition ${tab === 'qr' ? 'bg-white text-teal-700 shadow' : 'text-slate-500'}`}>
+            <UserPlus className="h-4 w-4" /> إضافة أفراد
+          </button>
+        </div>
+      )}
 
       {/* ================= LIST ================= */}
       {tab === 'list' && (
@@ -185,7 +206,11 @@ function FamilyModule() {
           {filtered.length === 0 ? (
             <div className="card py-10 text-center">
               <UsersRound className="mx-auto mb-2 h-10 w-10 text-slate-300" />
-              <p className="font-bold text-slate-500">{families.length === 0 ? 'لا توجد عائلات في نطاقك بعد — ينشئها الكاهن من بوابته' : 'لا نتائج للبحث'}</p>
+              <p className="font-bold text-slate-500">
+                {families.length === 0
+                  ? (perms.manage ? 'لا توجد عائلات بعد' : 'لا توجد عائلات في نطاقك بعد — ينشئها الكاهن أو مدير الكنيسة')
+                  : 'لا نتائج للبحث'}
+              </p>
               {perms.manage && families.length === 0 && (
                 <button type="button" onClick={() => setForm({ open: true, family: null, thenQr: true })} className="btn-primary mt-4 inline-flex items-center gap-1.5 !py-2 !px-4 text-sm">
                   <Plus className="h-4 w-4" /> أنشئ أول عائلة ثم أضف أفرادها
@@ -249,7 +274,7 @@ function FamilyModule() {
         !perms.manage ? (
           <div className="card py-10 text-center">
             <Lock className="mx-auto mb-2 h-10 w-10 text-slate-300" />
-            <p className="font-bold text-slate-500">إضافة الأفراد تحتاج صلاحية «إدارة العائلات»</p>
+            <p className="font-bold text-slate-500">إضافة الأفراد لمالك التطبيق ومدير الكنيسة فقط — أو الكاهن من بوابته</p>
           </div>
         ) : (
           <>

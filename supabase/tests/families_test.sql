@@ -8,7 +8,8 @@ begin;
 
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000001'),  -- owner
-  ('00000000-0000-0000-0000-000000000003'),  -- service manager (مدارس الأحد)
+  ('00000000-0000-0000-0000-000000000003'),  -- church manager (كنيسة أ) — 20260930130000: only owner / church manager manage families
+  ('00000000-0000-0000-0000-000000000004'),  -- service manager (مدارس الأحد) — read only since 20260930130000
   ('00000000-0000-0000-0000-000000000006');  -- class servant (فصل أ)
 insert into public.churches (id, name) values
   ('10000000-0000-0000-0000-000000000001', 'كنيسة أ'),
@@ -24,7 +25,9 @@ insert into public.classes (id, church_id, service_id, name) values
 
 insert into public.servant_enrollments (id, full_name, user_id, phone, role, status, church_id, service_id, class_id, approved_at) values
   ('00000000-0000-0000-0000-000000000001', 'المالك', 'owner', '0100', 'owner', 'approved', null, null, null, now()),
-  ('00000000-0000-0000-0000-000000000003', 'مسؤول الخدمة', 'sm', '0103', 'service_manager', 'approved',
+  ('00000000-0000-0000-0000-000000000003', 'مدير الكنيسة', 'cm', '0103', 'church_manager', 'approved',
+   '10000000-0000-0000-0000-000000000001', null, null, now()),
+  ('00000000-0000-0000-0000-000000000004', 'مسؤول الخدمة', 'sm', '0104', 'service_manager', 'approved',
    '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', null, now()),
   ('00000000-0000-0000-0000-000000000006', 'خادم أ', 'cs-a', '0106', 'class_servant', 'approved',
    '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', now());
@@ -43,7 +46,7 @@ insert into public.enrollments (id, person_id, church_id, service_id, class_id) 
 insert into public.events (id, church_id, name, recurrence, event_date, points) values
   ('70000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'حضور الأحد', 'once', current_date, 5);
 
--- ---------- A. service manager creates a family and adds members by code ----------
+-- ---------- A. church manager creates a family and adds members by code ----------
 set local role authenticated;
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000003';
 set local request.jwt.claim.role = 'authenticated';
@@ -52,12 +55,16 @@ do $$
 declare f uuid; r jsonb; other uuid;
 begin
   if not (public.family_permissions() ->> 'manage')::boolean then
-    raise exception 'service manager must be able to manage families';
+    raise exception 'church manager must be able to manage families';
   end if;
 
   insert into public.families (name) values ('عائلة مينا') returning id into f;
   if (select code from public.families where id = f) !~ '^F-[A-Z2-9]{6}$' then
     raise exception 'family code must be generated (F-XXXXXX)';
+  end if;
+  -- 20260930130000: the church manager's church is filled automatically
+  if (select church_id from public.families where id = f) <> '10000000-0000-0000-0000-000000000001' then
+    raise exception 'family church must be the manager''s church';
   end if;
 
   r := public.family_add_member_by_code(f, 'KID-1', 'son');
@@ -110,10 +117,11 @@ begin
   if jsonb_array_length(r -> 'members') <> 4 then raise exception 'all 4 members must be listed: %', r; end if;
 
   select x into mina from jsonb_array_elements(r -> 'members') x where x -> 'person' ->> 'national_id' = 'KID-1';
-  -- service manager of مدارس الأحد sees only the فصل أ enrollment of مينا (not شباب)
-  if jsonb_array_length(mina -> 'enrollments') <> 1 then raise exception 'manager must see 1 enrollment of مينا: %', mina; end if;
-  if not (mina -> 'enrollments' -> 0 ->> 'attended_today')::boolean then raise exception 'مينا attended today'; end if;
-  if jsonb_array_length(mina -> 'enrollments' -> 0 -> 'today_event_ids') <> 1 then raise exception 'today event ids missing'; end if;
+  -- church manager of كنيسة أ sees both enrollments of مينا (فصل أ + شباب) — the فصل أ one attended today
+  if jsonb_array_length(mina -> 'enrollments') <> 2 then raise exception 'church manager must see 2 enrollments of مينا: %', mina; end if;
+  if not exists (select 1 from jsonb_array_elements(mina -> 'enrollments') e where (e ->> 'attended_today')::boolean and jsonb_array_length(e -> 'today_event_ids') = 1) then
+    raise exception 'مينا attended today in فصل أ: %', mina;
+  end if;
 
   select x into youssef from jsonb_array_elements(r -> 'members') x where x -> 'person' ->> 'national_id' = 'KID-3';
   if youssef is null then raise exception 'members of other churches must still be listed'; end if;
@@ -217,7 +225,7 @@ begin
   r := public.family_code_lookup('FREE-CODE');
   if not (r ->> 'free')::boolean then raise exception 'unknown code must be free'; end if;
 
-  -- search: service manager of مدارس الأحد sees مينا / مريم / سارة, not يوسف (كنيسة ب)
+  -- search: church manager of كنيسة أ sees مينا / مريم / سارة, not يوسف (كنيسة ب)
   hits := public.family_search_persons('مي');
   if not exists (select 1 from jsonb_array_elements(hits) x where x -> 'person' ->> 'name' = 'مينا') then raise exception 'search must find مينا: %', hits; end if;
   if exists (select 1 from jsonb_array_elements(hits) x where x -> 'person' ->> 'name' = 'يوسف') then raise exception 'search must not leak other church persons'; end if;

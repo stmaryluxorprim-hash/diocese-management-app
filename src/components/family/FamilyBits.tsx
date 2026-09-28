@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   UsersRound, QrCode, Pencil, Trash2, Loader2, Check, X, Phone, MapPin, StickyNote,
-  UserPlus, Hash, Copy, Share2, Wand2, ScanLine,
+  UserPlus, Hash, Copy, Share2, Wand2, ScanLine, Church as ChurchIcon, ChevronDown,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { PersonAvatar } from '@/components/CallFeedback';
@@ -20,9 +20,11 @@ import QrScanner from '@/components/store/QrScanner';
 import { useCodeGenerator } from '@/lib/customization-context';
 import {
   RELATIONS, RELATION_LABELS, relationLabel, memberCount,
-  removeFamilyMember, setFamilyMemberRelation, lookupFamilyCode,
+  removeFamilyMember, setFamilyMemberRelation, lookupFamilyCode, fetchFamilyManageChurches,
   type Family, type FamilyMemberWithPerson, type FamilyRelation, type FamilyCodeLookup,
 } from '@/lib/families';
+import { cachedLookup } from '@/lib/queries';
+import type { Church } from '@/lib/types';
 
 // =====================================================================
 // FamilyCard
@@ -191,6 +193,25 @@ export function FamilyFormModal({
   const [check, setCheck] = useState<FamilyCodeLookup | null>(null);
   const [checking, setChecking] = useState(false);
 
+  // 20260930130000: the church of the family — owner picks one; a church
+  // manager of ONE church gets it automatically (the DB fills it anyway)
+  const [churchId, setChurchId] = useState<string>(family?.church_id ?? '');
+  const [churches, setChurches] = useState<Church[]>([]);
+  const [churchesLoaded, setChurchesLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [allowed, all] = await Promise.all([fetchFamilyManageChurches(supabase), cachedLookup<Church>(supabase, 'churches')]);
+      if (!alive) return;
+      const list = all.filter((c) => allowed.includes(c.id));
+      setChurches(list);
+      setChurchesLoaded(true);
+      if (!family && list.length === 1) setChurchId(list[0].id);
+    })();
+    return () => { alive = false; };
+  }, [supabase, family]);
+  const needsChurchPick = churches.length > 1;
+
   // QR preview of the code
   useEffect(() => {
     const c = code.trim();
@@ -219,11 +240,14 @@ export function FamilyFormModal({
     const n = name.trim();
     if (!n) { setError('اكتب اسم العائلة'); return; }
     if (codeTaken) { setError(codeHint); return; }
+    if (!family && needsChurchPick && !churchId) { setError('اختر كنيسة العائلة'); return; }
     setBusy(true); setError('');
     const payload = {
       name: n,
       code: code.trim() || (family ? family.code : genCode()),
       phone: phone.trim() || null, address: address.trim() || null, notes: notes.trim() || null,
+      // only sent when chosen — the DB trigger fills a church manager's church itself
+      ...(churchId && (!family || family.church_id !== churchId) ? { church_id: churchId } : {}),
     };
     const q = family
       ? supabase.from('families').update(payload).eq('id', family.id).select('*').single()
@@ -233,7 +257,10 @@ export function FamilyFormModal({
     if (err || !data) {
       const m = err?.message ?? '';
       setError(
-        m.includes('row-level security') ? 'ليس لديك صلاحية إدارة العائلات'
+        m.includes('row-level security') ? 'ليس لديك صلاحية إدارة العائلات — مالك التطبيق ومدير الكنيسة فقط'
+        : m.includes('church_required') ? 'اختر كنيسة العائلة'
+        : m.includes('church_forbidden') ? 'لا يمكن إنشاء عائلة في كنيسة أخرى'
+        : m.includes('area_church_mismatch') ? 'منطقة العائلة من كنيسة أخرى — لا يمكن تغيير الكنيسة'
         : m.includes('code_is_person') ? 'هذا الكود لشخص — اختر كوداً آخر للعائلة'
         : m.includes('duplicate') || m.includes('unique') ? 'هذا الكود مستخدم لعائلة أخرى'
         : 'تعذر الحفظ، حاول مجدداً (تأكد من تطبيق تحديث قاعدة البيانات)');
@@ -285,6 +312,30 @@ export function FamilyFormModal({
 
         <label className="mb-1 block text-xs font-bold text-slate-500">اسم العائلة *</label>
         <input id="family-name" className="input-field mb-3" value={name} onChange={(e) => setName(e.target.value)} placeholder="مثال: عائلة جرجس" />
+
+        {/* church — the owner (or a manager of several churches) chooses; one church = shown read-only */}
+        {churchesLoaded && churches.length > 0 && (
+          <>
+            <label className="mb-1 flex items-center gap-1 text-xs font-bold text-slate-500"><ChurchIcon className="h-3.5 w-3.5" /> الكنيسة {needsChurchPick && !family ? '*' : ''}</label>
+            {needsChurchPick ? (
+              <div className="relative mb-3">
+                <select
+                  id="family-church"
+                  aria-label="كنيسة العائلة"
+                  className="input-field appearance-none pl-9 text-sm font-bold"
+                  value={churchId}
+                  onChange={(e) => setChurchId(e.target.value)}
+                >
+                  <option value="">اختر الكنيسة</option>
+                  {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </div>
+            ) : (
+              <p className="mb-3 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">{churches[0].name}</p>
+            )}
+          </>
+        )}
         <label className="mb-1 flex items-center gap-1 text-xs font-bold text-slate-500"><Phone className="h-3.5 w-3.5" /> هاتف (اختياري)</label>
         <input id="family-phone" className="input-field mb-3" value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" dir="ltr" />
         <label className="mb-1 flex items-center gap-1 text-xs font-bold text-slate-500"><MapPin className="h-3.5 w-3.5" /> العنوان (اختياري)</label>
