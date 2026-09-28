@@ -150,11 +150,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'access.check', group: 'access', label: 'التحقق عند البوابة', desc: 'مسح الكود أو البحث عن الشخص ورؤية مسموح / مرفوض وحالة كل قاعدة (افتراضي لكل خادم يرى الوحدة)' },
   { key: 'access.manage', group: 'access', label: 'إدارة بوابات الدخول', desc: 'إنشاء وتعديل وحذف بوابات الدخول وقواعدها ومجموعاتها وقائمة المسموح لهم في نطاقه' },
 
-  // ---- الخزينة — managers hold them all; class servants view by default
-  // and need a profile to record or manage money ----
-  { key: 'finance.view', group: 'finance', label: 'عرض الخزينة', desc: 'رؤية الرصيد والإيرادات والمصروفات والقيود في نطاقه (افتراضي لكل خادم يرى الوحدة)' },
-  { key: 'finance.add', group: 'finance', label: 'تسجيل إيراد / مصروف', desc: 'إضافة قيد جديد بمبلغ وسبب في نطاقه' },
-  { key: 'finance.manage', group: 'finance', label: 'إدارة الخزينة', desc: 'تعديل وحذف القيود وإنشاء وتعديل الأسباب الثابتة في نطاقه' },
+  // ---- الخزينة (الميزانيات) — visibility is per BUDGET (its members);
+  // this key only decides who may CREATE a budget (managers by role) ----
+  { key: 'finance.create', group: 'finance', label: 'إنشاء ميزانية', desc: 'إنشاء ميزانية جديدة لكنيسته أو خدمته أو فصله ويصبح مديرها — مسؤولو الخدمة والكنيسة يملكونها تلقائياً' },
 ];
 
 export const PERMISSION_BY_KEY: Record<string, PermissionDef> = Object.fromEntries(
