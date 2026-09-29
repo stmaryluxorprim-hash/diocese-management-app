@@ -1,9 +1,10 @@
 'use client';
 
 // ---------- Points store — shared UI bits ----------
-// StoreHeader: back arrow + title + the 5 module tabs
-//   (الكاشير · الطلبات · المتاجر · المخزون · الأرشيف) — الطلبات carries the live
-//   count of pending child requests (20261001120000)
+// StoreHeader: back arrow + title; inside a shop (/store/[shop]/…) the 4
+//   tabs of THAT shop (الكاشير · الطلبات · المخزون · الأرشيف) — الطلبات carries
+//   the live count of pending child requests (20261002120000)
+// useStoreShop / ShopMissing: load the current shop for the shop pages
 // ItemThumb  : item picture or a placeholder
 // ScopeSelectors: church → service → class selects (same as the other modules)
 // useStoreLookups: churches / services / classes via cachedLookup
@@ -17,75 +18,133 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { cachedLookup, ALL } from '@/lib/queries';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import { useNavLabel } from '@/lib/customization-context';
+import { fetchStoreShop, type StoreShopWithTargets } from '@/lib/store';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import InfoTip from '@/components/InfoTip';
 
-const TABS = [
-  { href: '/store/pos', label: 'الكاشير', icon: ScanLine, id: 'store-tab-pos' },
-  { href: '/store/requests', label: 'الطلبات', icon: Inbox, id: 'store-tab-requests' },
-  { href: '/store/shops', label: 'المتاجر', icon: Store, id: 'store-tab-shops' },
-  { href: '/store/inventory', label: 'المخزون', icon: Package, id: 'store-tab-inventory' },
-  { href: '/store/archive', label: 'الأرشيف', icon: Archive, id: 'store-tab-archive' },
+// 20261002120000 — the SHOP is the container: the four parts of the module
+// live under /store/[shop]/… ; /store itself is the list of shops.
+const SHOP_TABS = [
+  { seg: 'pos', label: 'الكاشير', icon: ScanLine, id: 'store-tab-pos' },
+  { seg: 'requests', label: 'الطلبات', icon: Inbox, id: 'store-tab-requests' },
+  { seg: 'inventory', label: 'المخزون', icon: Package, id: 'store-tab-inventory' },
+  { seg: 'archive', label: 'الأرشيف', icon: Archive, id: 'store-tab-archive' },
 ];
 
-/** Live count of the child requests waiting for a decision (RLS-scoped). */
-export function usePendingStoreRequests(): number {
+/** Live count of the child requests waiting for a decision (RLS-scoped);
+ *  `shopId` narrows it to one shop. */
+export function usePendingStoreRequests(shopId?: string | null): number {
   const { profile } = useAuth();
   const [supabase] = useState(() => createClient());
   const [count, setCount] = useState(0);
   const enabled = profile?.status === 'approved';
   const load = useCallback(async () => {
-    const { count: c, error } = await supabase.from('store_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+    let q = supabase.from('store_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+    if (shopId) q = q.eq('shop_id', shopId);
+    const { count: c, error } = await q;
     if (!error) setCount(c ?? 0);
-  }, [supabase]);
+  }, [supabase, shopId]);
   useEffect(() => { if (enabled) load(); }, [enabled, load]);
-  useDebouncedRealtime(supabase, 'store-requests-badge', [{ table: 'store_requests' }], load, { enabled, delayMs: 500 });
+  useDebouncedRealtime(supabase, `store-requests-badge-${shopId ?? 'all'}`, [{ table: 'store_requests' }], load, { enabled, delayMs: 500 });
   return count;
 }
 
-export function StoreHeader({ title, badge, info }: { title?: string; badge?: React.ReactNode; info?: React.ReactNode }) {
+/** Module header. Without `shop` → the shops list (back to settings, no
+ *  tabs). With `shop` → the shop's name + picture, back to the shops list,
+ *  and the four tabs of THAT shop. */
+export function StoreHeader({ title, badge, info, shop }: {
+  title?: string; badge?: React.ReactNode; info?: React.ReactNode;
+  shop?: { id: string; name: string; image_url: string | null; is_active: boolean } | null;
+}) {
   const path = usePathname();
   const name = useNavLabel('store');
-  const pending = usePendingStoreRequests();
+  const pending = usePendingStoreRequests(shop?.id ?? null);
   return (
     <>
       <section className="mb-3 flex items-center gap-2">
-        <Link href="/settings" aria-label="رجوع" className="rounded-full p-1.5 hover:bg-slate-100">
+        <Link href={shop ? '/store' : '/settings'} aria-label="رجوع" className="rounded-full p-1.5 hover:bg-slate-100">
           <ArrowRight className="h-5 w-5" />
         </Link>
-        <h2 className="flex items-center gap-2 text-lg font-extrabold">
-          <ShoppingBag className="h-5 w-5 text-orange-600" />
-          {name}
-          {title && <span className="text-slate-400 font-bold text-sm">· {title}</span>}
-          {badge}
-          {info && <InfoTip title={name}>{info}</InfoTip>}
-        </h2>
+        {shop ? (
+          <Link href={`/store/${shop.id}`} className="flex min-w-0 flex-1 items-center gap-2">
+            <ShopThumb url={shop.image_url} name={shop.name} size={36} />
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 truncate text-lg font-extrabold leading-tight">
+                {shop.name}
+                {!shop.is_active && <span className="badge bg-slate-200 text-slate-600 !text-[10px]">موقوف</span>}
+              </span>
+              <span className="block truncate text-[11px] font-bold text-slate-400">{name}{title ? ` · ${title}` : ''}</span>
+            </span>
+          </Link>
+        ) : (
+          <h2 className="flex min-w-0 flex-1 items-center gap-2 text-lg font-extrabold">
+            <ShoppingBag className="h-5 w-5 text-orange-600" />
+            {name}
+            {title && <span className="text-slate-400 font-bold text-sm">· {title}</span>}
+          </h2>
+        )}
+        {badge}
+        {info && <InfoTip title={shop?.name ?? name}>{info}</InfoTip>}
       </section>
-      <nav id="store-tabs" className="mb-3 grid grid-cols-5 gap-1.5">
-        {TABS.map((t) => {
-          const active = path?.startsWith(t.href);
-          const Icon = t.icon;
-          const n = t.href === '/store/requests' ? pending : 0;
-          return (
-            <Link
-              key={t.href} id={t.id} href={t.href} aria-current={active ? 'page' : undefined}
-              className={`relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] font-extrabold transition active:scale-95 ${
-                active ? 'bg-orange-600 text-white shadow ring-2 ring-orange-300' : 'bg-white text-slate-600 border border-slate-200'
-              }`}
-            >
-              <Icon className="h-4 w-4" /> {t.label}
-              {n > 0 && (
-                <span className={`absolute -top-1.5 -left-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[10px] font-extrabold tabular-nums ring-2 ring-white ${active ? 'bg-white text-orange-700' : 'bg-red-500 text-white'}`}>
-                  {n > 99 ? '99+' : n}
-                </span>
-              )}
-            </Link>
-          );
-        })}
-      </nav>
+      {shop && (
+        <nav id="store-tabs" className="mb-3 grid grid-cols-4 gap-1.5">
+          {SHOP_TABS.map((t) => {
+            const href = `/store/${shop.id}/${t.seg}`;
+            const active = path?.startsWith(href);
+            const Icon = t.icon;
+            const n = t.seg === 'requests' ? pending : 0;
+            return (
+              <Link
+                key={t.seg} id={t.id} href={href} aria-current={active ? 'page' : undefined}
+                className={`relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] font-extrabold transition active:scale-95 ${
+                  active ? 'bg-orange-600 text-white shadow ring-2 ring-orange-300' : 'bg-white text-slate-600 border border-slate-200'
+                }`}
+              >
+                <Icon className="h-4 w-4" /> {t.label}
+                {n > 0 && (
+                  <span className={`absolute -top-1.5 -left-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[10px] font-extrabold tabular-nums ring-2 ring-white ${active ? 'bg-white text-orange-700' : 'bg-red-500 text-white'}`}>
+                    {n > 99 ? '99+' : n}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </>
+  );
+}
+
+/** Load ONE shop (with targets) for the /store/[shop]/… pages; realtime on
+ *  the row. `missing` = not found / not visible. */
+export function useStoreShop(supabase: SupabaseClient, shopId: string | null, enabled: boolean) {
+  const [shop, setShop] = useState<StoreShopWithTargets | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [missing, setMissing] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const load = useCallback(async () => {
+    if (!shopId) { setLoading(false); setMissing(true); return; }
+    try {
+      const row = await fetchStoreShop(supabase, shopId);
+      setShop(row); setMissing(!row); setError(null);
+    } catch (err) { setError(err); }
+    finally { setLoading(false); }
+  }, [supabase, shopId]);
+  useEffect(() => { if (enabled) load(); }, [enabled, load]);
+  useDebouncedRealtime(supabase, `store-shop-${shopId ?? 'none'}`, [{ table: 'store_shops' }, { table: 'store_shop_targets' }], load, { enabled: enabled && !!shopId, delayMs: 600 });
+  return { shop, loading, missing, error, reload: load };
+}
+
+/** Shared «shop not found» card for /store/[shop]/… */
+export function ShopMissing({ migrationHint }: { migrationHint?: string | null }) {
+  return (
+    <div className="card py-12 text-center text-slate-400">
+      <Store className="mx-auto mb-3 h-10 w-10 text-orange-200" />
+      <p className="font-bold">{migrationHint ?? 'هذا المتجر غير موجود أو ليس في نطاق صلاحيتك'}</p>
+      <Link href="/store" className="btn-secondary mt-4 inline-flex !py-2 !px-4 text-sm">إلى قائمة المتاجر</Link>
+    </div>
   );
 }
 

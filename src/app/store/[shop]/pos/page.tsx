@@ -1,6 +1,9 @@
 'use client';
 
-// ---------- POINTS STORE — POS / الكاشير ----------
+// ---------- POINTS STORE — POS / الكاشير of ONE shop ----------
+// 20261002120000: the shop is the container — the basket holds THIS shop's
+// items only and the sale is stamped with the shop. The child search /
+// scan is limited to the places the shop is connected to.
 // Flow:
 //   1. No basket: scan the child's QR (national id) or search by name /
 //      phone / national id (scoped list, server-side search). A child
@@ -17,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import {
   Search, Loader2, Star, Plus, Minus, Trash2, ShoppingCart, X, Check, AlertTriangle,
   UserRound, Package, Receipt, ArrowLeftRight, RotateCcw, Archive, Layers, School,
@@ -25,27 +29,30 @@ import AppShell from '@/components/AppShell';
 import { PersonAvatar } from '@/components/CallFeedback';
 import QrScanner from '@/components/store/QrScanner';
 import {
-  StoreHeader, ItemThumb, ScopeSelectors, useScopeState, useStoreLookups, Toast,
+  StoreHeader, ItemThumb, ShopMissing, useStoreShop, useStoreLookups, Toast,
 } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime, onBusTable } from '@/lib/realtime';
-import { fetchEnrollmentsPage, ALL } from '@/lib/queries';
+import { fetchEnrollmentsPage } from '@/lib/queries';
 import {
-  fetchStoreItems, fetchStoreShops, targetsByShop, lookupStoreItem, storeCheckout, storeErrorMessage, isMigrationMissing, MIGRATION_HINT,
-  basketTotal, basketCount, itemAppliesTo, type BasketLine, type StoreShopWithTargets,
+  fetchStoreItems, lookupStoreItem, storeCheckout, storeErrorMessage, isMigrationMissing, MIGRATION_HINT,
+  isShopsMigrationMissing, SHOPS_MIGRATION_HINT, basketTotal, basketCount, shopCovers, type BasketLine,
 } from '@/lib/store';
-import type { StoreShopTarget } from '@/lib/types';
 import type { EnrollmentWithPerson, StoreItem, StoreCheckoutResult, Person } from '@/lib/types';
 
 type Receipt = StoreCheckoutResult & { person: Person; lines: BasketLine[]; className: string };
 
 export default function PosPage() {
+  const { shop: shopId } = useParams<{ shop: string }>();
   const { profile } = useAuth();
   const [supabase] = useState(() => createClient());
   const approved = profile?.status === 'approved';
-  const { churches, services, classes } = useStoreLookups(supabase, approved);
-  const scope = useScopeState();
+  const { services, classes } = useStoreLookups(supabase, approved);
+  const { shop, loading: shopLoading, missing, error: shopError } = useStoreShop(supabase, shopId ?? null, approved);
+  // the child must be in a place the shop is connected to
+  const covered = useCallback((e: Pick<EnrollmentWithPerson, 'church_id' | 'service_id' | 'class_id'>) =>
+    !!shop && shopCovers(shop.targets, e), [shop]);
   const className = (id: string) => classes.find((c) => c.id === id)?.name ?? '';
 
   const [toast, setToast] = useState<string | null>(null);
@@ -67,12 +74,12 @@ export default function PosPage() {
     if (!approved || child || searchQ.length < 2) { setResults([]); return; }
     let cancelled = false;
     setSearching(true);
-    fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, class: scope.class }, { search: searchQ, pageSize: 30 })
-      .then(({ rows }) => { if (!cancelled) setResults(rows); })
+    fetchEnrollmentsPage(supabase, {}, { search: searchQ, pageSize: 40 })
+      .then(({ rows }) => { if (!cancelled) setResults(rows.filter(covered)); })
       .catch(() => { if (!cancelled) setResults([]); })
       .finally(() => { if (!cancelled) setSearching(false); });
     return () => { cancelled = true; };
-  }, [approved, child, searchQ, scope.church, scope.service, scope.class, supabase]);
+  }, [approved, child, searchQ, supabase, covered]);
 
   const openBasket = (e: EnrollmentWithPerson) => {
     setChild(e);
@@ -89,16 +96,13 @@ export default function PosPage() {
     if (error) { flash('تعذر البحث عن الكود'); return false; }
     const all = ((data ?? []) as EnrollmentWithPerson[]).filter((e) => e.person);
     if (all.length === 0) return false;
-    const mine = all.filter((e) =>
-      (scope.church === ALL || e.church_id === scope.church) &&
-      (scope.service === ALL || e.service_id === scope.service) &&
-      (scope.class === ALL || e.class_id === scope.class));
-    const list = mine.length ? mine : all;
+    const list = all.filter(covered);
+    if (list.length === 0) { flash(`«${all[0].person.name}» ليس في الأماكن المرتبطة بهذا المتجر`); return true; }
     if (list.length === 1) openBasket(list[0]);
     else setPicker({ person: list[0].person, options: list });
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, scope.church, scope.service, scope.class]);
+  }, [supabase, covered]);
 
   // Live balance while the basket is open (0046: enrollments travel on the
   // broadcast bus — re-read the one row when a message names this child)
@@ -124,29 +128,19 @@ export default function PosPage() {
   const [itemSearch, setItemSearch] = useState('');
   const [lines, setLines] = useState<BasketLine[]>([]);
 
-  // shops (20261001120000): an item of a shop applies where the SHOP is
-  // connected — keep the targets map fresh alongside the items
-  const [shopTargets, setShopTargets] = useState<Map<string, StoreShopTarget[]>>(new Map());
-  const shopsRef = useRef<StoreShopWithTargets[]>([]);
+  // the items of THIS shop (active) — realtime on store_items
   const loadItems = useCallback(async () => {
-    if (!child) return;
+    if (!child || !shopId) return;
     setItemsLoading(true);
     try {
-      let shops: StoreShopWithTargets[] = [];
-      try { shops = await fetchStoreShops(supabase); } catch { shops = []; }   // pre-shops DB → legacy scoping
-      shopsRef.current = shops;
-      const map = targetsByShop(shops);
-      setShopTargets(map);
-      const rows = await fetchStoreItems(supabase, {}, { activeOnly: true });
-      setItems(rows.filter((it) => itemAppliesTo(it, child, map)));
+      setItems(await fetchStoreItems(supabase, {}, { activeOnly: true, shopId }));
       setMigrationMissing(false);
     } catch (err) {
       if (isMigrationMissing(err)) setMigrationMissing(true);
     } finally { setItemsLoading(false); }
-  }, [supabase, child]);
+  }, [supabase, child, shopId]);
   useEffect(() => { loadItems(); }, [loadItems]);
-  useDebouncedRealtime(supabase, 'pos-items', [{ table: 'store_items' }, { table: 'store_shops' }, { table: 'store_shop_targets' }], loadItems, { enabled: !!child, delayMs: 600 });
-  const shopName = (id: string | null) => shopsRef.current.find((s) => s.id === id)?.name ?? null;
+  useDebouncedRealtime(supabase, `pos-items-${shopId}`, [{ table: 'store_items' }], loadItems, { enabled: !!child, delayMs: 600 });
 
   // keep basket lines in sync with fresh item rows (price / stock changes)
   useEffect(() => {
@@ -181,8 +175,8 @@ export default function PosPage() {
     if (!found) {
       try {
         const rows = await lookupStoreItem(supabase, code);
-        found = rows.find((r) => itemAppliesTo(r, child, shopTargets));
-        if (!found && rows.length) { flash(`«${rows[0].name}» غير متاح لفصل هذا المخدوم`); return true; }
+        found = rows.find((r) => r.shop_id === shopId);
+        if (!found && rows.length) { flash(`«${rows[0].name}» ليس من أصناف هذا المتجر`); return true; }
       } catch (err) { flash(storeErrorMessage(err)); return true; }
     }
     if (!found) return false;
@@ -191,7 +185,7 @@ export default function PosPage() {
     flash(err ?? `＋ ${found.name}`);
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [child, items, supabase, lines, total, balance, shopTargets]);
+  }, [child, items, supabase, lines, total, balance, shopId]);
 
   // One camera for both: a code is tried as an item first (basket open),
   // then as a child card (switches the basket if the current one is empty).
@@ -226,7 +220,7 @@ export default function PosPage() {
     if (!child || lines.length === 0) return;
     setSubmitting(true);
     try {
-      const res = await storeCheckout(supabase, child.id, lines, note);
+      const res = await storeCheckout(supabase, child.id, lines, note, shopId);
       setReceipt({ ...res, person: child.person, lines, className: className(child.class_id) });
       setConfirming(false);
       setNote('');
@@ -244,9 +238,15 @@ export default function PosPage() {
   };
 
   // ============================== RENDER ==============================
+  if (shopLoading) {
+    return <AppShell><StoreHeader /><div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-orange-500" /></div></AppShell>;
+  }
+  if (missing || !shop) {
+    return <AppShell><StoreHeader /><ShopMissing migrationHint={isShopsMigrationMissing(shopError) ? SHOPS_MIGRATION_HINT : null} /></AppShell>;
+  }
   return (
     <AppShell>
-      <StoreHeader title="الكاشير" />
+      <StoreHeader shop={shop} title="الكاشير" />
       {migrationMissing && <p className="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">⚠️ {MIGRATION_HINT}</p>}
 
       {/* ---------- receipt ---------- */}
@@ -273,14 +273,16 @@ export default function PosPage() {
             <div className="rounded-xl bg-white py-2"><p className="text-lg font-extrabold tabular-nums text-slate-500">{receipt.balance_before}</p>الرصيد قبل</div>
             <div className="rounded-xl bg-white py-2"><p className="text-lg font-extrabold tabular-nums text-emerald-600">{receipt.balance_after}</p>الرصيد بعد</div>
           </div>
-          <Link href="/store/archive" className="mt-2 flex items-center justify-center gap-1 text-xs font-bold text-emerald-700"><Archive className="h-3.5 w-3.5" /> عرض في الأرشيف</Link>
+          <Link href={`/store/${shop.id}/archive`} className="mt-2 flex items-center justify-center gap-1 text-xs font-bold text-emerald-700"><Archive className="h-3.5 w-3.5" /> عرض في الأرشيف</Link>
         </section>
       )}
 
       {/* ---------- step 1: pick the child ---------- */}
       {!child && (
         <>
-          <ScopeSelectors idPrefix="pos" scope={scope} churches={churches} services={services} classes={classes} />
+          {shop.targets.length === 0 && (
+            <p className="mb-3 rounded-2xl bg-red-50 px-4 py-3 text-xs font-bold text-red-600">المتجر غير مرتبط بأي مكان — اربطه بكنيسة / خدمة / فصل من صفحة المتجر ليمكن البيع فيه.</p>
+          )}
           <QrScanner onCode={onCode} hint="امسح كارت المخدوم (QR)" className="mb-3" />
 
           <div className="relative mb-2">
@@ -401,7 +403,7 @@ export default function PosPage() {
             <div className="card py-10 text-center text-slate-400">
               <Package className="mx-auto mb-2 h-9 w-9 text-orange-200" />
               <p className="text-sm font-bold">{items.length === 0 ? 'لا أصناف متاحة لفصل هذا المخدوم' : 'لا نتائج'}</p>
-              {items.length === 0 && <Link href="/store/inventory" className="mt-2 inline-block text-xs font-bold text-orange-600">إدارة المخزون ←</Link>}
+              {items.length === 0 && <Link href={`/store/${shop.id}/inventory`} className="mt-2 inline-block text-xs font-bold text-orange-600">إدارة مخزون المتجر ←</Link>}
             </div>
           ) : (
             <div id="pos-item-grid" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -426,7 +428,6 @@ export default function PosPage() {
                     </div>
                     <p className="flex w-full items-center gap-1 px-2 pb-1.5 text-[10px] font-bold text-slate-400">
                       <span>متاح: {it.stock - q}</span>
-                      {it.shop_id && shopName(it.shop_id) && <span className="mr-auto truncate text-orange-500">{shopName(it.shop_id)}</span>}
                     </p>
                   </button>
                 );

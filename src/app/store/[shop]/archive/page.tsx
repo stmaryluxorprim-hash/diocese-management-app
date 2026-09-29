@@ -1,27 +1,27 @@
 'use client';
 
-// ---------- POINTS STORE — ARCHIVE (أرشيف الفواتير) ----------
-// Every saved bill in the caller's scope (RLS), newest first, server-paged,
-// search by child name / national id, scope selectors, status filter.
+// ---------- POINTS STORE — ARCHIVE of ONE shop (أرشيف الفواتير) ----------
+// 20261002120000: the shop is the container — every saved bill of
+// /store/[shop] (RLS), newest first, server-paged, search by child name /
+// national id, status filter.
 // Tapping a bill opens its detail (lines, balance before / after, seller,
 // note). Managers (owner / church / service) can CANCEL a completed bill:
 // points are refunded + stock restored (store_cancel_order RPC).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'next/navigation';
 import {
-  Search, Loader2, Archive, Star, ChevronDown, X, Receipt, Clock, User, Ban, Check, School, AlertTriangle, Store, Smartphone,
+  Search, Loader2, Archive, Star, ChevronDown, X, Receipt, Clock, User, Ban, Check, School, AlertTriangle, Smartphone,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { PersonAvatar } from '@/components/CallFeedback';
-import {
-  StoreHeader, ItemThumb, ScopeSelectors, useScopeState, useStoreLookups, Toast,
-} from '@/components/store/StoreBits';
+import { StoreHeader, ItemThumb, ShopMissing, useStoreShop, useStoreLookups, Toast } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime, scopeFilter } from '@/lib/realtime';
 import {
   fetchStoreOrders, fetchStoreOrderItems, fetchRecorderNames, storeCancelOrder, storeErrorMessage,
-  isMigrationMissing, MIGRATION_HINT, ORDERS_PAGE_SIZE, type StoreOrderWithPerson,
+  isMigrationMissing, MIGRATION_HINT, ORDERS_PAGE_SIZE, isShopsMigrationMissing, SHOPS_MIGRATION_HINT, type StoreOrderWithPerson,
 } from '@/lib/store';
 import { STORE_ORDER_STATUS_LABELS, type StoreOrderItem, type StoreOrderStatus } from '@/lib/types';
 import { APP_TZ } from '@/lib/time';
@@ -36,12 +36,13 @@ const dayLabel = (iso: string) =>
 type StatusFilter = 'all' | StoreOrderStatus;
 
 export default function ArchivePage() {
+  const { shop: shopId } = useParams<{ shop: string }>();
   const { profile, scopes } = useAuth();
   const [supabase] = useState(() => createClient());
   const approved = profile?.status === 'approved';
   const isManager = !!profile && ['owner', 'church_manager', 'service_manager'].includes(profile.role);
-  const { churches, services, classes } = useStoreLookups(supabase, approved);
-  const scope = useScopeState();
+  const { services, classes } = useStoreLookups(supabase, approved);
+  const { shop, loading: shopLoading, missing, error: shopError } = useStoreShop(supabase, shopId ?? null, approved);
   const className = (id: string) => classes.find((c) => c.id === id)?.name ?? '';
 
   const [search, setSearch] = useState('');
@@ -62,7 +63,7 @@ export default function ArchivePage() {
     setLoading(true);
     try {
       const { rows, hasMore: more } = await fetchStoreOrders(
-        supabase, { church: scope.church, service: scope.service, class: scope.class }, { page: p, search: searchQ });
+        supabase, {}, { page: p, search: searchQ, shopId: shopId ?? undefined });
       setOrders((prev) => {
         if (!append) return rows;
         const seen = new Set(prev.map((o) => o.id));
@@ -76,12 +77,12 @@ export default function ArchivePage() {
     } catch (err) {
       if (isMigrationMissing(err)) setMigrationMissing(true);
     } finally { setLoading(false); }
-  }, [supabase, scope.church, scope.service, scope.class, searchQ]);
+  }, [supabase, shopId, searchQ]);
 
-  useEffect(() => { if (approved) load(0, false); }, [approved, load]);
+  useEffect(() => { if (approved && shop) load(0, false); }, [approved, shop, load]);
   useDebouncedRealtime(
-    supabase, 'store-archive', [{ table: 'store_orders', filter: scopeFilter(profile, scopes) }],
-    () => load(0, false), { enabled: approved, delayMs: 800 }
+    supabase, `store-archive-${shopId}`, [{ table: 'store_orders', filter: scopeFilter(profile, scopes) }],
+    () => load(0, false), { enabled: approved && !!shop, delayMs: 800 }
   );
 
   const visible = useMemo(() => orders.filter((o) => status === 'all' || o.status === status), [orders, status]);
@@ -124,9 +125,16 @@ export default function ArchivePage() {
     finally { setCancelling(false); }
   };
 
+  if (shopLoading) {
+    return <AppShell><StoreHeader /><div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-orange-500" /></div></AppShell>;
+  }
+  if (missing || !shop) {
+    return <AppShell><StoreHeader /><ShopMissing migrationHint={isShopsMigrationMissing(shopError) ? SHOPS_MIGRATION_HINT : null} /></AppShell>;
+  }
+
   return (
     <AppShell>
-      <StoreHeader title="الأرشيف" />
+      <StoreHeader shop={shop} title="الأرشيف" />
       {migrationMissing && <p className="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">⚠️ {MIGRATION_HINT}</p>}
 
       <section className="mb-3 grid grid-cols-3 gap-2">
@@ -139,7 +147,6 @@ export default function ArchivePage() {
         <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input id="arch-search" className="input-field pr-9" placeholder="ابحث باسم المخدوم أو الرقم القومي..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
-      <ScopeSelectors idPrefix="arch" scope={scope} churches={churches} services={services} classes={classes} />
       <div className="mb-3 flex gap-2">
         {([['all', 'الكل'], ['completed', 'مكتملة'], ['cancelled', 'ملغاة']] as [StatusFilter, string][]).map(([v, l]) => (
           <button key={v} id={`arch-status-${v}`} type="button" onClick={() => setStatus(v)}
@@ -175,7 +182,6 @@ export default function ArchivePage() {
                           <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDateTime(o.created_at)}</span>
                           <span className="flex items-center gap-1"><School className="h-3 w-3" /> {className(o.class_id)}</span>
                           <span>{o.items_count} قطعة</span>
-                          {o.shop?.name && <span className="flex items-center gap-1 text-orange-600"><Store className="h-3 w-3" /> {o.shop.name}</span>}
                           {o.source === 'request' && <span className="flex items-center gap-1 text-sky-600"><Smartphone className="h-3 w-3" /> طلب من البوابة</span>}
                         </span>
                       </span>
@@ -242,7 +248,6 @@ export default function ArchivePage() {
 
             <div className="space-y-1 text-[11px] font-bold text-slate-500">
               <p className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDateTime(detail.created_at)}</p>
-              {detail.shop?.name && <p className="flex items-center gap-1 text-orange-600"><Store className="h-3 w-3" /> المتجر: {detail.shop.name}</p>}
               <p className="flex items-center gap-1">
                 {detail.source === 'request' ? <><Smartphone className="h-3 w-3 text-sky-600" /> طلب أرسله المخدوم من بوابته واعتمده بعد مسح الكارت:</> : <><User className="h-3 w-3" /> الكاشير:</>}
                 {' '}{names.get(detail.recorded_by ?? '') ?? '—'}

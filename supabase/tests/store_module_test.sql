@@ -55,17 +55,23 @@ reset role;
 -- ---------- 2. owner grants the module + adds items ----------
 select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 insert into public.module_access (module_key, church_id) values ('store', null);
-insert into public.store_items (id, church_id, code, name, price, stock) values
-  ('60000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'ST-PEN', 'قلم', 10, 3),
-  ('60000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', 'ST-BOOK', 'كتاب', 30, 1);
--- item bound to class B only
-insert into public.store_items (id, church_id, service_id, class_id, code, name, price, stock) values
-  ('60000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001',
-   '30000000-0000-0000-0000-000000000002', 'ST-B', 'صنف فصل ب', 5, 10);
--- duplicate code in same church → rejected
+-- 20261002120000: items live inside a shop — a church-wide shop + a class-B shop
+insert into public.store_shops (id, church_id, name, is_active) values
+  ('70000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'متجر الكنيسة', true),
+  ('70000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', 'متجر فصل ب', true);
+insert into public.store_shop_targets (shop_id, church_id, service_id, class_id) values
+  ('70000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', null, null),
+  ('70000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+insert into public.store_items (id, church_id, shop_id, code, name, price, stock) values
+  ('60000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 'ST-PEN', 'قلم', 10, 3),
+  ('60000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 'ST-BOOK', 'كتاب', 30, 1);
+-- item of the class-B shop
+insert into public.store_items (id, church_id, shop_id, code, name, price, stock) values
+  ('60000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000002', 'ST-B', 'صنف فصل ب', 5, 10);
+-- duplicate code in the same shop → rejected
 do $$ begin
   begin
-    insert into public.store_items (church_id, code, name, price, stock) values ('10000000-0000-0000-0000-000000000001', ' st-pen ', 'x', 1, 1);
+    insert into public.store_items (church_id, shop_id, code, name, price, stock) values ('10000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', ' st-pen ', 'x', 1, 1);
     raise exception 'duplicate code accepted';
   exception when unique_violation then null; end;
 end $$;
@@ -77,10 +83,10 @@ do $$ begin
   -- sees church-wide items (2) but NOT the class-B item
   if (select count(*) from public.store_items) <> 2 then raise exception 'servant A should see 2 items, sees %', (select count(*) from public.store_items); end if;
   if (select count(*) from public.store_lookup_item('st-pen')) <> 1 then raise exception 'lookup by code failed'; end if;
-  -- can't write items outside his class scope? (class servant scope_contains → church-wide insert must fail)
+  -- can't write into a shop he cannot see (the class-B shop)
   begin
-    insert into public.store_items (church_id, code, name, price, stock) values ('10000000-0000-0000-0000-000000000001', 'ST-X', 'x', 1, 1);
-    raise exception 'class servant inserted a church-wide item';
+    insert into public.store_items (church_id, shop_id, code, name, price, stock) values ('10000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000002', 'ST-X', 'x', 1, 1);
+    raise exception 'class servant inserted into a foreign shop';
   exception when insufficient_privilege then null; end;
 end $$;
 
@@ -103,7 +109,7 @@ begin
   -- out of scope item (class B item for class A child)
   begin perform public.store_checkout('50000000-0000-0000-0000-000000000001', '[{"item_id":"60000000-0000-0000-0000-000000000003","qty":1}]'::jsonb);
         raise exception 'out-of-scope item accepted';
-  exception when others then if sqlerrm not like '%item_out_of_scope%' then raise; end if; end;
+  exception when others then if sqlerrm not like '%item_out_of_scope%' and sqlerrm not like '%shop_not_found%' then raise; end if; end;
   -- nothing was written by the failed attempts
   if (select count(*) from public.store_orders) <> 0 then raise exception 'failed checkout left an order'; end if;
   if (select stock from public.store_items where id = '60000000-0000-0000-0000-000000000002') <> 1 then raise exception 'failed checkout changed stock'; end if;

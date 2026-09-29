@@ -1,9 +1,10 @@
 'use client';
 
-// ---------- POINTS STORE — CHILD REQUESTS (طلبات الشراء) ----------
-// The carts the children sent from their portal (store_requests), live.
+// ---------- POINTS STORE — CHILD REQUESTS of ONE shop (طلبات الشراء) ----------
+// 20261002120000: the shop is the container — the carts the children sent
+// from their portal for /store/[shop] (store_requests), live.
 // Flow for the servant:
-//   1. list (pending first; filters: status · scope · shop; search)
+//   1. list (pending first; status filter; search)
 //   2. tap a request → detail sheet: child, shop, lines, total, balance
 //   3. «امسح كارت المخدوم للتأكيد» — the camera reads the child's QR; the
 //      code must be the child's own (the DB re-checks: card_mismatch)
@@ -12,18 +13,18 @@
 //      «رفض» with an optional reason.
 // Realtime on store_requests (broadcast bus, 0046).
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Loader2, Inbox, Star, X, Receipt, Clock, User, Ban, Check, School, ScanLine, ShieldCheck, AlertTriangle,
-  Store, Search, Hourglass, ChevronLeft, MessageSquare,
+  Search, Hourglass, ChevronLeft, MessageSquare,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { PersonAvatar } from '@/components/CallFeedback';
 import QrScanner from '@/components/store/QrScanner';
 import {
-  StoreHeader, ItemThumb, ShopThumb, ScopeSelectors, useScopeState, useStoreLookups, Toast,
+  StoreHeader, ItemThumb, ShopThumb, ShopMissing, useStoreShop, useStoreLookups, Toast,
 } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
@@ -47,21 +48,12 @@ const STATUS_STYLE: Record<StoreRequestStatus, string> = {
 };
 
 export default function RequestsPage() {
-  return (
-    <Suspense fallback={<AppShell><div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-orange-500" /></div></AppShell>}>
-      <RequestsContent />
-    </Suspense>
-  );
-}
-
-function RequestsContent() {
+  const { shop: shopId } = useParams<{ shop: string }>();
   const { profile, scopes } = useAuth();
-  const params = useSearchParams();
-  const shopParam = params.get('shop');
   const [supabase] = useState(() => createClient());
   const approved = profile?.status === 'approved';
-  const { churches, services, classes } = useStoreLookups(supabase, approved);
-  const scope = useScopeState();
+  const { services, classes } = useStoreLookups(supabase, approved);
+  const { shop, loading: shopLoading, missing, error: shopError } = useStoreShop(supabase, shopId ?? null, approved);
   const className = (id: string) => classes.find((c) => c.id === id)?.name ?? '';
 
   const [status, setStatus] = useState<StatusFilter>('pending');
@@ -74,21 +66,21 @@ function RequestsContent() {
 
   const load = useCallback(async () => {
     try {
-      const list = await fetchStoreRequests(supabase, { church: scope.church, service: scope.service, class: scope.class },
-        { status: status === 'all' ? 'all' : status, shopId: shopParam ?? undefined });
+      if (!shopId) return;
+      const list = await fetchStoreRequests(supabase, {}, { status: status === 'all' ? 'all' : status, shopId });
       setRows(list);
       setMigrationMissing(false);
     } catch (err) {
       if (isShopsMigrationMissing(err)) setMigrationMissing(true);
     } finally { setLoading(false); }
-  }, [supabase, scope.church, scope.service, scope.class, status, shopParam]);
+  }, [supabase, status, shopId]);
 
-  useEffect(() => { if (approved) load(); }, [approved, load]);
-  useDebouncedRealtime(supabase, 'store-requests', [{ table: 'store_requests', filter: scopeFilter(profile, scopes) }], load, { enabled: approved, delayMs: 500 });
+  useEffect(() => { if (approved && shop) load(); }, [approved, shop, load]);
+  useDebouncedRealtime(supabase, `store-requests-${shopId}`, [{ table: 'store_requests', filter: scopeFilter(profile, scopes) }], load, { enabled: approved && !!shop, delayMs: 500 });
 
   const visible = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return rows.filter((r) => !s || (r.person?.name ?? '').toLowerCase().includes(s) || (r.person?.national_id ?? '').includes(s) || (r.shop?.name ?? '').toLowerCase().includes(s));
+    return rows.filter((r) => !s || (r.person?.name ?? '').toLowerCase().includes(s) || (r.person?.national_id ?? '').includes(s));
   }, [rows, search]);
   const pendingCount = rows.filter((r) => r.status === 'pending').length;
 
@@ -150,27 +142,27 @@ function RequestsContent() {
 
   const isPending = detailRow?.status === 'pending' && !receipt;
 
+  if (shopLoading) {
+    return <AppShell><StoreHeader /><div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-orange-500" /></div></AppShell>;
+  }
+  if (missing || !shop) {
+    return <AppShell><StoreHeader /><ShopMissing migrationHint={isShopsMigrationMissing(shopError) ? SHOPS_MIGRATION_HINT : null} /></AppShell>;
+  }
+
   return (
     <AppShell>
       <StoreHeader
+        shop={shop}
         title="الطلبات"
         badge={pendingCount > 0 ? <span className="badge bg-red-100 text-red-600 tabular-nums">{pendingCount}</span> : undefined}
-        info="طلبات الشراء التي أرسلها المخدومون من متاجر بوابتهم. افتح الطلب، امسح كارت المخدوم بالكاميرا كتأكيد أنه أمامك، ثم اعتمد التسليم فتُخصم النقاط وتُحفظ الفاتورة في الأرشيف — أو ارفض الطلب."
+        info="طلبات الشراء التي أرسلها المخدومون من هذا المتجر في بوابتهم. افتح الطلب، امسح كارت المخدوم بالكاميرا كتأكيد أنه أمامك، ثم اعتمد التسليم فتُخصم النقاط وتُحفظ الفاتورة في الأرشيف — أو ارفض الطلب."
       />
       {migrationMissing && <p className="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">⚠️ {SHOPS_MIGRATION_HINT}</p>}
 
-      {shopParam && (
-        <p className="mb-2 flex items-center gap-2 rounded-xl bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700">
-          <Store className="h-4 w-4" /> طلبات متجر واحد فقط
-          <Link href="/store/requests" className="mr-auto underline">كل المتاجر</Link>
-        </p>
-      )}
-
       <div className="relative mb-2">
         <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-        <input id="req-search" className="input-field pr-9" placeholder="ابحث باسم المخدوم أو الكود أو المتجر..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input id="req-search" className="input-field pr-9" placeholder="ابحث باسم المخدوم أو الكود..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
-      <ScopeSelectors idPrefix="req" scope={scope} churches={churches} services={services} classes={classes} />
       <div className="mb-3 grid grid-cols-5 gap-1.5">
         {([['pending', 'بانتظار'], ['approved', 'تم التسليم'], ['rejected', 'مرفوض'], ['cancelled', 'ملغي'], ['all', 'الكل']] as [StatusFilter, string][]).map(([v, l]) => (
           <button key={v} id={`req-status-${v}`} type="button" onClick={() => setStatus(v)}
@@ -197,7 +189,6 @@ function RequestsContent() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-extrabold">{r.person?.name ?? 'مخدوم محذوف'}</span>
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] font-bold text-slate-400">
-                    <span className="flex items-center gap-1 text-orange-600"><Store className="h-3 w-3" /> {r.shop?.name ?? '—'}</span>
                     <span className="flex items-center gap-1"><School className="h-3 w-3" /> {className(r.class_id)}</span>
                     <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDateTime(r.created_at)}</span>
                     <span>{r.items_count} قطعة</span>
@@ -269,7 +260,7 @@ function RequestsContent() {
               <div className="space-y-1 text-[11px] font-bold text-slate-500">
                 {(receipt || detailRow.status === 'approved') && (
                   <p className="flex items-center gap-1 text-emerald-700"><Check className="h-3.5 w-3.5" /> تم التسليم وخصم النقاط — الفاتورة في الأرشيف
-                    <Link href="/store/archive" className="mr-auto flex items-center gap-1 underline">الأرشيف <ChevronLeft className="h-3 w-3" /></Link>
+                    <Link href={`/store/${shop.id}/archive`} className="mr-auto flex items-center gap-1 underline">الأرشيف <ChevronLeft className="h-3 w-3" /></Link>
                   </p>
                 )}
                 {detailRow.status === 'rejected' && !receipt && <p className="flex items-center gap-1 text-red-500"><Ban className="h-3.5 w-3.5" /> مرفوض{(detail?.decision_note ?? detailRow.decision_note) ? ` — ${detail?.decision_note ?? detailRow.decision_note}` : ''}</p>}

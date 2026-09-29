@@ -9,6 +9,13 @@ const nextConfig = {
       { source: '/manifest.json', destination: '/branding/manifest', permanent: false },
       { source: '/manifest.webmanifest', destination: '/branding/manifest', permanent: false },
       { source: '/offline.html', destination: '/offline', permanent: false },
+      // 20261002120000 — the store module is organised per shop now
+      // (/store/[shop]/pos …); the old flat pages go to the shops list.
+      { source: '/store/shops', destination: '/store', permanent: false },
+      { source: '/store/pos', destination: '/store', permanent: false },
+      { source: '/store/inventory', destination: '/store', permanent: false },
+      { source: '/store/requests', destination: '/store', permanent: false },
+      { source: '/store/archive', destination: '/store', permanent: false },
     ];
   },
   images: {

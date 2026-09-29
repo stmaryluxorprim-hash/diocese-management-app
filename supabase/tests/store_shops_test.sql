@@ -250,10 +250,14 @@ do $$ declare rid uuid; j jsonb; begin
 end $$;
 reset role;
 
--- ---------- 8. POS checkout of a shop item stamps shop_id / source pos; legacy items still work ----------
-select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
+-- ---------- 8. POS checkout of a shop item stamps shop_id / source pos; legacy (shop-less) items still work ----------
+-- 20261002120000 refuses NEW shop-less items; emulate a pre-existing legacy row (as superuser)
+reset role;
+alter table public.store_items disable trigger trg_store_items_fill_from_shop;
 insert into public.store_items (id, church_id, code, name, price, stock) values
   ('60000000-0000-0000-0000-000000000009', '10000000-0000-0000-0000-000000000001', 'LEGACY', 'قديم', 5, 5);
+alter table public.store_items enable trigger trg_store_items_fill_from_shop;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000001');
 do $$ declare j jsonb; begin
   j := public.store_checkout('50000000-0000-0000-0000-000000000001', '[{"item_id":"60000000-0000-0000-0000-000000000009","qty":1}]'::jsonb);
   if (select source from public.store_orders where id = (j->>'order_id')::uuid) <> 'pos' then raise exception 'pos source wrong'; end if;
