@@ -72,13 +72,14 @@ const ERRORS: [string, string][] = [
   ['shop_not_found', 'المتجر غير متاح'],
   ['not_found', 'غير موجود'],
   ['forbidden', 'ليس لديك صلاحية على هذه العملية'],
+  ['shop_required', 'الصنف يجب أن يكون داخل متجر — افتح المتجر ثم أضف الصنف من مخزونه'],
 ];
 
-export const SHOPS_MIGRATION_HINT = 'تحتاج تشغيل تحديث قاعدة البيانات 20261001120000_store_shops_and_child_requests.sql في Supabase أولاً';
+export const SHOPS_MIGRATION_HINT = 'تحتاج تشغيل تحديثات قاعدة البيانات 20261001120000_store_shops_and_child_requests.sql ثم 20261002120000_store_shop_is_the_container.sql في Supabase أولاً';
 
 export function isShopsMigrationMissing(err: unknown): boolean {
   const msg = (err as { message?: string } | null)?.message ?? '';
-  return /store_shops|store_shop_targets|store_requests|store_request_items|store_request_approve|store_request_reject|store_request_detail|shop_id/.test(msg) &&
+  return /store_shops|store_shop_targets|store_requests|store_request_items|store_request_approve|store_request_reject|store_request_detail|store_shop_stats|shop_id/.test(msg) &&
     /does not exist|not find|schema cache|relation|column/i.test(msg);
 }
 
@@ -95,7 +96,10 @@ export function storeErrorMessage(err: unknown, fallback = 'حدث خطأ، حا
   if (!msg) return fallback;
   if (isShopsMigrationMissing(err)) return SHOPS_MIGRATION_HINT;
   if (isMigrationMissing(err)) return MIGRATION_HINT;
-  if ((err as { code?: string } | null)?.code === '23505') return 'هذا الكود مستخدم بالفعل لصنف آخر في نفس الكنيسة';
+  if ((err as { code?: string } | null)?.code === '23505') return 'هذا الكود مستخدم بالفعل لصنف آخر في نفس المتجر';
+  if ((err as { code?: string } | null)?.code === '42501' || /row-level security/i.test(msg)) {
+    return 'ليس لديك صلاحية على هذه العملية — تأكد من تشغيل تحديث 20261002120000_store_shop_is_the_container.sql ومن أن الوحدة مفعّلة لنطاقك';
+  }
   for (const [key, label] of ERRORS) {
     const i = msg.indexOf(key);
     if (i >= 0) {
@@ -189,6 +193,20 @@ export async function saveStoreShop(
   return { ...saved, targets: (fresh ?? []) as StoreShopTarget[] };
 }
 
+/** Numbers for one shop (RLS-checked in the DB; null when the shop is not visible). */
+export interface StoreShopStats { items: number; stock: number; pending: number; orders: number; points: number }
+export async function fetchStoreShopStats(supabase: SupabaseClient, shopId: string): Promise<StoreShopStats | null> {
+  const { data, error } = await supabase.rpc('store_shop_stats', { p_shop: shopId });
+  if (error) throw error;
+  return (data ?? null) as StoreShopStats | null;
+}
+
+export async function fetchStoreShop(supabase: SupabaseClient, shopId: string): Promise<StoreShopWithTargets | null> {
+  const { data, error } = await supabase.from('store_shops').select('*, targets:store_shop_targets(*)').eq('id', shopId).maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as StoreShopWithTargets | null;
+}
+
 export async function setStoreShopActive(supabase: SupabaseClient, shopId: string, active: boolean): Promise<void> {
   const { error } = await supabase.from('store_shops').update({ is_active: active }).eq('id', shopId);
   if (error) throw error;
@@ -258,13 +276,17 @@ export async function storeCheckout(
   supabase: SupabaseClient,
   enrollmentId: string,
   lines: BasketLine[],
-  note?: string
+  note?: string,
+  shopId?: string | null
 ): Promise<StoreCheckoutResult> {
-  const { data, error } = await supabase.rpc('store_checkout', {
+  // 20261002120000: the POS lives inside a shop → every line must belong to it
+  const args: Record<string, unknown> = {
     p_enrollment: enrollmentId,
     p_lines: lines.map((l) => ({ item_id: l.item.id, qty: l.qty })),
     p_note: note?.trim() || null,
-  });
+  };
+  if (shopId) args.p_shop = shopId;
+  const { data, error } = await supabase.rpc('store_checkout', args);
   if (error) throw error;
   return data as StoreCheckoutResult;
 }
@@ -296,7 +318,7 @@ export const ORDERS_PAGE_SIZE = 50;
 export async function fetchStoreOrders(
   supabase: SupabaseClient,
   scope: ScopeSelection,
-  opts: { page?: number; pageSize?: number; search?: string; enrollmentId?: string } = {}
+  opts: { page?: number; pageSize?: number; search?: string; enrollmentId?: string; shopId?: string } = {}
 ): Promise<{ rows: StoreOrderWithPerson[]; hasMore: boolean }> {
   const page = opts.page ?? 0;
   const size = opts.pageSize ?? ORDERS_PAGE_SIZE;
@@ -308,6 +330,7 @@ export async function fetchStoreOrders(
     if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
     if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
     if (opts.enrollmentId) q = q.eq('enrollment_id', opts.enrollmentId);
+    if (opts.shopId) q = q.eq('shop_id', opts.shopId);
     if (search) {
       const s = search.replace(/[,()]/g, ' ');
       q = q.or(`name.ilike.%${s}%,national_id.ilike.%${s}%`, { referencedTable: 'person' });

@@ -331,10 +331,10 @@ export function StoreRecentWidget({ title, size }: WidgetProps) {
   useDebouncedRealtime(supabase, 'w-store', [{ table: 'store_orders' }], load, { delayMs: 1500 });
 
   return (
-    <WidgetCard id="w-store-recent" icon={ShoppingBag} title={title ?? label('store')} subtitle="فواتير اليوم" tone="orange" href="/store/archive" flush
+    <WidgetCard id="w-store-recent" icon={ShoppingBag} title={title ?? label('store')} subtitle="فواتير اليوم" tone="orange" href="/store" flush
       badge={state ? <span className="badge bg-orange-100 text-orange-700 tabular-nums"><Receipt className="h-3 w-3" /> {fmtNum(state.count)} · {fmtNum(state.points)} نقطة</span> : undefined}>
       {!state ? <WidgetSkeleton rows={2} /> : state.rows.length === 0 ? (
-        <WidgetEmpty icon={ShoppingBag} text="لا فواتير اليوم" hint="افتح الكاشير لبدء عملية" />
+        <WidgetEmpty icon={ShoppingBag} text="لا فواتير اليوم" hint="افتح متجراً ثم الكاشير لبدء عملية" />
       ) : (
         <>
           <ul className="divide-y divide-orange-50">
@@ -349,8 +349,8 @@ export function StoreRecentWidget({ title, size }: WidgetProps) {
               </li>
             ))}
           </ul>
-          <Link href="/store/pos" className="flex items-center justify-center gap-1 bg-orange-50/60 py-2 text-[11px] font-extrabold text-orange-700 hover:bg-orange-50">
-            الكاشير <ChevronLeft className="h-3.5 w-3.5" />
+          <Link href="/store" className="flex items-center justify-center gap-1 bg-orange-50/60 py-2 text-[11px] font-extrabold text-orange-700 hover:bg-orange-50">
+            المتاجر <ChevronLeft className="h-3.5 w-3.5" />
           </Link>
         </>
       )}

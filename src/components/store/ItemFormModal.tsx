@@ -1,12 +1,13 @@
 'use client';
 
-// ---------- Add / edit an inventory item ----------
-// code (= QR label, unique per church, auto-suggested) · name · description
-// · picture (compressed to a small webp) · price in points · stock · active
-// · scope church → service → class (null = all, like causes).
+// ---------- Add / edit an item of ONE shop ----------
+// 20261002120000: the shop is the container — the item belongs to the shop
+// given in `shop` (its places are the shop's; church_id is copied by the DB).
+// code (= QR label, unique per shop, auto-suggested) · name · description
+// · picture (compressed to a small webp) · price in points · stock · active.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Save, Loader2, Upload, Shuffle, QrCode, Trash2, Store } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { X, Save, Loader2, Upload, Shuffle, QrCode, Trash2, Store, MapPin, Globe } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { uploadPhoto } from '@/lib/upload';
 import { useAuth } from '@/lib/auth-context';
@@ -14,8 +15,6 @@ import { storeErrorMessage, type StoreShopWithTargets } from '@/lib/store';
 import { useCodeGenerator } from '@/lib/customization-context';
 import { ItemThumb, targetLabel } from '@/components/store/StoreBits';
 import type { StoreItem, Church, Service, ClassRoom } from '@/lib/types';
-
-const ALL = 'all';
 
 /** Down-scale any picked image to ≤ 640px webp (keeps storage tiny). */
 export async function compressImage(file: File): Promise<Blob> {
@@ -46,13 +45,12 @@ export async function compressImage(file: File): Promise<Blob> {
 }
 
 export default function ItemFormModal({
-  item, churches, services, classes, shops = [], defaultShopId = null, onClose, onSaved,
+  item, shop, churches, services, classes, onClose, onSaved,
 }: {
   item: StoreItem | null;
+  /** the shop the item lives in (20261002120000) */
+  shop: StoreShopWithTargets;
   churches: Church[]; services: Service[]; classes: ClassRoom[];
-  /** the shops the caller can see (20261001120000) — an item may belong to one */
-  shops?: StoreShopWithTargets[];
-  defaultShopId?: string | null;
   onClose: () => void;
   onSaved: (saved: StoreItem) => void;
 }) {
@@ -61,35 +59,23 @@ export default function ItemFormModal({
   const mode = item ? 'edit' : 'add';
   const genItemCode = useCodeGenerator('store_item');
 
-  const defaultChurch = item?.church_id ?? profile?.church_id ?? (churches.length === 1 ? churches[0].id : '');
-  const [churchId, setChurchId] = useState(defaultChurch);
-  const [serviceId, setServiceId] = useState(item ? (item.service_id ?? ALL) : (profile?.service_id ?? ALL));
-  const [classId, setClassId] = useState(item ? (item.class_id ?? ALL) : (profile?.class_id ?? ALL));
   const [code, setCode] = useState(item?.code ?? '');
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [price, setPrice] = useState(String(item?.price ?? 1));
   const [stock, setStock] = useState(String(item?.stock ?? 0));
   const [isActive, setIsActive] = useState(item?.is_active ?? true);
-  const [shopId, setShopId] = useState<string>(item ? (item.shop_id ?? '') : (defaultShopId ?? ''));
-  const shop = shops.find((s) => s.id === shopId) ?? null;
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(item?.image_url ?? null);
   const [removePhoto, setRemovePhoto] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // scope locks follow the profile (a class servant can only add to his class)
-  const churchLocked = !!profile && profile.role !== 'owner';
-  const serviceLocked = !!profile && !!profile.service_id && profile.role !== 'owner' && profile.role !== 'church_manager';
-  const classLocked = !!profile && !!profile.class_id && profile.role === 'class_servant';
-
-  // code suggestion follows the owner's نظام الأكواد ('all' scope → no abbreviation)
+  // code suggestion follows the owner's نظام الأكواد — scoped to the shop's
+  // church (the code is unique per shop)
   const suggestCode = useCallback(() => genItemCode({
-    churchId: churchId || null,
-    serviceId: serviceId === ALL ? null : serviceId,
-    classId: classId === ALL ? null : classId,
-  }), [genItemCode, churchId, serviceId, classId]);
+    churchId: shop.church_id, serviceId: null, classId: null,
+  }), [genItemCode, shop.church_id]);
   // pre-fill a suggestion once when ADDING (the generator is ready after the context loads)
   const suggestedOnce = useRef(false);
   useEffect(() => {
@@ -97,12 +83,6 @@ export default function ItemFormModal({
     suggestedOnce.current = true;
     setCode((c) => c || suggestCode());
   }, [mode, suggestCode]);
-
-  const visibleServices = useMemo(() => services.filter((s) => s.church_id === churchId), [services, churchId]);
-  const visibleClasses = useMemo(
-    () => classes.filter((c) => c.church_id === churchId && (serviceId === ALL || c.service_id === serviceId)),
-    [classes, churchId, serviceId]
-  );
 
   const pickPhoto = (f: File | null) => {
     setPhotoFile(f);
@@ -113,7 +93,6 @@ export default function ItemFormModal({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!shop && !churchId) return setError('اختر الكنيسة');
     if (!code.trim()) return setError('الكود مطلوب');
     if (!name.trim()) return setError('اسم الصنف مطلوب');
     const p = parseInt(price, 10);
@@ -134,13 +113,13 @@ export default function ItemFormModal({
       }
     }
 
-    // an item of a shop takes the SHOP's places; its own scope columns only
-    // keep the owning church (the code is unique per church)
+    // the item lives in the shop: its places are the shop's (the DB copies
+    // church_id from the shop and clears service / class)
     const payload = {
-      church_id: shop ? shop.church_id : churchId,
-      service_id: shop || serviceId === ALL ? null : serviceId,
-      class_id: shop || serviceId === ALL || classId === ALL ? null : classId,
-      ...(shops.length > 0 || item?.shop_id ? { shop_id: shopId || null } : {}),
+      shop_id: shop.id,
+      church_id: shop.church_id,
+      service_id: null,
+      class_id: null,
       code: code.trim(),
       name: name.trim(),
       description: description.trim() || null,
@@ -228,47 +207,23 @@ export default function ItemFormModal({
             </div>
           </div>
 
-          {/* shop (20261001120000) */}
-          {shops.length > 0 && (
-            <div>
-              <label className="mb-1 flex items-center gap-1 text-xs font-bold text-slate-500"><Store className="h-3.5 w-3.5" /> المتجر</label>
-              <select id="item-shop" className="input-field text-sm font-bold" value={shopId} onChange={(e) => setShopId(e.target.value)}>
-                <option value="">بدون متجر — للكاشير فقط (بالنطاق بالأسفل)</option>
-                {shops.map((s) => <option key={s.id} value={s.id}>{s.name}{s.is_active ? '' : ' (غير مفعّل)'}</option>)}
-              </select>
-              {shop && (
-                <p className="mt-1 text-[11px] font-bold text-slate-400">
-                  يظهر الصنف حيث يرتبط المتجر: {shop.targets.map((t) => targetLabel(t, churches, services, classes)).join(' · ') || '—'}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* scope (legacy items without a shop) */}
-          <div className={shop ? 'hidden' : ''}>
-            <label className="mb-1 block text-xs font-bold text-slate-500">متاح لـ (كنيسة ← خدمة ← فصل)</label>
-            <div className="grid grid-cols-3 gap-2">
-              <select className={`input-field !px-2 text-xs font-bold ${churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }} required={!shop}>
-                <option value="">الكنيسة</option>
-                {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <select className={`input-field !px-2 text-xs font-bold ${serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassId(ALL); }}>
-                <option value={ALL}>كل الخدمات</option>
-                {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <select className={`input-field !px-2 text-xs font-bold ${classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={classId} onChange={(e) => setClassId(e.target.value)} disabled={serviceId === ALL}>
-                <option value={ALL}>كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
+          {/* the shop (fixed — the item lives inside it) */}
+          <div className="rounded-xl bg-orange-50 px-3 py-2">
+            <p className="flex items-center gap-1 text-xs font-bold text-orange-700"><Store className="h-3.5 w-3.5" /> المتجر: {shop.name}</p>
+            <ul className="mt-1 flex flex-wrap gap-1">
+              {shop.targets.length === 0 && <li className="badge bg-red-50 text-red-500">المتجر غير مرتبط بأي مكان</li>}
+              {shop.targets.map((t) => (
+                <li key={t.id} className="badge bg-white text-orange-700">
+                  {t.church_id === null ? <Globe className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
+                  {targetLabel(t, churches, services, classes)}
+                </li>
+              ))}
+            </ul>
           </div>
 
           <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-bold">
             <input id="item-active" type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="h-4 w-4 accent-orange-600" />
-            متاح للبيع في الكاشير
+            متاح للبيع (الكاشير وبوابة المخدوم)
           </label>
 
           {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600">{error}</p>}
