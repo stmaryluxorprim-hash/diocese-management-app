@@ -905,12 +905,14 @@ export default function ChildrenPage() {
   // (every job, since calls / messages / points all happen inside it):
   // pale green = present; white = not registered (occurrence still open);
   // pale red = absent (occurrence over and he never attended) ----------
+  // Returns background + border classes (UI only). The border follows the
+  // same tone so every child card reads as its own tinted tile.
   const cardTone = (child: EnrollmentWithPerson): string => {
-    if (child.status === 'stopped') return 'bg-slate-100/80';
+    if (child.status === 'stopped') return 'bg-slate-100/80 border-slate-200';
     const s = statusOf(child);
-    if (s === 'present') return 'bg-emerald-50';
-    if (s === 'absent') return 'bg-red-50';
-    return 'bg-white';
+    if (s === 'present') return 'bg-emerald-50 border-emerald-200';
+    if (s === 'absent') return 'bg-red-50 border-red-200';
+    return 'bg-white border-slate-100';
   };
 
   // ---------- Per-person button appearance by job + activated mode ----------
@@ -1120,7 +1122,7 @@ export default function ChildrenPage() {
       <div
         id="control-zone"
         ref={setZoneEl}
-        className="sticky top-[71px] z-30 -mx-4 px-4 pb-2 bg-slate-50/95 backdrop-blur-md"
+        className="sticky top-[71px] z-30 -mx-4 px-4 pb-2 bg-slate-50/95 backdrop-blur-md border-b border-indigo-100 shadow-[0_10px_18px_-14px_rgba(79,70,229,0.35)]"
       >
       {/* ---------- Row 1: Search + collapse toggle button ---------- */}
       <div className="mb-2 flex items-center gap-2 pt-1">
@@ -1764,6 +1766,18 @@ export default function ChildrenPage() {
       {/* end frozen control zone */}
       </div>
 
+      {/* ---------- Visual split: options (above) | class cards (below) ---------- */}
+      {!loading && (
+        <div id="classes-divider" className="mt-3 mb-2 flex items-center gap-3 px-1" aria-hidden="true">
+          <span className="flex items-center gap-1.5 text-xs font-extrabold text-slate-500">
+            <School className="h-3.5 w-3.5 text-primary-500" />
+            الفصول
+            <span className="badge bg-white text-slate-600 ring-1 ring-slate-200">{groups.length}</span>
+          </span>
+          <span className="h-px flex-1 bg-gradient-to-l from-indigo-200 via-indigo-100 to-transparent" />
+        </div>
+      )}
+
       {/* ---------- Grouped-by-class expandable view ---------- */}
       {loading ? (
         <div className="flex justify-center py-16">
@@ -1809,6 +1823,9 @@ export default function ChildrenPage() {
         <div id="children-groups" className="space-y-3">
           {groups.map(({ classId, className, kids, offset }) => {
             const open = openGroups[classId] ?? false;
+            // UI-only summary for the header: how many of this class are
+            // present in the selected event right now (0 when no event).
+            const presentCount = selectedEvent ? kids.filter((k) => statusOf(k) === 'present').length : 0;
             return (
               <div key={classId}>
                 {/* Class-name header FREEZES below the control zone while its
@@ -1826,25 +1843,57 @@ export default function ChildrenPage() {
                   <button
                     id={`group-${classId}`}
                     onClick={() => toggleGroup(classId)}
-                    className={`flex w-full items-center justify-between border border-indigo-50 bg-white px-4 py-3 ${
-                      open ? 'rounded-t-2xl border-b-indigo-100' : 'rounded-2xl shadow-card'
+                    aria-expanded={open}
+                    className={`flex w-full items-center justify-between gap-2 border bg-white px-3 py-2.5 text-start transition-colors ${
+                      open
+                        ? 'rounded-t-2xl border-indigo-200 border-b-indigo-100 bg-gradient-to-l from-white to-indigo-50/60'
+                        : 'rounded-2xl border-indigo-100 shadow-card hover:border-indigo-200 active:bg-indigo-50/40'
                     }`}
                   >
-                    <span className="flex items-center gap-2 text-sm font-extrabold text-slate-700">
-                      <School className="h-4 w-4 text-primary-600" />
-                      {className}
-                      <span className="badge bg-primary-100 text-primary-700">{kids.length}</span>
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition ${
+                          open
+                            ? 'bg-gradient-to-br from-primary-500 to-accent-500 text-white shadow'
+                            : 'bg-primary-50 text-primary-600'
+                        }`}
+                      >
+                        <School className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-extrabold text-slate-800">{className}</span>
+                        <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                          <span className="inline-flex items-center gap-1">
+                            <Users className="h-3 w-3" />
+                            {kids.length} {kind === 'servant' ? 'خادم' : 'مخدوم'}
+                          </span>
+                          {presentCount > 0 && (
+                            <span className="badge bg-emerald-100 text-emerald-700 !px-1.5 !py-0 text-[10px]">
+                              <UserCheck className="h-3 w-3" /> {presentCount} حاضر
+                            </span>
+                          )}
+                        </span>
+                      </span>
                     </span>
-                    <ChevronDown
-                      className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-                    />
+                    <span
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${
+                        open ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+                      />
+                    </span>
                   </button>
                 </div>
 
                 {open && (
-                  <ul className="divide-y-[3px] divide-indigo-200 overflow-hidden rounded-b-2xl border border-t-0 border-indigo-200 bg-white">
+                  <ul className="space-y-2 rounded-b-2xl border border-t-0 border-indigo-200 bg-indigo-50/50 p-2">
                     {kids.map((child, i) => (
-                      <li key={child.id} className={`relative px-4 py-3 transition-colors duration-300 ${cardTone(child)}`}>
+                      <li
+                        key={child.id}
+                        className={`relative overflow-hidden rounded-xl border px-3 pb-3 pt-4 shadow-sm transition-colors duration-300 ${cardTone(child)}`}
+                      >
                         <span className="card-num" aria-label={`رقم ${offset + i + 1}`}>{offset + i + 1}</span>
                         {/* Card layout:
                             TOP    — running number (corner) · photo · name · job button
