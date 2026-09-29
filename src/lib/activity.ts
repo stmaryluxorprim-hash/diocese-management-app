@@ -132,6 +132,9 @@ export const ACTIVITY_GROUPS: ActivityGroup[] = [
   { key: 'shepherd', label: 'الأشابين', icon: HeartHandshake, color: 'text-teal-600', bg: 'bg-teal-50' },
   { key: 'store_item', label: 'مخزون النقاط', icon: ShoppingBag, color: 'text-orange-600', bg: 'bg-orange-50' },
   { key: 'store_order', label: 'فواتير الاستبدال', icon: ShoppingBag, color: 'text-orange-700', bg: 'bg-orange-50' },
+  { key: 'store_shop', label: 'المتاجر', icon: ShoppingBag, color: 'text-orange-800', bg: 'bg-orange-50' },
+  { key: 'store_shop_target', label: 'أماكن المتاجر', icon: ShoppingBag, color: 'text-orange-500', bg: 'bg-orange-50' },
+  { key: 'store_request', label: 'طلبات الشراء', icon: ShoppingBag, color: 'text-orange-600', bg: 'bg-orange-50' },
   { key: 'exam', label: 'الامتحانات', icon: GraduationCap, color: 'text-violet-600', bg: 'bg-violet-50' },
   { key: 'exam_question', label: 'أسئلة الامتحانات', icon: GraduationCap, color: 'text-violet-500', bg: 'bg-violet-50' },
   { key: 'exam_attempt', label: 'محاولات الامتحانات', icon: GraduationCap, color: 'text-violet-700', bg: 'bg-violet-50' },
@@ -200,6 +203,8 @@ const VERBS: Record<string, VerbDef> = {
   stop: { label: 'أوقف', icon: Pause, tone: 'bad' },
   resume: { label: 'أعاد تفعيل', icon: Play, tone: 'good' },
   approve: { label: 'اعتمد', icon: CheckCircle2, tone: 'good' },
+  activate: { label: 'فعّل', icon: Play, tone: 'good' },
+  deactivate: { label: 'أوقف تفعيل', icon: Pause, tone: 'bad' },
   approved: { label: 'قبِل', icon: CheckCircle2, tone: 'good' },
   reject: { label: 'رفض', icon: XCircle, tone: 'bad' },
   rejected: { label: 'رفض', icon: XCircle, tone: 'bad' },
@@ -256,7 +261,7 @@ const NOUNS: Record<string, string> = {
   card_template: 'قالب كارت', servant: 'خادم', servant_mirror: 'صف خادم', servant_scope: 'مكان خدمة', permission: 'صلاحية',
   permission_profile: 'ملف صلاحيات', module_access: 'صلاحية وحدة', church: 'كنيسة', service: 'خدمة', class: 'فصل',
   event: 'مناسبة', cause: 'سبب نقاط', feedback: 'نتيجة افتقاد', shepherd: 'مخدوم في مجموعته', store_item: 'صنف',
-  store_order: 'فاتورة', exam: 'امتحان', exam_question: 'سؤال', exam_attempt: 'محاولة امتحان', birthday: 'تهنئة عيد ميلاد',
+  store_order: 'فاتورة', store_shop: 'متجر', store_shop_target: 'مكان متجر', store_request: 'طلب شراء', exam: 'امتحان', exam_question: 'سؤال', exam_attempt: 'محاولة امتحان', birthday: 'تهنئة عيد ميلاد',
   birthday_setting: 'إعداد أعياد الميلاد', birthday_card: 'كارت تهنئة', chat: 'محادثة', online_class: 'فصل أونلاين',
   online_participant: 'حضور فصل أونلاين', achievement: 'إنجاز', achievement_award: 'منح إنجاز', occasion: 'فعالية',
   occasion_registration: 'مشاركة في فعالية', occasion_checklist: 'عنصر قائمة تحقق', occasion_mark: 'علامة تحقق',
@@ -335,7 +340,7 @@ export function describe(row: ActivityRow): Described {
     if (base === 'points' && nd.delta !== undefined) details.push(`${Number(nd.delta) > 0 ? '+' : ''}${nd.delta} نقطة`);
     if (base === 'attendance' && nd.points_delta !== undefined) details.push(`+${nd.points_delta} نقطة`);
     if (base === 'message' && typeof nd.message === 'string') details.push(nd.message.slice(0, 80));
-    if (base === 'store_order' && nd.total_points !== undefined) details.push(`${nd.total_points} نقطة · ${nd.items_count ?? ''} صنف`);
+    if ((base === 'store_order' || base === 'store_request') && nd.total_points !== undefined) details.push(`${nd.total_points} نقطة · ${nd.items_count ?? ''} صنف`);
     if (base === 'servant' && nd.role) details.push(ROLE_LABELS[String(nd.role)] ?? String(nd.role));
   } else if (row.op === 'EVENT' && row.meta) {
     Object.entries(row.meta).slice(0, 4).forEach(([k, v]) => { if (k !== 'user_agent') details.push(`${columnLabel(k)}: ${str(v)}`); });

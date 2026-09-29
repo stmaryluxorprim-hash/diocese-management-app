@@ -10,6 +10,7 @@ import { legacyCode } from '@/lib/code-templates';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   StoreItem, StoreOrder, StoreOrderItem, StoreCheckoutResult, EnrollmentWithPerson,
+  StoreShop, StoreShopTarget, StoreRequest, StoreRequestDetail, StoreRequestStatus,
 } from '@/lib/types';
 import { ALL, type ScopeSelection } from '@/lib/queries';
 
@@ -24,14 +25,34 @@ export const basketTotal = (lines: BasketLine[]) =>
 export const basketCount = (lines: BasketLine[]) =>
   lines.reduce((s, l) => s + l.qty, 0);
 
-/** Does the item apply to this child's enrollment scope? */
-export const itemAppliesTo = (
-  it: Pick<StoreItem, 'church_id' | 'service_id' | 'class_id'>,
+/** Does a shop (through its targets) cover this enrollment scope? */
+export const shopCovers = (
+  targets: Pick<StoreShopTarget, 'church_id' | 'service_id' | 'class_id'>[],
   e: Pick<EnrollmentWithPerson, 'church_id' | 'service_id' | 'class_id'>
 ) =>
-  it.church_id === e.church_id &&
-  (it.service_id === null || it.service_id === e.service_id) &&
-  (it.class_id === null || it.class_id === e.class_id);
+  targets.some((t) =>
+    t.church_id === null ||
+    (t.church_id === e.church_id &&
+      (t.service_id === null || t.service_id === e.service_id) &&
+      (t.class_id === null || t.class_id === e.class_id)));
+
+/** Does the item apply to this child's enrollment scope?
+ *  An item of a SHOP applies where the shop is connected (pass the shop
+ *  targets); a legacy item (no shop) applies by its own scope columns. */
+export const itemAppliesTo = (
+  it: Pick<StoreItem, 'church_id' | 'service_id' | 'class_id'> & { shop_id?: string | null },
+  e: Pick<EnrollmentWithPerson, 'church_id' | 'service_id' | 'class_id'>,
+  targetsByShop?: Map<string, StoreShopTarget[]>
+) => {
+  if (it.shop_id && targetsByShop) {
+    const ts = targetsByShop.get(it.shop_id);
+    // targets unknown (RLS hid the shop) → fall back to the item columns
+    if (ts) return shopCovers(ts, e);
+  }
+  return it.church_id === e.church_id &&
+    (it.service_id === null || it.service_id === e.service_id) &&
+    (it.class_id === null || it.class_id === e.class_id);
+};
 
 // ---------- Error mapping (RPC raise → Arabic) ----------
 const ERRORS: [string, string][] = [
@@ -45,9 +66,21 @@ const ERRORS: [string, string][] = [
   ['insufficient_stock', 'الكمية المتاحة من «%» لا تكفي'],
   ['insufficient_points', 'رصيد النقاط لا يكفي لهذه السلة'],
   ['not_completed', 'هذه الفاتورة ملغاة بالفعل'],
-  ['not_found', 'الفاتورة غير موجودة'],
+  ['card_mismatch', 'الكارت الممسوح ليس كارت هذا المخدوم — امسح كارته هو للتأكيد'],
+  ['not_pending', 'هذا الطلب لم يعد بانتظار القرار'],
+  ['request_pending', 'لديك طلب سابق بانتظار الخادم في هذا المتجر'],
+  ['shop_not_found', 'المتجر غير متاح'],
+  ['not_found', 'غير موجود'],
   ['forbidden', 'ليس لديك صلاحية على هذه العملية'],
 ];
+
+export const SHOPS_MIGRATION_HINT = 'تحتاج تشغيل تحديث قاعدة البيانات 20261001120000_store_shops_and_child_requests.sql في Supabase أولاً';
+
+export function isShopsMigrationMissing(err: unknown): boolean {
+  const msg = (err as { message?: string } | null)?.message ?? '';
+  return /store_shops|store_shop_targets|store_requests|store_request_items|store_request_approve|store_request_reject|store_request_detail|shop_id/.test(msg) &&
+    /does not exist|not find|schema cache|relation|column/i.test(msg);
+}
 
 export const MIGRATION_HINT = 'تحتاج تشغيل تحديث قاعدة البيانات 0026_points_store.sql في Supabase أولاً';
 
@@ -60,6 +93,7 @@ export function isMigrationMissing(err: unknown): boolean {
 export function storeErrorMessage(err: unknown, fallback = 'حدث خطأ، حاول مجدداً'): string {
   const msg = (err as { message?: string } | null)?.message ?? '';
   if (!msg) return fallback;
+  if (isShopsMigrationMissing(err)) return SHOPS_MIGRATION_HINT;
   if (isMigrationMissing(err)) return MIGRATION_HINT;
   if ((err as { code?: string } | null)?.code === '23505') return 'هذا الكود مستخدم بالفعل لصنف آخر في نفس الكنيسة';
   for (const [key, label] of ERRORS) {
@@ -80,22 +114,135 @@ export function storeErrorMessage(err: unknown, fallback = 'حدث خطأ، حا
 export async function fetchStoreItems(
   supabase: SupabaseClient,
   scope: ScopeSelection = {},
-  opts: { activeOnly?: boolean } = {}
+  opts: { activeOnly?: boolean; shopId?: string | null } = {}
 ): Promise<StoreItem[]> {
   let q = supabase.from('store_items').select('*');
   if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
   if (opts.activeOnly) q = q.eq('is_active', true);
+  if (opts.shopId) q = q.eq('shop_id', opts.shopId);
   const { data, error } = await q.order('sort_order').order('name');
   if (error) throw error;
   let rows = (data ?? []) as StoreItem[];
-  // service / class narrowing keeps "all" items (null) that still apply
+  // service / class narrowing keeps "all" items (null) that still apply;
+  // items of a SHOP are kept — their place is the shop's, not the columns
   if (scope.service && scope.service !== ALL) {
-    rows = rows.filter((r) => r.service_id === null || r.service_id === scope.service);
+    rows = rows.filter((r) => r.shop_id || r.service_id === null || r.service_id === scope.service);
   }
   if (scope.class && scope.class !== ALL) {
-    rows = rows.filter((r) => r.class_id === null || r.class_id === scope.class);
+    rows = rows.filter((r) => r.shop_id || r.class_id === null || r.class_id === scope.class);
   }
   return rows;
+}
+
+// ---------- Shops (المتاجر) ----------
+export interface StoreShopWithTargets extends StoreShop {
+  targets: StoreShopTarget[];
+  items_count?: number;
+}
+
+export async function fetchStoreShops(
+  supabase: SupabaseClient,
+  opts: { church?: string; activeOnly?: boolean } = {}
+): Promise<StoreShopWithTargets[]> {
+  let q = supabase.from('store_shops').select('*, targets:store_shop_targets(*)');
+  if (opts.church && opts.church !== ALL) q = q.eq('church_id', opts.church);
+  if (opts.activeOnly) q = q.eq('is_active', true);
+  const { data, error } = await q.order('sort_order').order('name');
+  if (error) throw error;
+  return ((data ?? []) as unknown as StoreShopWithTargets[]).map((s) => ({ ...s, targets: s.targets ?? [] }));
+}
+
+export const targetsByShop = (shops: StoreShopWithTargets[]) =>
+  new Map(shops.map((s) => [s.id, s.targets]));
+
+export interface ShopTargetInput { church_id: string | null; service_id: string | null; class_id: string | null }
+
+/** Insert / update a shop and replace its targets in one go. */
+export async function saveStoreShop(
+  supabase: SupabaseClient,
+  shop: { id?: string; church_id: string; name: string; description: string | null; image_url: string | null; is_active: boolean },
+  targets: ShopTargetInput[]
+): Promise<StoreShopWithTargets> {
+  const { id, ...payload } = shop;
+  const res = id
+    ? await supabase.from('store_shops').update(payload).eq('id', id).select('*').single()
+    : await supabase.from('store_shops').insert(payload).select('*').single();
+  if (res.error) throw res.error;
+  const saved = res.data as StoreShop;
+  const { data: existing, error: e1 } = await supabase.from('store_shop_targets').select('*').eq('shop_id', saved.id);
+  if (e1) throw e1;
+  const cur = (existing ?? []) as StoreShopTarget[];
+  const key = (t: ShopTargetInput) => `${t.church_id ?? ''}|${t.service_id ?? ''}|${t.class_id ?? ''}`;
+  const wanted = new Map(targets.map((t) => [key(t), t]));
+  const toDelete = cur.filter((t) => !wanted.has(key(t))).map((t) => t.id);
+  const have = new Set(cur.map(key));
+  const toInsert = targets.filter((t) => !have.has(key(t))).map((t) => ({ shop_id: saved.id, ...t }));
+  if (toDelete.length) {
+    const { error } = await supabase.from('store_shop_targets').delete().in('id', toDelete);
+    if (error) throw error;
+  }
+  if (toInsert.length) {
+    const { error } = await supabase.from('store_shop_targets').insert(toInsert);
+    if (error) throw error;
+  }
+  const { data: fresh } = await supabase.from('store_shop_targets').select('*').eq('shop_id', saved.id);
+  return { ...saved, targets: (fresh ?? []) as StoreShopTarget[] };
+}
+
+export async function setStoreShopActive(supabase: SupabaseClient, shopId: string, active: boolean): Promise<void> {
+  const { error } = await supabase.from('store_shops').update({ is_active: active }).eq('id', shopId);
+  if (error) throw error;
+}
+
+export async function deleteStoreShop(supabase: SupabaseClient, shopId: string): Promise<void> {
+  const { error } = await supabase.from('store_shops').delete().eq('id', shopId);
+  if (error) throw error;
+}
+
+// ---------- Purchase requests (طلبات الشراء من بوابة المخدوم) ----------
+export interface StoreRequestWithPerson extends StoreRequest {
+  person: { id: string; name: string; national_id: string; image_url: string | null } | null;
+  shop: { id: string; name: string; image_url: string | null } | null;
+}
+
+export async function fetchStoreRequests(
+  supabase: SupabaseClient,
+  scope: ScopeSelection,
+  opts: { status?: StoreRequestStatus | 'all'; limit?: number; shopId?: string } = {}
+): Promise<StoreRequestWithPerson[]> {
+  let q = supabase.from('store_requests')
+    .select('*, person:persons(id, name, national_id, image_url), shop:store_shops(id, name, image_url)');
+  if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
+  if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
+  if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
+  if (opts.status && opts.status !== 'all') q = q.eq('status', opts.status);
+  if (opts.shopId) q = q.eq('shop_id', opts.shopId);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(opts.limit ?? 200);
+  if (error) throw error;
+  return (data ?? []) as unknown as StoreRequestWithPerson[];
+}
+
+export async function fetchStoreRequestDetail(supabase: SupabaseClient, id: string): Promise<StoreRequestDetail | null> {
+  const { data, error } = await supabase.rpc('store_request_detail', { p_request: id });
+  if (error) throw error;
+  return (data ?? null) as StoreRequestDetail | null;
+}
+
+/** Approve after scanning the child's card — the DB refuses any other code. */
+export async function storeRequestApprove(
+  supabase: SupabaseClient, id: string, cardCode: string, note?: string
+): Promise<StoreRequestDetail & StoreCheckoutResult> {
+  const { data, error } = await supabase.rpc('store_request_approve', {
+    p_request: id, p_card_code: cardCode.trim(), p_note: note?.trim() || null,
+  });
+  if (error) throw error;
+  return data as StoreRequestDetail & StoreCheckoutResult;
+}
+
+export async function storeRequestReject(supabase: SupabaseClient, id: string, note?: string): Promise<StoreRequestDetail> {
+  const { data, error } = await supabase.rpc('store_request_reject', { p_request: id, p_note: note?.trim() || null });
+  if (error) throw error;
+  return data as StoreRequestDetail;
 }
 
 /** Resolve a scanned item QR (the item code) — may return several rows
@@ -138,9 +285,11 @@ export async function storeCancelOrder(
 // ---------- Archive ----------
 export interface StoreOrderWithPerson extends StoreOrder {
   person: { id: string; name: string; national_id: string; image_url: string | null } | null;
+  shop?: { id: string; name: string } | null;
 }
 
-const ORDER_LIST_SELECT = '*, person:persons(id, name, national_id, image_url)';
+const ORDER_LIST_SELECT = '*, person:persons(id, name, national_id, image_url), shop:store_shops(id, name)';
+const ORDER_LIST_SELECT_LEGACY = '*, person:persons(id, name, national_id, image_url)';
 
 export const ORDERS_PAGE_SIZE = 50;
 
@@ -152,17 +301,22 @@ export async function fetchStoreOrders(
   const page = opts.page ?? 0;
   const size = opts.pageSize ?? ORDERS_PAGE_SIZE;
   const search = (opts.search ?? '').trim();
-  const select = search ? ORDER_LIST_SELECT.replace('person:persons(', 'person:persons!inner(') : ORDER_LIST_SELECT;
-  let q = supabase.from('store_orders').select(select);
-  if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
-  if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
-  if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
-  if (opts.enrollmentId) q = q.eq('enrollment_id', opts.enrollmentId);
-  if (search) {
-    const s = search.replace(/[,()]/g, ' ');
-    q = q.or(`name.ilike.%${s}%,national_id.ilike.%${s}%`, { referencedTable: 'person' });
-  }
-  const { data, error } = await q.order('created_at', { ascending: false }).range(page * size, page * size + size);
+  const run = async (base: string) => {
+    const select = search ? base.replace('person:persons(', 'person:persons!inner(') : base;
+    let q = supabase.from('store_orders').select(select);
+    if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
+    if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
+    if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
+    if (opts.enrollmentId) q = q.eq('enrollment_id', opts.enrollmentId);
+    if (search) {
+      const s = search.replace(/[,()]/g, ' ');
+      q = q.or(`name.ilike.%${s}%,national_id.ilike.%${s}%`, { referencedTable: 'person' });
+    }
+    return q.order('created_at', { ascending: false }).range(page * size, page * size + size);
+  };
+  let { data, error } = await run(ORDER_LIST_SELECT);
+  // before the shops migration the join on store_shops does not exist
+  if (error && isShopsMigrationMissing(error)) ({ data, error } = await run(ORDER_LIST_SELECT_LEGACY));
   if (error) throw error;
   const list = (data ?? []) as unknown as StoreOrderWithPerson[];
   const hasMore = list.length > size;

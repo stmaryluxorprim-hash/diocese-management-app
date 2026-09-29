@@ -230,6 +230,7 @@ servant_scopes       servant_id → servant_enrollments · church_id · service_
 - ✅ **نتيجة الافتقاد (0023)**: a **call-feedback badge right after the status badge** on every child card (children page + scanner). Two clocks: the **working (frozen) date picks the occurrence**, the **real date decides whether its follow-up cycle is still open**. Default **لم يُفتقد بعد** while the cycle is open (real time between the occurrence start and the next occurrence start); if the cycle has **closed in real time** (e.g. the working date is frozen before the last occurrence) and no feedback was recorded it shows **لم يُفتقد** and is read-only. Clicking it opens a modal with the **colored feedback buttons** (+ اتصال, history, undo); picking one makes it the badge. Feedbacks are managed in **إدارة نتائج الافتقاد** (`/settings/call-feedbacks`) with a **name, color and icon**, bound to **church → service → class → event** (null = all). A **نتيجة الافتقاد filter** (الكل / لم يُفتقد بعد / لم يُفتقد / each feedback) lives in الفلاتر
 - ✅ **وحدة المالك + صلاحيات الوحدات (0024)**: modules registry (`src/lib/modules.ts`) — the side menu section under the 5 main pages shows **modules only**, the settings hub has a separate **الوحدات** group; the **owner module** (`/owner`, owner-only) hosts owner controls built step by step, starting with **صلاحيات الوحدات** (`/owner/modules`): per module, grant visibility to church → service → class (any level «الكل»), show for everyone / hide from everyone — enforced by RLS (`module_visible`) on the card tables and realtime everywhere
 - ✅ **وحدة الأشابين (0025)**: every servant (أشبين) is bound to **his own group of children** — in `/shepherds` he picks children from his scope (مجموعتي / اختيار tabs, search + church → service → class selectors); **a child can be in one group only** (children already chosen by another servant show «في مجموعة فلان» and are locked; managers can free them). On the children page a **«مجموعتي» button under the church / service / class selectors** narrows the list to the group — attendance, calls, messages, points, data, badges, filters and sort all work exactly the same. Visible only where the owner granted the `shepherds` module; realtime
+- ✅ **المتاجر وطلبات الشراء من بوابة المخدوم (20261001120000)**: وحدة إستبدال النقاط gets **المتاجر** (`/store/shops`): a shop has a name · picture · description · an **activation switch** and is connected to **one or many places** (church → service → class, or «الكل» for the owner) through `store_shop_targets`; items are attached to a shop (`store_items.shop_id`, shop filter + select in المخزون). An **active** shop appears in the **child portal** (`/child/store`): the child browses the items, builds a **cart** (stock / balance guards), and **sends a request** — nothing is deducted yet (`child_portal_store_request`, one pending request per shop). The servant sees the requests live in **الطلبات** (`/store/requests`, badge on the tab / hub / side menu), opens one, **scans the child's card as confirmation** (the DB refuses another card → `card_mismatch`) and **approves** (`store_request_approve` → the same checkout rules → a bill with `source = request` + the shop) or **rejects** with a reason. The child follows his requests (pending · approved · rejected · cancelled — he can cancel while pending) and opens the **receipt** with every detail (shop, lines, balance before / after) in `/child/store` and `/child/points`; the servant sees the same bill in the archive with the shop and a «طلب من البوابة» badge. POS is shop-aware (items of shops covering the child). Realtime on shops / targets / requests, activity log (`store_shop.activate`, `store_request.approved` …, the child is the actor of his own request). Test: `supabase/tests/store_shops_test.sql`. See § Points store module → Shops.
 - ✅ **وحدة إستبدال النقاط (0026)**: نقطة بيع بالنقاط (`/store`) — **المخزون** (`/store/inventory`: كود = ملصق QR، اسم، صورة، السعر بالنقاط، الكمية، متاح/غير متاح، نطاق كنيسة → خدمة → فصل، +/− كمية سريع، **طباعة ملصقات QR** بثلاث مقاسات وعدد نسخ), **الكاشير** (`/store/pos`: مسح كارت المخدوم أو البحث عنه → سلة باسمه وصورته و**رصيده الحي** → مسح ملصقات الأصناف أو اختيارها من الشبكة مع الكمية → مجموع لحظي والمتبقي بعد الشراء — **لا يمكن إضافة صنف يتجاوز الرصيد أو الكمية المتاحة** → «إتمام العملية» مع تأكيد → الفاتورة تُحفظ ويُخصم الرصيد), **الأرشيف** (`/store/archive`: كل الفواتير مع البنود والرصيد قبل/بعد والكاشير؛ المسؤولون يلغون فاتورة فتُستردّ النقاط والكمية). العملية تظهر للمخدوم في **صفحة النقاط ببوابة المخدوم** (مصدر «إستبدال النقاط» + فاتورة قابلة للفتح). مُقيَّدة بصلاحيات الوحدات (`module_visible('store')`) وواقعية
 - ✅ **وحدة الامتحانات (0027)**: امتحانات اختيار من متعدد (`/exams`) — الخادم ينشئ الامتحان (عنوان · نطاق كنيسة → خدمة → فصل · فترة إتاحة · وقت افتراضي ودرجة افتراضية للسؤال · **شرط النجاح** نسبة ٪ أو درجة · **نقاط النجاح ونقاط الدرجة الكاملة** · **كل الأسئلة أو عدد عشوائي** (مثلاً 10 من 20 لكل مخدوم) · ترتيب عشوائي للأسئلة والاختيارات · عدد المحاولات · ما يراه المخدوم بعد الانتهاء)، يضيف الأسئلة (نص · صورة · 2–6 اختيارات · الإجابة الصحيحة · الدرجة · الوقت لكل سؤال) ثم **ينشر**. تبويب **النتائج**: كل مخدوم حل الامتحان مع الدرجة والنسبة و**فلتر ناجح / لم ينجح** و**ترتيب بالدرجة أو الاسم أو التاريخ**، تفاصيل كل سؤال بإجابته، إلغاء محاولة (استرداد النقاط + إعادة)، تصدير Excel. في **بوابة المخدوم** يظهر «الامتحانات» في القائمة الجانبية والرئيسية: **سؤال واحد كل مرة مع عدّاد مرتبط بوقت السيرفر**، ينتقل تلقائياً عند انتهاء الوقت أو بالضغط على «التالي»، **لا يمكن الرجوع**، المتابعة من حيث توقف عند إغلاق التطبيق، شاشة نتيجة، والنقاط تُضاف لرصيده فوراً وتظهر في صفحة النقاط. مُقيَّدة بصلاحيات الوحدات (`module_visible('exams')`) وواقعية
 - ✅ **وحدة أعياد الميلاد (0028)**: `/birthdays` — **من عيد ميلاده هذا الشهر يوماً بيوم** مع ◀ ▶ لتغيير الشهر (والسنة) وشريط الشهور، ونطاق كنيسة → خدمة → فصل، واليوم الحالي مُضاء. لكل مخدوم: **اتصال** · **واتساب / SMS** بنص تهنئة فيه متغيرات ([الاسم الأول] · [السن] · [تاريخ العيد] · [اسم الفصل] …) · **هدية نقاط** (مرة واحدة في السنة، NumPad، تُسجَّل في سجل النقاط وتظهر للمخدوم) · **كارت تهنئة** (معاينة → **إرسال كصورة** عبر قائمة المشاركة/واتساب · تنزيل PNG بدقة 300dpi · طباعة) · **سجل التهاني** (مكالمة / واتساب / SMS / كارت مطبوع / كارت مُرسَل / هدية / ملاحظة — مع تراجع). جماعياً: **تهنئة الجميع** (يفتح محادثة كل مخدوم بدوره بالنص المكتوب مع تخطّي)، **هدية للجميع**، **طباعة كروت الشهر**، تصدير **تقويم ICS** (تذكير سنوي) و**Excel**، فلاتر (لم يُهنَّأ / هُنِّئ / بلا هدية / بلا هاتف) وبحث. **كروت التهنئة** (`/birthdays/cards`): قوالب بنفس محرك تصميم الكروت + بيانات عيد الميلاد (الاسم الأول · السن الجديدة · يوم وشهر العيد · نقاط الهدية)، افتراضي لكل نطاق، وتبويب طباعة مصدره مواليد الشهر. **الإعدادات** (`/birthdays/settings`): نقاط الهدية ونص التهنئة الافتراضي لكل كنيسة / عام. **الرئيسية**: بطاقة «أعياد الميلاد» بمواليد اليوم والأسبوع القادم. **بوابة المخدوم**: يوم عيد ميلاده يرى تهنئة وكارته (يحفظه كصورة) وهديته، وقبله بأسبوع عدّاد. مُقيَّدة بصلاحيات الوحدات (`module_visible('birthdays')`) وواقعية
@@ -271,6 +272,8 @@ servant_scopes       servant_id → servant_enrollments · church_id · service_
 | `/child` | child main page: name, picture, attendance & points, enrollments, latest activity |
 | `/child/attendance` | child attendance: by day, event filter, registration date/time, points |
 | `/child/points` | child points: balance, added/removed, by cause / attendance |
+| `/child/store` | child store — balance, **active shops** of his places, tabs طلباتي / فواتيري, request sheet (cancel while pending) & full receipt (20261001120000) |
+| `/child/store/[id]` | child shop — items grid, **cart** with stock / balance guards, note, «إرسال الطلب» → `child_portal_store_request`; a pending request locks the cart (20261001120000) |
 | `/child/data` | child data + QR + picture; upload picture / request data change; request history & cancel |
 | `/child/options` | child options: profile, refresh, install, logout |
 | `/settings/data-requests` | managers: approve / reject children's photo & data change requests |
@@ -286,6 +289,8 @@ servant_scopes       servant_id → servant_enrollments · church_id · service_
 | `/store` | **وحدة إستبدال النقاط** — hub (stats + links); module-gated (`store`) |
 | `/store/inventory` | المخزون — items CRUD (code / name / picture / price in points / stock / active / scope), quick ± stock, select → **print QR labels** |
 | `/store/pos` | الكاشير — scan or search child → basket with live balance → scan / pick items with qty → live total & remaining, balance + stock guard → confirm → `store_checkout` → receipt |
+| `/store/shops` | المتاجر — shops CRUD (name / picture / description), **activate / deactivate**, multi-place targets (church → service → class, «الكل»), item & pending counts (20261001120000) |
+| `/store/requests` | الطلبات — child purchase requests (pending by default; status / scope / shop filters), detail sheet → **scan the child's card** to confirm → approve (`store_request_approve`) or reject with a note (20261001120000) |
 | `/exams` | **وحدة الامتحانات** — hub: every exam in scope (status, questions, attempts, pass rate), filters, create, duplicate; module-gated (`exams`) |
 | `/exams/[id]` | exam page — الأسئلة (add / edit / reorder / duplicate / delete, publish · close · reopen) · النتائج (filter pass/fail, sort by degree/name/date, detail with every answer, cancel attempt, Excel) · الإعدادات |
 | `/child/exams` | child portal — open exams (rules, attempts left, last result) + past ones |
@@ -352,6 +357,7 @@ servant_scopes       servant_id → servant_enrollments · church_id · service_
    ⚠️ `0024_owner_module_access.sql` is **required** by وحدة المالك (`/owner/*`) and by the module sections of the side menu / settings. Adds `module_access` (owner-written grants: module → church/service/class, null = all), `module_visible(key)`, re-creates the card-module policies so `card_templates` / `card_print_requests` require `module_visible('cards')`, and **seeds one global grant for `cards`** so nothing disappears for existing users. Idempotent; run after 0023. Without it non-owners see no modules.
    ⚠️ `0025_shepherd_groups.sql` is **required** by وحدة الأشابين (`/shepherds`) and the «مجموعتي» button on the children page. Adds `shepherd_groups` (servant ↔ enrollment, **unique per enrollment**, scope filled by trigger), RLS gated by `module_visible('shepherds')`, the `shepherd_claims` / `shepherd_group_summary` RPCs and realtime. **No grant is seeded** — the owner enables the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0024.
    ⚠️ `0026_points_store.sql` is **required** by وحدة إستبدال النقاط (`/store/*`) and by the store rows in the child portal points page. Adds `store_items`, `store_orders`, `store_order_items` (RLS gated by `module_visible('store')`), the `store_checkout` / `store_cancel_order` / `store_lookup_item` RPCs, replaces `child_portal_points` (new `source = 'store'` + `order_id` columns) and adds `child_portal_store_orders`. **No grant is seeded** — enable the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0025.
+   ⚠️ `20261001120000_store_shops_and_child_requests.sql` is **required** by المتاجر (`/store/shops`), الطلبات (`/store/requests`), the shop badges in المخزون / الكاشير / الأرشيف and by `/child/store*`. Adds `store_shops`, `store_shop_targets`, `store_requests`, `store_request_items`, `store_items.shop_id`, `store_orders.shop_id / request_id / source`; the helpers `store_shop_covers` / `store_shop_visible` / `store_checkout_internal`; the anon child RPCs `child_portal_shops` / `child_portal_shop_items` / `child_portal_store_request` / `child_portal_store_request_cancel` / `child_portal_store_requests` (and redefines `child_portal_store_orders` with shop + source); the servant RPCs `store_request_approve(request, card_code, note)` / `store_request_reject` / `store_request_detail`; RLS, realtime publication and activity-log hooks. Without it the pages show a «شغّل الهجرة» hint. Idempotent; run after 20260930130000.
    ⚠️ `0027_exams.sql` is **required** by وحدة الامتحانات (`/exams/*`, `/child/exams/*`) and by the exam rows in the points pages. Adds `exams`, `exam_questions`, `exam_attempts`, `exam_answers` (RLS gated by `module_visible('exams')`; attempts / answers are read-only through the API), the anon child RPCs `child_portal_exams` / `child_exam_start` / `child_exam_current` / `child_exam_answer` / `child_exam_result`, the servant RPCs `exam_attempt_detail` / `exam_cancel_attempt` / `exam_duplicate`, the helper `module_granted_for`, and replaces `child_portal_points` (new `source = 'exam'` + `attempt_id`). **No grant is seeded** — enable the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0026.
    ⚠️ `0028_birthdays.sql` is **required** by وحدة أعياد الميلاد (`/birthdays/*`), the home birthdays widget and the birthday banner in the child portal. Adds `birthday_greetings` (person × year × kind, RLS gated by `module_visible('birthdays')`, scope filled by trigger, one gift per person per year), `birthday_card_templates` (same JSON design engine, scoped, one default per scope), `birthday_settings` (per church / global), the RPCs `birthdays_in_month` / `birthdays_upcoming` (security invoker → RLS) and `birthday_gift` / `birthday_gift_cancel` (SECURITY DEFINER; the gift is ONE `points_log` row), `next_birthday()` (Feb 29 → Feb 28), the anon `child_portal_birthday`, replaces `child_portal_points` (new `source = 'birthday'`) and an expression index on `persons(month, day)`. **No grant is seeded** — enable the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0027.
    ⚠️ `0029_chat_messages.sql` is **required** by وحدة الرسائل (`/messages/*`, `/child/messages/*`, the header bells and the «رسالة داخلية» channel on the children page). Adds `chat_messages` (kinds `child | staff | broadcast_children | broadcast_staff`, scope denormalized, RLS gated by `module_visible('messages')`, writes only through RPCs) and `chat_read_state` (per reader × bucket), the servant RPCs `chat_send` / `chat_inbox` / `chat_thread` / `chat_mark_read` / `chat_staff_recipients` / `chat_audience_count` / `chat_unread_total`, the anon child RPCs `child_chat_overview` / `child_chat_messages` / `child_chat_send` / `child_chat_mark_read` / `child_chat_unread`, a storage policy for `photos/child-messages/`, realtime. **No grant is seeded** — enable the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0028. (This replaces the reverted PR #51 module; it does **not** depend on it — if the old `0029_messaging.sql` was applied, run `supabase/rollbacks/0029_messaging_rollback.sql` first.)
@@ -430,7 +436,7 @@ Two one-file scripts to **fill the whole database with realistic Arabic demo dat
 
 | Script | What it does |
 |---|---|
-| `supabase/seed_test_data.sql` | **Up to date with migration 0051.** 2 churches · 3 services · 5 classes · 8 servant accounts (owner → pending request → **suspended**) · **extra servant scopes** (a servant in two classes, 0045) with their **mirror enrollments** (`kind = servant`, created by the trigger) · 26 children / 27 child enrollments (one in two classes, **one stopped** — 0043) · **child portal accounts** (bcrypt passwords, one on the default `000000`, live / «تذكرني» / expired sessions with known test tokens, pending / rejected / approved **join requests** — 0042) · 8 events incl. **scoped defaults** per church / service / class (0048) · 8 weeks of attendance · points / deductions · calls & messages with feedback · data-change requests · card templates + print queue · shepherd groups · store items + completed / cancelled orders · online exams (published / draft / closed) with attempts · birthdays (today / +2d / +6d) with gift · chat (child · staff · broadcasts) · online classes (ended & finalized · **live now** · scheduled · cancelled) · occasions (trip · conference · celebration tomorrow · completed) with tickets & checklist · manual + automatic notifications, push subscriptions · results module (grading systems, locked exam, open exam, archive) · library (subjects / books / lectures / favorites) · **card print profiles** (shared / church / service / class — 0049) · **report templates** for every data source (0050) · **backup schedules + run history** incl. a failed run and a restore (0044) · **activity log**: every seeded row is audited under the servant who «did it» (the script switches `auth.uid()` per section) plus app-level events — logins / logouts over 10 days, QR scans, exports, prints, a failed login, child-portal events (0047) · module grants (incl. `activity`, `reports`) · permission profiles · home widgets / names / navigation / **code system** (0040) / activity retention. Ends with a row-count summary. **Run once** (fixed UUIDs). |
+| `supabase/seed_test_data.sql` | **Up to date with migration 20261001120000.** 2 churches · 3 services · 5 classes · 8 servant accounts (owner → pending request → **suspended**) · **extra servant scopes** (a servant in two classes, 0045) with their **mirror enrollments** (`kind = servant`, created by the trigger) · 26 children / 27 child enrollments (one in two classes, **one stopped** — 0043) · **child portal accounts** (bcrypt passwords, one on the default `000000`, live / «تذكرني» / expired sessions with known test tokens, pending / rejected / approved **join requests** — 0042) · 8 events incl. **scoped defaults** per church / service / class (0048) · 8 weeks of attendance · points / deductions · calls & messages with feedback · data-change requests · card templates + print queue · shepherd groups · store items + completed / cancelled orders · **shops** (an active canteen for a whole service + another class, an inactive library) with items attached and **child requests** (2 pending · approved → bill `source = request` · rejected · cancelled — 20261001120000) · online exams (published / draft / closed) with attempts · birthdays (today / +2d / +6d) with gift · chat (child · staff · broadcasts) · online classes (ended & finalized · **live now** · scheduled · cancelled) · occasions (trip · conference · celebration tomorrow · completed) with tickets & checklist · manual + automatic notifications, push subscriptions · results module (grading systems, locked exam, open exam, archive) · library (subjects / books / lectures / favorites) · **card print profiles** (shared / church / service / class — 0049) · **report templates** for every data source (0050) · **backup schedules + run history** incl. a failed run and a restore (0044) · **activity log**: every seeded row is audited under the servant who «did it» (the script switches `auth.uid()` per section) plus app-level events — logins / logouts over 10 days, QR scans, exports, prints, a failed login, child-portal events (0047) · module grants (incl. `activity`, `reports`) · permission profiles · home widgets / names / navigation / **code system** (0040) / activity retention. Ends with a row-count summary. **Run once** (fixed UUIDs). |
 | `delete_database.sql` (repo root — **outside** `supabase/`, never picked up by the CLI / migrations) | **Delete the whole database** — `DROP SCHEMA public CASCADE` (every table + data, view, function, trigger, enum, sequence, policy) then re-creates `public` empty with the standard Supabase grants; truncates `auth.users` (→ identities / sessions), deletes every storage object **and the buckets** + the app's `storage.objects` / `realtime.messages` policies, unschedules pg_cron jobs, and empties `supabase_migrations.schema_migrations` so `supabase db push` re-installs from 0001. Leaves the project as if the app was never installed. Idempotent; prints a report (all 0). Run by hand only: SQL Editor → paste → Run. ⚠️ irreversible — back up first. |
 | `supabase/reset_system.sql` | **Factory reset** — `TRUNCATE … CASCADE` every public table, deletes **every** login account (auth.users + identities + sessions), clears **every** uploaded file (photos · logos · backups; buckets stay), restores the `cards` module grant, and **optionally re-creates the owner** in the same run (edit `owner_code` / `owner_password` / `owner_name` at the top; `owner_code = ''` → no owner, use `supabase/migrations/0002_bootstrap_owner.sql` instead). Schema / functions / policies stay — no re-migration needed. Prints what is left. |
 | `supabase/wipe_test_data.sql` | `TRUNCATE … CASCADE` every public table (catalogue-driven — new tables such as `activity_log`, `child_sessions`, `backup_*`, `report_templates` are picked up automatically; runs with `app.audit_off` so the wipe leaves no activity rows), deletes the seeded auth users (and, by default, every auth user left without a servant row — flip `seed_only` inside to keep real accounts), clears storage objects, restores the `cards` module grant that `0024` seeds, prints what is left (should be 0). Schema / functions / policies stay. |
@@ -1400,6 +1406,94 @@ only where the owner grants it (`/owner/modules` → إستبدال النقاط
   can't cancel, archive read-only, cross-class isolation, anon portal RPCs,
   manager cancel (refund + restock), double cancel, realtime publication.
   Validated on PostgreSQL 17 with all 26 migrations → «STORE TESTS PASSED».
+
+### Shops & child purchase requests — migration 20261001120000 (المتاجر وطلبات الشراء)
+`supabase/migrations/20261001120000_store_shops_and_child_requests.sql` · test `supabase/tests/store_shops_test.sql`
+
+The flow the user asked for: *a shop connected to a church / service / class
+(or several, or all) with an activation button; when active the child sees it
+in his portal, fills a cart and sends it to the servant; the servant sees the
+request, scans the child's card as confirmation, approves; the child gets a
+receipt with every detail, and the same receipt sits in the module archive.*
+
+- **Shops** (`store_shops`) — `church_id` (owning church, decides who may
+  write), `name`, `description`, `image_url` (`photos/store/`), **`is_active`**
+  (default off), `sort_order`, created / edited by. **Targets**
+  (`store_shop_targets`, one row per place): `church_id → service_id? →
+  class_id?` (null church = **«الكل»**, owner only; chain validated by
+  `check_store_shop_target`, duplicates blocked by a coalesce unique index).
+  `store_shop_covers(shop, church, service, class)` = any target overlaps that
+  place; `store_shop_visible(shop)` = `module_visible('store')` and
+  (`scope_contains(owning church)` or a target overlaps the caller's scope) —
+  so a class servant sees only shops that reach his class. RLS: select through
+  `store_shop_visible`, insert `scope_overlaps(church)`, update / delete
+  through `store_shop_visible(id)`, targets insert / delete need
+  `scope_contains(target)`. Items get `store_items.shop_id` — a shop item is
+  sold wherever the shop is covered (its own scope columns are ignored),
+  legacy items keep the 0026 scope rules.
+- **Child request** (`store_requests` + `store_request_items` snapshot) —
+  `child_portal_shops(token)` lists the **active** shops covering any of the
+  child's enrollments (with `items_count`, `enrollment_ids`,
+  `pending_requests`); `child_portal_shop_items(token, shop)` the active
+  in-stock items; `child_portal_store_request(token, shop, lines,
+  enrollment?, note?)` validates every line (item of that shop, active, stock ≥
+  qty, **total ≤ balance**) and stores the cart as `status = pending` with
+  `balance_at_request` — **no points are deducted yet**. One pending request
+  per shop per child (`request_pending`); the child cancels with
+  `child_portal_store_request_cancel`; `child_portal_store_requests` lists
+  them; `child_portal_store_orders` now returns `source`, `shop_id`,
+  `shop_name`, `request_id`, `note`. RLS: requests readable through
+  `enrollment_visible`, no write policies (RPC only). Realtime: bus triggers
+  on `store_requests`, publication on shops / targets.
+- **Servant decision** — `store_request_approve(request, card_code, note)`:
+  the request must be pending, the servant must see the enrollment, and
+  **`card_code` must equal the child's `national_id`** (else
+  `card_mismatch`) → `store_checkout_internal(..., source 'request')` runs
+  the 0026 checkout (locks, stock, balance, points_log) and links
+  `store_orders.request_id / shop_id / source = 'request'`, the request gets
+  `approved` + `order_id` + `decided_by / at`. `store_request_reject(request,
+  note)` stores the reason. `store_checkout` (POS) still works and stamps the
+  shop of the first line. Activity log: `store_shop.add / update /
+  activate / deactivate / remove`, `store_shop_target.*`,
+  `store_request.add` (actor = the child), `store_request.approved /
+  rejected / cancelled`.
+- **UI (servants)** — tabs الكاشير · **الطلبات** (pending badge) ·
+  **المتاجر** · المخزون · الأرشيف. `/store/shops`: cards with target badges,
+  item / pending counts, **تفعيل / إيقاف** button, edit (`ShopFormModal`:
+  picture, multi-target picker, «الكل» for the owner), delete, links to the
+  shop's items / requests. `/store/requests`: status filter, request sheet
+  with the child, lines, balances → `QrScanner` (auto-start) — the scanned
+  code is compared to the child's `national_id`; only a match unlocks
+  «اعتماد»; reject asks for a note. `/store/inventory`: shop filter
+  (all / no shop / a shop) and a shop select in the item form (a shop item
+  hides the scope selects). `/store/pos`: shop items apply through the shop's
+  targets, shop name on the tiles. `/store/archive` + bill sheet: shop and
+  «طلب من البوابة» badges.
+- **UI (child)** — home card + side-menu entry «المتجر» with a pending
+  badge. `/child/store`: balance, active shops, tabs طلباتي / فواتيري,
+  `RequestSheet` (cancel while pending, jump to the receipt),
+  `ReceiptSheet` (shop, source, lines, balance before / after — also used by
+  `/child/points`). `/child/store/[id]`: items grid, cart with stock and
+  balance guards, enrollment selector when the child is in several classes,
+  note, confirm sheet → «إرسال الطلب»; a pending request shows a banner and
+  locks the cart until the servant decides.
+- **Data layer** — `src/lib/store.ts` (`fetchStoreShops`, `saveStoreShop`
+  with target diffing, `setStoreShopActive`, `fetchStoreRequests`,
+  `storeRequestApprove / Reject`, `itemAppliesTo(item, child, targetsByShop)`,
+  `isShopsMigrationMissing` → hint), `src/lib/child-portal.ts`
+  (`fetchChildShops`, `fetchChildShopItems`, `sendChildStoreRequest`,
+  `cancelChildStoreRequest`, `fetchChildStoreRequests`), `child-context.tsx`
+  (`shops`, `storeRequests`, realtime + 30 s poll), types in
+  `src/lib/types.ts` (`StoreShop`, `StoreShopTarget`, `StoreRequest*`,
+  `STORE_REQUEST_STATUS_LABELS`, `StoreOrderSource`).
+- **Tests** — `store_shops_test.sql`: RLS visibility per class servant,
+  inactive shop hidden from the portal / shown after activation, request rules
+  (empty · over balance · item of another shop · other church · one pending),
+  wrong card refused → right card approves with a `source = request` bill,
+  child receipt / cancel / reject flows, POS stamping + coverage, activity log
+  entries. Runs on the local shim after the full migration chain →
+  «STORE SHOPS TESTS PASSED» (0026 / activity / child-account tests still
+  pass).
 
 ## Exams module — migration 0027 (وحدة الامتحانات)
 Multiple-choice exams the children solve from their portal. Optional module,

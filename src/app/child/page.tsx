@@ -7,11 +7,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  CalendarCheck, Star, ChevronLeft, School, Layers, Church, Sparkles, Database, GraduationCap, MessageCircle, Video, Trophy, Tent, Library, Cross, UsersRound,
+  CalendarCheck, Star, ChevronLeft, School, Layers, Church, Sparkles, Database, GraduationCap, MessageCircle, Video, Trophy, Tent, Library, Cross, UsersRound, ShoppingBag,
 } from 'lucide-react';
 import { useChildConfession } from '@/components/child/ConfessionBits';
 import { useChildFamily } from '@/components/child/FamilyBits';
-import ChildShell, { useChildExams, useChildMessages, useChildOnline, useChildAchievements, useChildOccasions, useChildLibrary } from '@/components/child/ChildShell';
+import ChildShell, { useChildExams, useChildMessages, useChildOnline, useChildAchievements, useChildOccasions, useChildLibrary, useChildShops } from '@/components/child/ChildShell';
 import { Avatar, Kpi, fmtDateTime, usePortalList } from '@/components/child/ChildBits';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
@@ -42,6 +42,7 @@ function HomeContent() {
   const { hasAny: hasConfession, mine: myPriest, pending: confPending, upcoming: confUpcoming } = useChildConfession();
   const { data: famData, hasFamily, hasPriests: hasFamilyPriests, pending: famPending, upcoming: famUpcoming } = useChildFamily();
   const { hasAny: hasLibrary, subjects: libSubjects, books: libBooks, lectures: libLectures } = useChildLibrary();
+  const { hasAny: hasShops, shops: shopList, shopCount, pending: shopPending } = useChildShops();
 
   const { rows: attendance } = usePortalList<ChildAttendanceRow>(
     token ? () => fetchChildAttendance(supabase, token) : null,
@@ -159,6 +160,24 @@ function HomeContent() {
               </span>
             </span>
             {liveCount > 0 && <span className="flex items-center gap-1 rounded-full bg-red-600 px-2.5 py-1 text-xs font-extrabold text-white"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> مباشر</span>}
+            <ChevronLeft className="h-4 w-4 text-slate-300" />
+          </Link>
+        </section>
+      )}
+
+      {/* Store shops (المتجر) — only when an ACTIVE shop is connected to one of his places */}
+      {hasShops && (
+        <section className="mb-4">
+          <Link id="child-home-store" href={shopCount === 1 && shopList?.[0] ? `/child/store/${shopList[0].id}` : '/child/store'}
+            className={`card flex items-center gap-3 !p-3 transition hover:bg-orange-50/40 ${shopPending > 0 ? 'ring-2 ring-orange-200' : ''}`}>
+            <span className="rounded-xl bg-orange-500 p-2.5 text-white"><ShoppingBag className="h-6 w-6" /></span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-extrabold">{shopCount === 1 && shopList?.[0] ? shopList[0].name : 'المتجر'}</span>
+              <span className="block truncate text-xs text-slate-500">
+                {shopPending > 0 ? `لديك ${shopPending} طلب بانتظار الخادم — اذهب إليه بكارتك للاستلام` : shopCount > 1 ? `${shopCount} متاجر — استبدل نقاطك بأصناف` : `استبدل نقاطك (${totalPoints}) بأصناف من المتجر`}
+              </span>
+            </span>
+            {shopPending > 0 && <span className="rounded-full bg-orange-600 px-2.5 py-1 text-xs font-extrabold text-white tabular-nums">{shopPending}</span>}
             <ChevronLeft className="h-4 w-4 text-slate-300" />
           </Link>
         </section>

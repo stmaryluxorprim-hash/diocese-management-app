@@ -1,31 +1,54 @@
 'use client';
 
 // ---------- Points store — shared UI bits ----------
-// StoreHeader: back arrow + title + the 3 module tabs (المخزون · الكاشير · الأرشيف)
+// StoreHeader: back arrow + title + the 5 module tabs
+//   (الكاشير · الطلبات · المتاجر · المخزون · الأرشيف) — الطلبات carries the live
+//   count of pending child requests (20261001120000)
 // ItemThumb  : item picture or a placeholder
 // ScopeSelectors: church → service → class selects (same as the other modules)
 // useStoreLookups: churches / services / classes via cachedLookup
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, ShoppingBag, Package, ScanLine, Archive, ImageIcon } from 'lucide-react';
+import { ArrowRight, ShoppingBag, Package, ScanLine, Archive, ImageIcon, Store, Inbox } from 'lucide-react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cachedLookup, ALL } from '@/lib/queries';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import { useNavLabel } from '@/lib/customization-context';
+import { useAuth } from '@/lib/auth-context';
+import { createClient } from '@/lib/supabase/client';
+import { useDebouncedRealtime } from '@/lib/realtime';
 import InfoTip from '@/components/InfoTip';
 
 const TABS = [
   { href: '/store/pos', label: 'الكاشير', icon: ScanLine, id: 'store-tab-pos' },
+  { href: '/store/requests', label: 'الطلبات', icon: Inbox, id: 'store-tab-requests' },
+  { href: '/store/shops', label: 'المتاجر', icon: Store, id: 'store-tab-shops' },
   { href: '/store/inventory', label: 'المخزون', icon: Package, id: 'store-tab-inventory' },
   { href: '/store/archive', label: 'الأرشيف', icon: Archive, id: 'store-tab-archive' },
 ];
 
+/** Live count of the child requests waiting for a decision (RLS-scoped). */
+export function usePendingStoreRequests(): number {
+  const { profile } = useAuth();
+  const [supabase] = useState(() => createClient());
+  const [count, setCount] = useState(0);
+  const enabled = profile?.status === 'approved';
+  const load = useCallback(async () => {
+    const { count: c, error } = await supabase.from('store_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+    if (!error) setCount(c ?? 0);
+  }, [supabase]);
+  useEffect(() => { if (enabled) load(); }, [enabled, load]);
+  useDebouncedRealtime(supabase, 'store-requests-badge', [{ table: 'store_requests' }], load, { enabled, delayMs: 500 });
+  return count;
+}
+
 export function StoreHeader({ title, badge, info }: { title?: string; badge?: React.ReactNode; info?: React.ReactNode }) {
   const path = usePathname();
   const name = useNavLabel('store');
+  const pending = usePendingStoreRequests();
   return (
     <>
       <section className="mb-3 flex items-center gap-2">
@@ -40,18 +63,24 @@ export function StoreHeader({ title, badge, info }: { title?: string; badge?: Re
           {info && <InfoTip title={name}>{info}</InfoTip>}
         </h2>
       </section>
-      <nav id="store-tabs" className="mb-3 grid grid-cols-3 gap-2">
+      <nav id="store-tabs" className="mb-3 grid grid-cols-5 gap-1.5">
         {TABS.map((t) => {
           const active = path?.startsWith(t.href);
           const Icon = t.icon;
+          const n = t.href === '/store/requests' ? pending : 0;
           return (
             <Link
               key={t.href} id={t.id} href={t.href} aria-current={active ? 'page' : undefined}
-              className={`flex h-11 items-center justify-center gap-2 rounded-xl text-sm font-extrabold transition active:scale-95 ${
+              className={`relative flex h-12 flex-col items-center justify-center gap-0.5 rounded-xl text-[11px] font-extrabold transition active:scale-95 ${
                 active ? 'bg-orange-600 text-white shadow ring-2 ring-orange-300' : 'bg-white text-slate-600 border border-slate-200'
               }`}
             >
               <Icon className="h-4 w-4" /> {t.label}
+              {n > 0 && (
+                <span className={`absolute -top-1.5 -left-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[10px] font-extrabold tabular-nums ring-2 ring-white ${active ? 'bg-white text-orange-700' : 'bg-red-500 text-white'}`}>
+                  {n > 99 ? '99+' : n}
+                </span>
+              )}
             </Link>
           );
         })}
@@ -76,6 +105,25 @@ export function ItemThumb({ url, name, size = 48, fill = false, className = '' }
       )}
     </div>
   );
+}
+
+/** Shop picture (or a storefront placeholder). */
+export function ShopThumb({ url, name, size = 48, className = '' }: { url: string | null; name: string; size?: number; className?: string }) {
+  return (
+    <div className={`relative shrink-0 overflow-hidden rounded-2xl bg-orange-100 text-orange-400 ring-1 ring-orange-200 ${className}`} style={{ width: size, height: size }}>
+      {url ? <Image src={url} alt={name} fill sizes={`${size}px`} className="object-cover" />
+        : <Store className="absolute inset-0 m-auto" style={{ width: size * 0.5, height: size * 0.5 }} />}
+    </div>
+  );
+}
+
+/** «كنيسة ← خدمة ← فصل» label of ONE shop target (church null = الكل) */
+export function targetLabel(
+  t: { church_id: string | null; service_id: string | null; class_id: string | null },
+  churches: Church[], services: Service[], classes: ClassRoom[]
+) {
+  if (t.church_id === null) return 'الكل — كل الكنائس';
+  return scopeLabel({ church_id: t.church_id, service_id: t.service_id, class_id: t.class_id }, churches, services, classes);
 }
 
 export function useStoreLookups(supabase: SupabaseClient, enabled: boolean) {

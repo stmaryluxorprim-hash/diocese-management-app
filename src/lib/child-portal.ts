@@ -217,6 +217,12 @@ export interface ChildStoreOrder {
   id: string;
   enrollment_id: string;
   status: 'completed' | 'cancelled';
+  /** 20261001120000 — pos = sold at the cashier · request = my approved request */
+  source?: 'pos' | 'request';
+  shop_id?: string | null;
+  shop_name?: string | null;
+  request_id?: string | null;
+  note?: string | null;
   items_count: number;
   total_points: number;
   balance_before: number;
@@ -228,6 +234,64 @@ export interface ChildStoreOrder {
   service_name: string;
   church_name: string;
   items: ChildStoreOrderLine[];
+}
+
+// ---------- Shops in the portal (المتاجر, migration 20261001120000) ----------
+export interface ChildShop {
+  id: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  church_id: string;
+  church_name: string;
+  items_count: number;            // active items with stock
+  enrollment_ids: string[] | null; // my enrollments the shop is connected to
+  pending_requests: number;       // my open requests in this shop
+}
+
+export interface ChildShopItem {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  price: number;
+  stock: number;
+}
+
+export type ChildStoreRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface ChildStoreRequestLine {
+  id: string;
+  item_id: string | null;
+  item_name: string;
+  item_code: string;
+  image_url: string | null;
+  unit_price: number;
+  qty: number;
+  line_total: number;
+}
+
+export interface ChildStoreRequest {
+  id: string;
+  shop_id: string;
+  shop_name: string;
+  shop_image_url: string | null;
+  enrollment_id: string;
+  status: ChildStoreRequestStatus;
+  items_count: number;
+  total_points: number;
+  balance_at_request: number;
+  note: string | null;
+  decision_note: string | null;
+  order_id: string | null;
+  decided_at: string | null;
+  decided_by_name: string | null;
+  created_at: string;
+  class_name: string;
+  service_name: string;
+  church_name: string;
+  items: ChildStoreRequestLine[];
 }
 
 export type RequestKind = 'data' | 'photo';
@@ -456,6 +520,15 @@ const ERROR_MESSAGES: Record<string, string> = {
   not_pending: 'هذا الطلب لم يعد قيد المراجعة',
   not_found: 'الطلب غير موجود',
   forbidden: 'ليس لديك صلاحية على هذا الطلب',
+  // store shops (20261001120000)
+  shop_not_found: 'هذا المتجر غير متاح لك الآن',
+  empty_basket: 'السلة فارغة — أضف أصنافاً أولاً',
+  invalid_line: 'بند غير صالح في السلة',
+  item_not_found: 'أحد الأصناف لم يعد موجوداً في المتجر',
+  item_inactive: 'أحد الأصناف غير متاح الآن',
+  insufficient_stock: 'الكمية المتاحة من أحد الأصناف لا تكفي',
+  insufficient_points: 'رصيدك من النقاط لا يكفي لهذه السلة',
+  request_pending: 'لديك طلب سابق بانتظار الخادم في هذا المتجر — انتظر رده أو ألغِه أولاً',
   // exams (0027)
   module_not_visible: 'وحدة الامتحانات غير مفعّلة لفصلك',
   exam_not_found: 'الامتحان غير موجود',
@@ -539,6 +612,44 @@ export async function fetchChildStoreOrders(supabase: SupabaseClient, token: str
   const { data, error } = await supabase.rpc('child_portal_store_orders', { p_national_id: token });
   if (error) return [];
   return (data ?? []) as ChildStoreOrder[];
+}
+
+/** ACTIVE shops connected to one of my enrollments. Empty when the shops migration is missing. */
+export async function fetchChildShops(supabase: SupabaseClient, token: string): Promise<ChildShop[]> {
+  const { data, error } = await supabase.rpc('child_portal_shops', { p_national_id: token });
+  if (error) return [];
+  return (data ?? []) as ChildShop[];
+}
+
+export async function fetchChildShopItems(supabase: SupabaseClient, token: string, shopId: string): Promise<ChildShopItem[]> {
+  const { data, error } = await supabase.rpc('child_portal_shop_items', { p_national_id: token, p_shop: shopId });
+  if (error) throw error;
+  return (data ?? []) as ChildShopItem[];
+}
+
+/** «أرسل الطلب» — my cart → a pending request the servant approves after scanning my card */
+export async function sendChildStoreRequest(
+  supabase: SupabaseClient, token: string, shopId: string,
+  lines: { item_id: string; qty: number }[], enrollmentId?: string | null, note?: string
+): Promise<ChildStoreRequest> {
+  const { data, error } = await supabase.rpc('child_portal_store_request', {
+    p_national_id: token, p_shop: shopId, p_lines: lines,
+    p_enrollment: enrollmentId ?? null, p_note: note?.trim() || null,
+  });
+  if (error) throw error;
+  return data as ChildStoreRequest;
+}
+
+export async function cancelChildStoreRequest(supabase: SupabaseClient, token: string, requestId: string): Promise<ChildStoreRequest> {
+  const { data, error } = await supabase.rpc('child_portal_store_request_cancel', { p_national_id: token, p_request: requestId });
+  if (error) throw error;
+  return data as ChildStoreRequest;
+}
+
+export async function fetchChildStoreRequests(supabase: SupabaseClient, token: string): Promise<ChildStoreRequest[]> {
+  const { data, error } = await supabase.rpc('child_portal_store_requests', { p_national_id: token });
+  if (error) return [];
+  return (data ?? []) as ChildStoreRequest[];
 }
 
 export async function fetchChildRequests(supabase: SupabaseClient, token: string): Promise<DataChangeRequest[]> {

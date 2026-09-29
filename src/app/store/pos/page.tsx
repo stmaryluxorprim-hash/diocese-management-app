@@ -32,9 +32,10 @@ import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime, onBusTable } from '@/lib/realtime';
 import { fetchEnrollmentsPage, ALL } from '@/lib/queries';
 import {
-  fetchStoreItems, lookupStoreItem, storeCheckout, storeErrorMessage, isMigrationMissing, MIGRATION_HINT,
-  basketTotal, basketCount, itemAppliesTo, type BasketLine,
+  fetchStoreItems, fetchStoreShops, targetsByShop, lookupStoreItem, storeCheckout, storeErrorMessage, isMigrationMissing, MIGRATION_HINT,
+  basketTotal, basketCount, itemAppliesTo, type BasketLine, type StoreShopWithTargets,
 } from '@/lib/store';
+import type { StoreShopTarget } from '@/lib/types';
 import type { EnrollmentWithPerson, StoreItem, StoreCheckoutResult, Person } from '@/lib/types';
 
 type Receipt = StoreCheckoutResult & { person: Person; lines: BasketLine[]; className: string };
@@ -123,19 +124,29 @@ export default function PosPage() {
   const [itemSearch, setItemSearch] = useState('');
   const [lines, setLines] = useState<BasketLine[]>([]);
 
+  // shops (20261001120000): an item of a shop applies where the SHOP is
+  // connected — keep the targets map fresh alongside the items
+  const [shopTargets, setShopTargets] = useState<Map<string, StoreShopTarget[]>>(new Map());
+  const shopsRef = useRef<StoreShopWithTargets[]>([]);
   const loadItems = useCallback(async () => {
     if (!child) return;
     setItemsLoading(true);
     try {
-      const rows = await fetchStoreItems(supabase, { church: child.church_id }, { activeOnly: true });
-      setItems(rows.filter((it) => itemAppliesTo(it, child)));
+      let shops: StoreShopWithTargets[] = [];
+      try { shops = await fetchStoreShops(supabase); } catch { shops = []; }   // pre-shops DB → legacy scoping
+      shopsRef.current = shops;
+      const map = targetsByShop(shops);
+      setShopTargets(map);
+      const rows = await fetchStoreItems(supabase, {}, { activeOnly: true });
+      setItems(rows.filter((it) => itemAppliesTo(it, child, map)));
       setMigrationMissing(false);
     } catch (err) {
       if (isMigrationMissing(err)) setMigrationMissing(true);
     } finally { setItemsLoading(false); }
   }, [supabase, child]);
   useEffect(() => { loadItems(); }, [loadItems]);
-  useDebouncedRealtime(supabase, 'pos-items', [{ table: 'store_items' }], loadItems, { enabled: !!child, delayMs: 600 });
+  useDebouncedRealtime(supabase, 'pos-items', [{ table: 'store_items' }, { table: 'store_shops' }, { table: 'store_shop_targets' }], loadItems, { enabled: !!child, delayMs: 600 });
+  const shopName = (id: string | null) => shopsRef.current.find((s) => s.id === id)?.name ?? null;
 
   // keep basket lines in sync with fresh item rows (price / stock changes)
   useEffect(() => {
@@ -170,7 +181,7 @@ export default function PosPage() {
     if (!found) {
       try {
         const rows = await lookupStoreItem(supabase, code);
-        found = rows.find((r) => itemAppliesTo(r, child));
+        found = rows.find((r) => itemAppliesTo(r, child, shopTargets));
         if (!found && rows.length) { flash(`«${rows[0].name}» غير متاح لفصل هذا المخدوم`); return true; }
       } catch (err) { flash(storeErrorMessage(err)); return true; }
     }
@@ -180,7 +191,7 @@ export default function PosPage() {
     flash(err ?? `＋ ${found.name}`);
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [child, items, supabase, lines, total, balance]);
+  }, [child, items, supabase, lines, total, balance, shopTargets]);
 
   // One camera for both: a code is tried as an item first (basket open),
   // then as a child card (switches the basket if the current one is empty).
@@ -413,7 +424,10 @@ export default function PosPage() {
                       <span className="min-w-0 flex-1 truncate text-xs font-extrabold">{it.name}</span>
                       <span className="badge bg-gold-100 text-gold-700 !px-1.5"><Star className="h-3 w-3" /> {it.price}</span>
                     </div>
-                    <p className="w-full px-2 pb-1.5 text-[10px] font-bold text-slate-400">متاح: {it.stock - q}</p>
+                    <p className="flex w-full items-center gap-1 px-2 pb-1.5 text-[10px] font-bold text-slate-400">
+                      <span>متاح: {it.stock - q}</span>
+                      {it.shop_id && shopName(it.shop_id) && <span className="mr-auto truncate text-orange-500">{shopName(it.shop_id)}</span>}
+                    </p>
                   </button>
                 );
               })}
