@@ -12,6 +12,7 @@ import {
   clearChildToken, fetchChildProfile, getChildToken, setChildToken,
   childLogin, childLogout, childSessionTouch,
   childErrorMessage, fetchChildExams, fetchChildOnlineClasses, type ChildProfile, type ChildExam, type ChildOnlineClass,
+  fetchChildShops, fetchChildStoreRequests, type ChildShop, type ChildStoreRequest,
 } from '@/lib/child-portal';
 import { fetchChildChatOverview, type ChildChatOverview } from '@/lib/chat';
 import { fetchChildAchievements, type ChildAchievements } from '@/lib/achievements';
@@ -67,6 +68,10 @@ interface ChildState {
   library: ChildLibrary | null;
   reloadLibrary: () => void;
   toggleLibraryFavorite: (kind: 'book' | 'lecture', id: string) => Promise<void>;
+  /** store shops (20261001120000): the ACTIVE shops connected to my places + my purchase requests — realtime on store_shops / targets, poll for requests */
+  shops: ChildShop[] | null;
+  storeRequests: ChildStoreRequest[] | null;
+  reloadShops: () => void;
 }
 
 const ChildContext = createContext<ChildState>({
@@ -92,6 +97,9 @@ const ChildContext = createContext<ChildState>({
   library: null,
   reloadLibrary: () => {},
   toggleLibraryFavorite: async () => {},
+  shops: null,
+  storeRequests: null,
+  reloadShops: () => {},
 });
 
 export function ChildProvider({ children }: { children: ReactNode }) {
@@ -420,9 +428,44 @@ export function ChildProvider({ children }: { children: ReactNode }) {
     catch { setLibTick((t) => t + 1); }
   }, [token, library, supabase]);
 
+  // ---- modules: store shops (20261001120000) — shops + my requests; realtime
+  // on store_shops / store_shop_targets (cold tables), poll for the requests
+  // (store_requests is broadcast-only → the child has no auth session)
+  const [shops, setShops] = useState<ChildShop[] | null>(null);
+  const [storeRequests, setStoreRequests] = useState<ChildStoreRequest[] | null>(null);
+  const [shopTick, setShopTick] = useState(0);
+  const reloadShops = useCallback(() => setShopTick((t) => t + 1), []);
+  useEffect(() => {
+    if (!token) { setShops(null); setStoreRequests(null); return; }
+    let cancelled = false;
+    const run = () => Promise.all([fetchChildShops(supabase, token), fetchChildStoreRequests(supabase, token)])
+      .then(([s, r]) => { if (!cancelled) { setShops(s); setStoreRequests(r); } })
+      .catch(() => { if (!cancelled) { setShops([]); setStoreRequests([]); } });
+    run();
+    const onVis = () => { if (document.visibilityState === 'visible') run(); };
+    document.addEventListener('visibilitychange', onVis);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => { if (timer) clearTimeout(timer); timer = setTimeout(run, 800); };
+    const channel = supabase.channel(uniqueTopic('child-shops'));
+    try {
+      channel
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'store_shops' }, bump)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'store_shop_targets' }, bump)
+        .subscribe();
+    } catch { /* realtime unavailable → polling on focus only */ }
+    const poll = startChildPoll(run, 30_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVis);
+      supabase.removeChannel(channel);
+      poll();
+    };
+  }, [token, supabase, shopTick]);
+
   const value = useMemo(
-    () => ({ token, profile, loading, error, refresh, login, logout, exams, conversations, reloadMessages, onlineClasses, reloadOnline, achievements, reloadAchievements, occasions, reloadOccasions, notifications, reloadNotifications, patchNotifications, library, reloadLibrary, toggleLibraryFavorite }),
-    [token, profile, loading, error, refresh, login, logout, exams, conversations, reloadMessages, onlineClasses, reloadOnline, achievements, reloadAchievements, occasions, reloadOccasions, notifications, reloadNotifications, patchNotifications, library, reloadLibrary, toggleLibraryFavorite]
+    () => ({ token, profile, loading, error, refresh, login, logout, exams, conversations, reloadMessages, onlineClasses, reloadOnline, achievements, reloadAchievements, occasions, reloadOccasions, notifications, reloadNotifications, patchNotifications, library, reloadLibrary, toggleLibraryFavorite, shops, storeRequests, reloadShops }),
+    [token, profile, loading, error, refresh, login, logout, exams, conversations, reloadMessages, onlineClasses, reloadOnline, achievements, reloadAchievements, occasions, reloadOccasions, notifications, reloadNotifications, patchNotifications, library, reloadLibrary, toggleLibraryFavorite, shops, storeRequests, reloadShops]
   );
 
   return <ChildContext.Provider value={value}>{children}</ChildContext.Provider>;

@@ -6,19 +6,19 @@
 // · scope church → service → class (null = all, like causes).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Save, Loader2, Upload, Shuffle, QrCode, Trash2 } from 'lucide-react';
+import { X, Save, Loader2, Upload, Shuffle, QrCode, Trash2, Store } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { uploadPhoto } from '@/lib/upload';
 import { useAuth } from '@/lib/auth-context';
-import { storeErrorMessage } from '@/lib/store';
+import { storeErrorMessage, type StoreShopWithTargets } from '@/lib/store';
 import { useCodeGenerator } from '@/lib/customization-context';
-import { ItemThumb } from '@/components/store/StoreBits';
+import { ItemThumb, targetLabel } from '@/components/store/StoreBits';
 import type { StoreItem, Church, Service, ClassRoom } from '@/lib/types';
 
 const ALL = 'all';
 
 /** Down-scale any picked image to ≤ 640px webp (keeps storage tiny). */
-async function compressImage(file: File): Promise<Blob> {
+export async function compressImage(file: File): Promise<Blob> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -46,10 +46,13 @@ async function compressImage(file: File): Promise<Blob> {
 }
 
 export default function ItemFormModal({
-  item, churches, services, classes, onClose, onSaved,
+  item, churches, services, classes, shops = [], defaultShopId = null, onClose, onSaved,
 }: {
   item: StoreItem | null;
   churches: Church[]; services: Service[]; classes: ClassRoom[];
+  /** the shops the caller can see (20261001120000) — an item may belong to one */
+  shops?: StoreShopWithTargets[];
+  defaultShopId?: string | null;
   onClose: () => void;
   onSaved: (saved: StoreItem) => void;
 }) {
@@ -68,6 +71,8 @@ export default function ItemFormModal({
   const [price, setPrice] = useState(String(item?.price ?? 1));
   const [stock, setStock] = useState(String(item?.stock ?? 0));
   const [isActive, setIsActive] = useState(item?.is_active ?? true);
+  const [shopId, setShopId] = useState<string>(item ? (item.shop_id ?? '') : (defaultShopId ?? ''));
+  const shop = shops.find((s) => s.id === shopId) ?? null;
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(item?.image_url ?? null);
   const [removePhoto, setRemovePhoto] = useState(false);
@@ -108,7 +113,7 @@ export default function ItemFormModal({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!churchId) return setError('اختر الكنيسة');
+    if (!shop && !churchId) return setError('اختر الكنيسة');
     if (!code.trim()) return setError('الكود مطلوب');
     if (!name.trim()) return setError('اسم الصنف مطلوب');
     const p = parseInt(price, 10);
@@ -129,10 +134,13 @@ export default function ItemFormModal({
       }
     }
 
+    // an item of a shop takes the SHOP's places; its own scope columns only
+    // keep the owning church (the code is unique per church)
     const payload = {
-      church_id: churchId,
-      service_id: serviceId === ALL ? null : serviceId,
-      class_id: serviceId === ALL || classId === ALL ? null : classId,
+      church_id: shop ? shop.church_id : churchId,
+      service_id: shop || serviceId === ALL ? null : serviceId,
+      class_id: shop || serviceId === ALL || classId === ALL ? null : classId,
+      ...(shops.length > 0 || item?.shop_id ? { shop_id: shopId || null } : {}),
       code: code.trim(),
       name: name.trim(),
       description: description.trim() || null,
@@ -220,12 +228,28 @@ export default function ItemFormModal({
             </div>
           </div>
 
-          {/* scope */}
-          <div>
+          {/* shop (20261001120000) */}
+          {shops.length > 0 && (
+            <div>
+              <label className="mb-1 flex items-center gap-1 text-xs font-bold text-slate-500"><Store className="h-3.5 w-3.5" /> المتجر</label>
+              <select id="item-shop" className="input-field text-sm font-bold" value={shopId} onChange={(e) => setShopId(e.target.value)}>
+                <option value="">بدون متجر — للكاشير فقط (بالنطاق بالأسفل)</option>
+                {shops.map((s) => <option key={s.id} value={s.id}>{s.name}{s.is_active ? '' : ' (غير مفعّل)'}</option>)}
+              </select>
+              {shop && (
+                <p className="mt-1 text-[11px] font-bold text-slate-400">
+                  يظهر الصنف حيث يرتبط المتجر: {shop.targets.map((t) => targetLabel(t, churches, services, classes)).join(' · ') || '—'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* scope (legacy items without a shop) */}
+          <div className={shop ? 'hidden' : ''}>
             <label className="mb-1 block text-xs font-bold text-slate-500">متاح لـ (كنيسة ← خدمة ← فصل)</label>
             <div className="grid grid-cols-3 gap-2">
               <select className={`input-field !px-2 text-xs font-bold ${churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }} required>
+                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }} required={!shop}>
                 <option value="">الكنيسة</option>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>

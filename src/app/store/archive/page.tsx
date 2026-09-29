@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Search, Loader2, Archive, Star, ChevronDown, X, Receipt, Clock, User, Ban, Check, School, AlertTriangle,
+  Search, Loader2, Archive, Star, ChevronDown, X, Receipt, Clock, User, Ban, Check, School, AlertTriangle, Store, Smartphone,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { PersonAvatar } from '@/components/CallFeedback';
@@ -175,6 +175,8 @@ export default function ArchivePage() {
                           <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDateTime(o.created_at)}</span>
                           <span className="flex items-center gap-1"><School className="h-3 w-3" /> {className(o.class_id)}</span>
                           <span>{o.items_count} قطعة</span>
+                          {o.shop?.name && <span className="flex items-center gap-1 text-orange-600"><Store className="h-3 w-3" /> {o.shop.name}</span>}
+                          {o.source === 'request' && <span className="flex items-center gap-1 text-sky-600"><Smartphone className="h-3 w-3" /> طلب من البوابة</span>}
                         </span>
                       </span>
                       {o.status === 'cancelled'
@@ -240,7 +242,11 @@ export default function ArchivePage() {
 
             <div className="space-y-1 text-[11px] font-bold text-slate-500">
               <p className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDateTime(detail.created_at)}</p>
-              <p className="flex items-center gap-1"><User className="h-3 w-3" /> الكاشير: {names.get(detail.recorded_by ?? '') ?? '—'}</p>
+              {detail.shop?.name && <p className="flex items-center gap-1 text-orange-600"><Store className="h-3 w-3" /> المتجر: {detail.shop.name}</p>}
+              <p className="flex items-center gap-1">
+                {detail.source === 'request' ? <><Smartphone className="h-3 w-3 text-sky-600" /> طلب أرسله المخدوم من بوابته واعتمده بعد مسح الكارت:</> : <><User className="h-3 w-3" /> الكاشير:</>}
+                {' '}{names.get(detail.recorded_by ?? '') ?? '—'}
+              </p>
               {detail.note && <p className="rounded-lg bg-slate-50 px-2 py-1">📝 {detail.note}</p>}
               {detail.status === 'cancelled' && detail.cancelled_at && (
                 <p className="flex items-center gap-1 text-red-500"><Ban className="h-3 w-3" /> أُلغيت {fmtDateTime(detail.cancelled_at)} بواسطة {names.get(detail.cancelled_by ?? '') ?? '—'} — استُردّت النقاط والكمية</p>

@@ -8,12 +8,12 @@
 // Filter by source, totals for added / removed, grouped by day.
 
 import { useMemo, useState } from 'react';
-import Image from 'next/image';
 import {
-  Star, Loader2, Clock, User, Layers, Plus, Minus, CalendarCheck, Award, ShoppingBag, X, Receipt, Ban, Check, ChevronLeft, ImageIcon, GraduationCap, Cake, Trophy, Tent,
+  Star, Loader2, Clock, User, Layers, Plus, Minus, CalendarCheck, Award, ShoppingBag, ChevronLeft, GraduationCap, Cake, Trophy, Tent,
 } from 'lucide-react';
 import Link from 'next/link';
 import ChildShell from '@/components/child/ChildShell';
+import { ReceiptSheet } from '@/components/child/StoreBits';
 import { EmptyState, PageTitle, fmtDate, fmtTime, usePortalList } from '@/components/child/ChildBits';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
@@ -223,43 +223,8 @@ function PointsContent() {
         </div>
       )}
 
-      {/* ---------- bill sheet ---------- */}
-      {bill && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6" onClick={() => setBill(null)}>
-          <div id="child-bill" className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-lg font-extrabold"><Receipt className="h-5 w-5 text-orange-600" /> فاتورة إستبدال النقاط</h3>
-              <button type="button" onClick={() => setBill(null)} aria-label="إغلاق" className="rounded-full p-1.5 hover:bg-slate-100"><X className="h-5 w-5" /></button>
-            </div>
-            <p className="mb-3 flex flex-wrap items-center gap-x-2 text-xs font-bold text-slate-500">
-              <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(bill.created_at)} · {fmtTime(bill.created_at)}</span>
-              {bill.recorded_by_name && <span className="flex items-center gap-1"><User className="h-3 w-3" /> {bill.recorded_by_name}</span>}
-              <span className={`badge ${bill.status === 'cancelled' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
-                {bill.status === 'cancelled' ? <><Ban className="h-3 w-3" /> ملغاة — استُردّت النقاط</> : <><Check className="h-3 w-3" /> مكتملة</>}
-              </span>
-            </p>
-            <div className="mb-3 grid grid-cols-3 gap-2 text-center text-xs font-bold">
-              <div className="rounded-xl bg-slate-50 py-2"><p className="text-lg font-extrabold tabular-nums text-slate-500">{bill.balance_before}</p>الرصيد قبل</div>
-              <div className="rounded-xl bg-orange-50 py-2"><p className="text-lg font-extrabold tabular-nums text-orange-600">−{bill.total_points}</p>المستبدل</div>
-              <div className="rounded-xl bg-emerald-50 py-2"><p className="text-lg font-extrabold tabular-nums text-emerald-600">{bill.balance_after}</p>الرصيد بعد</div>
-            </div>
-            <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100">
-              {bill.items.map((l) => (
-                <li key={l.id} className="flex items-center gap-2.5 px-3 py-2">
-                  <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-orange-50 text-orange-300 ring-1 ring-orange-100">
-                    {l.image_url ? <Image src={l.image_url} alt={l.item_name} fill sizes="40px" className="object-cover" /> : <ImageIcon className="absolute inset-0 m-auto h-4 w-4" />}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-extrabold">{l.item_name}</p>
-                    <p className="text-[11px] font-bold text-slate-400">{l.unit_price} × {l.qty}</p>
-                  </div>
-                  <span className="tabular-nums text-sm font-extrabold text-orange-700">{l.line_total}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
+      {/* ---------- bill sheet (shared with /child/store) ---------- */}
+      {bill && <ReceiptSheet bill={bill} onClose={() => setBill(null)} />}
     </>
   );
 }

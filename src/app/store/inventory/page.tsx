@@ -8,10 +8,11 @@
 //   • select items → print QR labels (LabelsPrintModal)
 // Realtime on store_items so several servants can restock together.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   Plus, Search, Loader2, Pencil, Trash2, Tag, Package, CheckSquare, Square, Minus,
-  EyeOff, Eye, Star, Boxes, AlertTriangle,
+  EyeOff, Eye, Star, Boxes, AlertTriangle, Store,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import {
@@ -22,15 +23,37 @@ import LabelsPrintModal from '@/components/store/LabelsPrintModal';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
-import { fetchStoreItems, isMigrationMissing, MIGRATION_HINT, storeErrorMessage } from '@/lib/store';
+import { fetchStoreItems, fetchStoreShops, isMigrationMissing, MIGRATION_HINT, storeErrorMessage, type StoreShopWithTargets } from '@/lib/store';
 import type { StoreItem } from '@/lib/types';
 
+const ALL_SHOPS = 'all';
+const NO_SHOP = 'none';
+
 export default function InventoryPage() {
+  return (
+    <Suspense fallback={<AppShell><div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-orange-500" /></div></AppShell>}>
+      <InventoryContent />
+    </Suspense>
+  );
+}
+
+function InventoryContent() {
   const { profile } = useAuth();
+  const params = useSearchParams();
   const [supabase] = useState(() => createClient());
   const approved = profile?.status === 'approved';
   const { churches, services, classes } = useStoreLookups(supabase, approved);
   const scope = useScopeState();
+
+  // shops (20261001120000) — filter + the shop select in the item form
+  const [shops, setShops] = useState<StoreShopWithTargets[]>([]);
+  const [shopFilter, setShopFilter] = useState<string>(params.get('shop') ?? ALL_SHOPS);
+  useEffect(() => {
+    if (!approved) return;
+    fetchStoreShops(supabase).then(setShops).catch(() => setShops([]));
+  }, [approved, supabase]);
+  useDebouncedRealtime(supabase, 'inv-shops', [{ table: 'store_shops' }], () => fetchStoreShops(supabase).then(setShops).catch(() => {}), { enabled: approved, delayMs: 800 });
+  const shopName = (id: string | null) => shops.find((s) => s.id === id)?.name ?? null;
 
   const [items, setItems] = useState<StoreItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,9 +86,10 @@ export default function InventoryPage() {
     const s = search.trim().toLowerCase();
     return items.filter((it) =>
       (showInactive || it.is_active) &&
+      (shopFilter === ALL_SHOPS || (shopFilter === NO_SHOP ? !it.shop_id : it.shop_id === shopFilter)) &&
       (!s || it.name.toLowerCase().includes(s) || it.code.toLowerCase().includes(s))
     );
-  }, [items, search, showInactive]);
+  }, [items, search, showInactive, shopFilter]);
 
   const totals = useMemo(() => ({
     active: items.filter((i) => i.is_active).length,
@@ -131,6 +155,16 @@ export default function InventoryPage() {
         <input id="inv-search" className="input-field pr-9" placeholder="ابحث بالاسم أو الكود..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
       <ScopeSelectors idPrefix="inv" scope={scope} churches={churches} services={services} classes={classes} />
+      {shops.length > 0 && (
+        <div className="relative mb-3">
+          <Store className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-orange-500" />
+          <select id="inv-shop" aria-label="المتجر" className="input-field appearance-none pr-9 text-xs font-bold" value={shopFilter} onChange={(e) => setShopFilter(e.target.value)}>
+            <option value={ALL_SHOPS}>كل المتاجر + أصناف الكاشير</option>
+            {shops.map((s) => <option key={s.id} value={s.id}>متجر: {s.name}{s.is_active ? '' : ' (غير مفعّل)'}</option>)}
+            <option value={NO_SHOP}>بدون متجر — أصناف الكاشير فقط</option>
+          </select>
+        </div>
+      )}
 
       {/* toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -178,7 +212,9 @@ export default function InventoryPage() {
                   <p className="truncate font-extrabold">{it.name}</p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] font-bold text-slate-400">
                     <span dir="ltr" className="font-mono">{it.code}</span>
-                    <span className="truncate">{scopeLabel(it, churches, services, classes)}</span>
+                    {it.shop_id
+                      ? <span className="flex items-center gap-1 text-orange-600"><Store className="h-3 w-3" /> {shopName(it.shop_id) ?? 'متجر'}</span>
+                      : <span className="truncate">{scopeLabel(it, churches, services, classes)}</span>}
                   </p>
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <span className="badge bg-gold-100 text-gold-700"><Star className="h-3 w-3" /> {it.price}</span>
@@ -211,6 +247,7 @@ export default function InventoryPage() {
       {form.open && (
         <ItemFormModal
           item={form.item} churches={churches} services={services} classes={classes}
+          shops={shops} defaultShopId={shopFilter !== ALL_SHOPS && shopFilter !== NO_SHOP ? shopFilter : null}
           onClose={() => setForm({ open: false, item: null })}
           onSaved={(saved) => {
             setForm({ open: false, item: null });

@@ -559,11 +559,97 @@ export interface StoreItem {
   stock: number;   // available count
   is_active: boolean;
   sort_order: number;
+  shop_id: string | null;   // the shop the item belongs to (20261001120000) — null = legacy POS-only item
   created_at: string;
   created_by: string | null;
   edited_at: string;
   edited_by: string | null;
 }
+
+// ---------- Shops (المتاجر, migration 20261001120000) ----------
+
+// store_shops — a shop / kiosk with an activation switch. Connected to one
+// or many places through store_shop_targets; ACTIVE shops appear in the
+// child portal where the child can build a cart and send a request.
+export interface StoreShop {
+  id: string;
+  church_id: string;         // owning church
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  created_by: string | null;
+  edited_at: string;
+  edited_by: string | null;
+}
+
+// store_shop_targets — one place the shop is connected to.
+// church_id null = «الكل»; church only = whole church; + service; + class.
+export interface StoreShopTarget {
+  id: string;
+  shop_id: string;
+  church_id: string | null;
+  service_id: string | null;
+  class_id: string | null;
+  created_at: string;
+}
+
+export type StoreRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+// store_requests — a cart the child sent from his portal
+export interface StoreRequest {
+  id: string;
+  shop_id: string;
+  enrollment_id: string;
+  person_id: string;
+  church_id: string;
+  service_id: string;
+  class_id: string;
+  status: StoreRequestStatus;
+  items_count: number;
+  total_points: number;
+  balance_at_request: number;
+  note: string | null;
+  decision_note: string | null;
+  order_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export interface StoreRequestItem {
+  id: string;
+  request_id: string;
+  item_id: string | null;
+  item_code: string;
+  item_name: string;
+  image_url: string | null;
+  unit_price: number;
+  qty: number;
+  line_total: number;
+}
+
+/** store_request_json / store_request_detail shape (request + lines + names) */
+export interface StoreRequestDetail extends Omit<StoreRequest, 'decided_by'> {
+  shop_name: string;
+  shop_image_url: string | null;
+  decided_by_name: string | null;
+  class_name: string;
+  service_name: string;
+  church_name: string;
+  items: Omit<StoreRequestItem, 'request_id'>[];
+}
+
+export const STORE_REQUEST_STATUS_LABELS: Record<StoreRequestStatus, string> = {
+  pending: 'بانتظار الخادم',
+  approved: 'تم التسليم',
+  rejected: 'مرفوض',
+  cancelled: 'ألغاه المخدوم',
+};
+
+export type StoreOrderSource = 'pos' | 'request';
 
 export type StoreOrderStatus = 'completed' | 'cancelled';
 
@@ -587,6 +673,9 @@ export interface StoreOrder {
   created_at: string;
   cancelled_by: string | null;
   cancelled_at: string | null;
+  shop_id: string | null;         // 20261001120000
+  request_id: string | null;      // the child's request behind a 'request' order
+  source: StoreOrderSource;       // pos = sold at the cashier · request = approved child request
 }
 
 // store_order_items — one line of a bill (snapshot of the item at sale time)

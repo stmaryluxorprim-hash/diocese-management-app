@@ -1,16 +1,18 @@
 'use client';
 
 // ---------- POINTS STORE MODULE HUB (إستبدال النقاط) ----------
-// Entry page: quick stats + the three parts of the module.
-//   المخزون  — items (code · name · picture · price in points · stock) + QR labels
+// Entry page: quick stats + the five parts of the module.
 //   الكاشير  — scan / search a child → basket → checkout (points deducted)
+//   الطلبات  — carts the children sent from their portal → scan card → approve
+//   المتاجر  — shops connected to church / service / class, activation switch
+//   المخزون  — items (code · name · picture · price in points · stock) + QR labels
 //   الأرشيف  — every saved bill
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Package, ScanLine, Archive, ChevronLeft, Star } from 'lucide-react';
+import { Package, ScanLine, Archive, ChevronLeft, Star, Store, Inbox } from 'lucide-react';
 import AppShell from '@/components/AppShell';
-import { StoreHeader } from '@/components/store/StoreBits';
+import { StoreHeader, usePendingStoreRequests } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
@@ -19,13 +21,15 @@ import { isMigrationMissing, MIGRATION_HINT } from '@/lib/store';
 export default function StoreHubPage() {
   const { profile } = useAuth();
   const [supabase] = useState(() => createClient());
-  const [stats, setStats] = useState<{ items: number; stock: number; orders: number; points: number } | null>(null);
+  const [stats, setStats] = useState<{ items: number; stock: number; orders: number; points: number; shops: number } | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
+  const pending = usePendingStoreRequests();
 
   const load = useCallback(async () => {
-    const [items, orders] = await Promise.all([
+    const [items, orders, shops] = await Promise.all([
       supabase.from('store_items').select('stock, is_active').limit(5000),
       supabase.from('store_orders').select('total_points, status').limit(5000),
+      supabase.from('store_shops').select('id, is_active').limit(1000),
     ]);
     if (items.error || orders.error) {
       if (isMigrationMissing(items.error ?? orders.error)) setMigrationMissing(true);
@@ -38,22 +42,27 @@ export default function StoreHubPage() {
       stock: its.reduce((s, i) => s + i.stock, 0),
       orders: ors.length,
       points: ors.reduce((s, o) => s + o.total_points, 0),
+      shops: ((shops.data ?? []) as { is_active: boolean }[]).filter((s) => s.is_active).length,
     });
   }, [supabase]);
 
   useEffect(() => { if (profile?.status === 'approved') load(); }, [profile?.status, load]);
   useDebouncedRealtime(
-    supabase, 'store-hub', [{ table: 'store_items' }, { table: 'store_orders' }], load,
+    supabase, 'store-hub', [{ table: 'store_items' }, { table: 'store_orders' }, { table: 'store_shops' }], load,
     { enabled: profile?.status === 'approved' }
   );
 
   const links = [
     { href: '/store/pos', id: 'store-link-pos', icon: ScanLine, color: 'text-orange-600 bg-orange-50',
       label: 'الكاشير', desc: 'امسح كارت المخدوم أو ابحث عنه → سلة → إستبدال النقاط بالأصناف' },
+    { href: '/store/requests', id: 'store-link-requests', icon: Inbox, color: 'text-red-600 bg-red-50', badge: pending,
+      label: 'طلبات المخدومين', desc: 'السلات التي أرسلها المخدومون من بوابتهم → امسح كارت المخدوم للتأكيد → اعتماد أو رفض' },
+    { href: '/store/shops', id: 'store-link-shops', icon: Store, color: 'text-emerald-600 bg-emerald-50',
+      label: 'المتاجر', desc: 'متاجر مرتبطة بكنيسة / خدمة / فصل أو أكثر — عند التفعيل تظهر للمخدومين في بوابتهم' },
     { href: '/store/inventory', id: 'store-link-inventory', icon: Package, color: 'text-primary-600 bg-primary-50',
-      label: 'المخزون', desc: 'إضافة وتعديل الأصناف (كود · اسم · صورة · السعر بالنقاط · الكمية) وطباعة ملصقات QR' },
+      label: 'المخزون', desc: 'إضافة وتعديل الأصناف (كود · اسم · صورة · السعر بالنقاط · الكمية · المتجر) وطباعة ملصقات QR' },
     { href: '/store/archive', id: 'store-link-archive', icon: Archive, color: 'text-slate-600 bg-slate-100',
-      label: 'أرشيف الفواتير', desc: 'كل عمليات الإستبدال المحفوظة — البنود والرصيد قبل وبعد' },
+      label: 'أرشيف الفواتير', desc: 'كل عمليات الإستبدال المحفوظة — البنود والرصيد قبل وبعد والمتجر ومصدر العملية' },
   ];
 
   return (
@@ -64,8 +73,9 @@ export default function StoreHubPage() {
         <p className="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">⚠️ {MIGRATION_HINT}</p>
       )}
 
-      <section id="store-stats" className="mb-4 grid grid-cols-4 gap-2">
+      <section id="store-stats" className="mb-4 grid grid-cols-5 gap-1.5">
         {[
+          { label: 'متجر مفعّل', value: stats?.shops },
           { label: 'أصناف', value: stats?.items },
           { label: 'قطعة متاحة', value: stats?.stock },
           { label: 'فاتورة', value: stats?.orders },
@@ -88,6 +98,7 @@ export default function StoreHubPage() {
                 <span className="block text-sm font-bold">{l.label}</span>
                 <span className="block truncate text-xs text-slate-400">{l.desc}</span>
               </span>
+              {!!l.badge && <span className="rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-extrabold text-white tabular-nums">{l.badge}</span>}
               <ChevronLeft className="h-4 w-4 text-slate-300" />
             </Link>
           );
