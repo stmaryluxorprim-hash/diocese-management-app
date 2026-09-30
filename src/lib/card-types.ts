@@ -77,22 +77,27 @@ export interface CardQrSettings {
   frame: CardQrFrame;
 }
 
-export const QR_FRAME_PRESETS: Record<Exclude<QrFramePreset, 'custom'>, { label: string; color: string; gradient: string }> = {
-  gold: {
-    label: 'ذهبي',
-    color: '#d4af37',
-    gradient: 'linear-gradient(135deg, #bf953f 0%, #fcf6ba 22%, #b38728 48%, #fbf5b7 72%, #aa771c 100%)',
-  },
-  silver: {
-    label: 'فضي',
-    color: '#c0c0c0',
-    gradient: 'linear-gradient(135deg, #8e9eab 0%, #f5f7f8 24%, #a7b3bd 50%, #ffffff 74%, #7d8a96 100%)',
-  },
-  bronze: {
-    label: 'برونزي',
-    color: '#cd7f32',
-    gradient: 'linear-gradient(135deg, #7a4a12 0%, #e3a857 24%, #a0522d 50%, #f1c27d 74%, #6e3b0e 100%)',
-  },
+// Metallic shine = a 135° linear gradient. `stops` is the single source of
+// truth (used for the SVG gradient that is PRINTED); `gradient` is the same
+// thing as a CSS string for the designer swatches.
+export type GradientStop = { offset: number; color: string }; // offset 0..1
+const cssGradient = (stops: GradientStop[]): string =>
+  `linear-gradient(135deg, ${stops.map((st) => `${st.color} ${Math.round(st.offset * 100)}%`).join(', ')})`;
+const preset = (label: string, color: string, stops: GradientStop[]) => ({ label, color, stops, gradient: cssGradient(stops) });
+
+export const QR_FRAME_PRESETS: Record<Exclude<QrFramePreset, 'custom'>, { label: string; color: string; stops: GradientStop[]; gradient: string }> = {
+  gold: preset('ذهبي', '#d4af37', [
+    { offset: 0, color: '#bf953f' }, { offset: 0.22, color: '#fcf6ba' }, { offset: 0.48, color: '#b38728' },
+    { offset: 0.72, color: '#fbf5b7' }, { offset: 1, color: '#aa771c' },
+  ]),
+  silver: preset('فضي', '#c0c0c0', [
+    { offset: 0, color: '#8e9eab' }, { offset: 0.24, color: '#f5f7f8' }, { offset: 0.5, color: '#a7b3bd' },
+    { offset: 0.74, color: '#ffffff' }, { offset: 1, color: '#7d8a96' },
+  ]),
+  bronze: preset('برونزي', '#cd7f32', [
+    { offset: 0, color: '#7a4a12' }, { offset: 0.24, color: '#e3a857' }, { offset: 0.5, color: '#a0522d' },
+    { offset: 0.74, color: '#f1c27d' }, { offset: 1, color: '#6e3b0e' },
+  ]),
 };
 
 export const QR_FRAME_PRESET_LABELS: Record<QrFramePreset, string> = {
@@ -102,7 +107,16 @@ export const QR_FRAME_PRESET_LABELS: Record<QrFramePreset, string> = {
   custom: 'لون مخصص',
 };
 
-// CSS background of a QR frame (gradient for metallic presets, else solid)
+// Gradient stops of a metallic frame, or null when the frame is a flat colour
+export const qrFrameStops = (f: CardQrFrame): GradientStop[] | null =>
+  f.preset !== 'custom' && f.metallic ? QR_FRAME_PRESETS[f.preset].stops : null;
+
+// Flat colour of a frame (presets → their metal colour)
+export const qrFrameColor = (f: CardQrFrame): string =>
+  f.preset !== 'custom' ? QR_FRAME_PRESETS[f.preset].color : (f.color || '#1e3a8a');
+
+// CSS background of a QR frame (gradient for metallic presets, else solid) —
+// designer swatches only; the card itself draws an SVG ring (CardCanvas)
 export const qrFrameCss = (f: CardQrFrame): string => {
   if (f.preset !== 'custom' && f.metallic) return QR_FRAME_PRESETS[f.preset].gradient;
   if (f.preset !== 'custom') return QR_FRAME_PRESETS[f.preset].color;
