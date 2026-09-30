@@ -599,7 +599,11 @@ church / service / class (with "كل الـ..." options) without redesigning.
   (`frame`: a ring drawn inside the element box around the pad, follows the
   corners; **ذهبي / فضي / برونزي** presets with a **متدرّج معدني لامع**
   toggle or a flat colour, or **مخصص** solid colour; width mm). Layers:
-  frame → rounded background pad → QR. The QR is drawn as an **inline SVG
+  frame → rounded background pad → QR. The frame is an **SVG ring**
+  (even-odd path outer − inner rounded rect, flat fill or SVG
+  `linearGradient` from the preset's `stops`) — never a CSS `mask`, which
+  print / PDF engines ignore and would paint the whole box in the frame
+  colour behind a transparent background. The QR is drawn as an **inline SVG
   path** from the module matrix (`QRCode.create`, viewBox = N×N modules,
   `xMidYMid`) — not a raster data-url — so it is **exactly centred** inside
   the background / frame in the preview and on the printed sheet and stays

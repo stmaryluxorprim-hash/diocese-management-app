@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, type CSSProperties } from 'react';
+import { useId, useMemo, type CSSProperties } from 'react';
 import QRCode from 'qrcode';
 import { User, Landmark } from 'lucide-react';
 import type {
@@ -8,10 +8,11 @@ import type {
   CardElement,
   CardPrintSettings,
   CardSide,
+  CardQrFrame,
   ImageFit,
 } from '@/lib/card-types';
 import {
-  ageFromBirthdate, ARABIC_MONTHS, isImageElement, faceDesign, normalizeQr, qrFrameCss, qrEffectivePadding,
+  ageFromBirthdate, ARABIC_MONTHS, isImageElement, faceDesign, normalizeQr, qrFrameStops, qrFrameColor, qrEffectivePadding,
 } from '@/lib/card-types';
 import { unitDims, unitFaces } from '@/lib/card-layout';
 
@@ -198,6 +199,47 @@ function QrImage({ value, color = '#000000', className }: { value: string; color
   );
 }
 
+// Rounded-rect path (clockwise) — r is clamped to half the smaller side
+const roundedRectPath = (x: number, y: number, w: number, h: number, r: number): string => {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  if (rr === 0) return `M${x} ${y}h${w}v${h}h${-w}z`;
+  return (
+    `M${x + rr} ${y}h${w - 2 * rr}a${rr} ${rr} 0 0 1 ${rr} ${rr}v${h - 2 * rr}a${rr} ${rr} 0 0 1 ${-rr} ${rr}` +
+    `h${-(w - 2 * rr)}a${rr} ${rr} 0 0 1 ${-rr} ${-rr}v${-(h - 2 * rr)}a${rr} ${rr} 0 0 1 ${rr} ${-rr}z`
+  );
+};
+
+// The QR frame: a ring between the element box and the background pad,
+// metallic gradient or flat colour. Pure SVG → prints exactly like the screen
+// and leaves the inside fully transparent.
+function QrFrameRing({
+  w, h, outerR, thickness, frame,
+}: { w: number; h: number; outerR: number; thickness: number; frame: CardQrFrame }) {
+  const gradId = useId().replace(/:/g, '');
+  const stops = qrFrameStops(frame);
+  const innerR = Math.max(0, outerR - thickness);
+  const d = roundedRectPath(0, 0, w, h, outerR) + roundedRectPath(thickness, thickness, w - 2 * thickness, h - 2 * thickness, innerR);
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ position: 'absolute', inset: 0, display: 'block', pointerEvents: 'none' }}
+      aria-hidden
+    >
+      {stops && (
+        <defs>
+          {/* 135° like the CSS swatch: top-left → bottom-right */}
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
+            {stops.map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} />)}
+          </linearGradient>
+        </defs>
+      )}
+      <path d={d} fillRule="evenodd" fill={stops ? `url(#${gradId})` : qrFrameColor(frame)} />
+    </svg>
+  );
+}
+
 // ---------- single element ----------
 function ElementView({
   el,
@@ -267,9 +309,14 @@ function ElementView({
     // quiet zone: the user's padding, never below what the rounded corners
     // need so the finder patterns are not clipped (qrCornerSafePadding)
     const padPx = qrEffectivePadding(el.borderRadius, q) * scale;
-    // the frame is a RING (masked gradient) so a transparent background really
-    // shows the card behind the QR, and metallic gradients follow the corners
-    const ringMask = 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)';
+    // The frame is a RING drawn as an SVG even-odd path (outer rounded rect
+    // minus inner rounded rect) filled with a flat colour or an SVG linear
+    // gradient. It is NOT a CSS mask: print / PDF engines ignore
+    // mask-composite and would paint the whole box in the frame colour, which
+    // showed up as "the transparent background became the frame colour" on
+    // paper. SVG paints identically on screen and in print.
+    const W = el.w * scale;
+    const H = el.h * scale;
     return (
       <div
         style={{
@@ -279,21 +326,7 @@ function ElementView({
         }}
       >
         {frameOn && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              borderRadius: outerR,
-              padding: framePx,
-              boxSizing: 'border-box',
-              background: qrFrameCss(q.frame),
-              WebkitMask: ringMask,
-              WebkitMaskComposite: 'xor',
-              mask: ringMask,
-              maskComposite: 'exclude',
-              pointerEvents: 'none',
-            }}
-          />
+          <QrFrameRing w={W} h={H} outerR={outerR} thickness={framePx} frame={q.frame} />
         )}
         <div
           style={{
