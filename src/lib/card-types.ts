@@ -109,6 +109,22 @@ export const qrFrameCss = (f: CardQrFrame): string => {
   return f.color || '#1e3a8a';
 };
 
+// Minimum quiet zone (mm) the rounded corners of the background force on a
+// QR element: a corner arc of radius r (measured inside the frame) eats
+// r·(1 − 1/√2) ≈ 0.293·r into the square at every corner. Without that
+// margin the finder patterns get clipped by the round corners and the code
+// no longer scans. Renderer and designer both use this.
+export const qrCornerSafePadding = (borderRadiusMm: number, frame: CardQrFrame): number => {
+  const frameMm = frame.enabled && frame.width > 0 ? frame.width : 0;
+  const r = Math.max(0, borderRadiusMm - frameMm);
+  return r > 0 ? r * (1 - Math.SQRT1_2) + 0.15 : 0;
+};
+
+// The quiet zone actually rendered: the user's padding, never below the
+// corner-safe minimum.
+export const qrEffectivePadding = (borderRadiusMm: number, q: CardQrSettings): number =>
+  Math.max(0, q.padding, qrCornerSafePadding(borderRadiusMm, q.frame));
+
 export const DEFAULT_QR_SETTINGS: CardQrSettings = {
   color: '#000000',
   bgColor: '#ffffff',

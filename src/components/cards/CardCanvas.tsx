@@ -11,7 +11,7 @@ import type {
   ImageFit,
 } from '@/lib/card-types';
 import {
-  ageFromBirthdate, ARABIC_MONTHS, isImageElement, faceDesign, normalizeQr, qrFrameCss,
+  ageFromBirthdate, ARABIC_MONTHS, isImageElement, faceDesign, normalizeQr, qrFrameCss, qrEffectivePadding,
 } from '@/lib/card-types';
 import { unitDims, unitFaces } from '@/lib/card-layout';
 
@@ -264,7 +264,9 @@ function ElementView({
     const framePx = frameOn ? Math.max(q.frame.width * scale, 0.5) : 0;
     const outerR = el.borderRadius * scale;
     const innerR = Math.max(0, outerR - framePx);
-    const padPx = Math.max(0, q.padding) * scale;
+    // quiet zone: the user's padding, never below what the rounded corners
+    // need so the finder patterns are not clipped (qrCornerSafePadding)
+    const padPx = qrEffectivePadding(el.borderRadius, q) * scale;
     // the frame is a RING (masked gradient) so a transparent background really
     // shows the card behind the QR, and metallic gradients follow the corners
     const ringMask = 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)';
