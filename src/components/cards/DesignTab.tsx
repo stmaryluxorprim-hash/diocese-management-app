@@ -17,6 +17,7 @@ import {
   newElement, VARIABLE_FIELDS, BIRTHDAY_VARIABLE_FIELDS, CONSTANT_FIELDS, ELEMENT_TYPE_LABELS,
   IMAGE_FIT_LABELS, FONT_FAMILIES, isImageElement, faceDesign, normalizeBack, sampleBack,
   DEFAULT_BACK, CARD_SIDE_LABELS, normalizeQr, QR_FRAME_PRESETS, DEFAULT_QR_SETTINGS, qrFrameCss,
+  qrCornerSafePadding, qrEffectivePadding,
 } from '@/lib/card-types';
 import CardCanvas, { SAMPLE_PERSON, type CardConstantsData, type CardPersonData } from './CardCanvas';
 
@@ -816,6 +817,11 @@ export default function DesignTab({
           {selected.type === 'qr' && (() => {
             const q = normalizeQr(selected);
             const f = q.frame;
+            // rounded corners force a minimum quiet zone so the finder patterns
+            // are never clipped — tell the user when it kicks in
+            const safePad = Math.round(qrCornerSafePadding(selected.borderRadius, f) * 10) / 10;
+            const effPad = Math.round(qrEffectivePadding(selected.borderRadius, q) * 10) / 10;
+            const padForced = effPad > q.padding;
             return (
               <div className="mt-3 border-t border-indigo-50 pt-3">
                 <p className="mb-2 flex items-center gap-1.5 text-[11px] font-extrabold text-slate-400">
@@ -857,7 +863,10 @@ export default function DesignTab({
                     <label className="block">
                       <span className="mb-0.5 flex items-center justify-between text-[11px] font-bold text-slate-500">
                         <span>توسيع الخلفية</span>
-                        <span dir="ltr">{q.padding} مم</span>
+                        <span dir="ltr">
+                          {q.padding} مم
+                          {padForced && <span className="text-amber-600"> → {effPad}</span>}
+                        </span>
                       </span>
                       <input
                         type="range" min={0} max={Math.max(1, Math.min(selected.w, selected.h) / 2 - 1)} step={0.1}
@@ -897,6 +906,17 @@ export default function DesignTab({
                   >
                     ⭕ خلفية دائرية (استدارة = نصف العرض)
                   </button>
+                  {padForced && (
+                    <p className="mt-1.5 text-[11px] font-bold text-amber-600">
+                      ⚠️ الأركان المستديرة تقطع زوايا الرمز — يُطبّق توسيع {effPad} مم تلقائياً (الحد الأدنى لاستدارة {selected.borderRadius} مم هو {safePad} مم) ليبقى الرمز كاملاً وقابلاً للقراءة.
+                      <button
+                        onClick={() => updateQr(selected, { padding: effPad })}
+                        className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 hover:bg-amber-200"
+                      >
+                        اعتماد {effPad} مم
+                      </button>
+                    </p>
+                  )}
                 </div>
 
                 {/* frame */}

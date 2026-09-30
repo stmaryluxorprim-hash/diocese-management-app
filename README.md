@@ -603,7 +603,11 @@ church / service / class (with "كل الـ..." options) without redesigning.
   path** from the module matrix (`QRCode.create`, viewBox = N×N modules,
   `xMidYMid`) — not a raster data-url — so it is **exactly centred** inside
   the background / frame in the preview and on the printed sheet and stays
-  crisp at any zoom. Old templates have no `qr` —
+  crisp at any zoom. **Rounded corners never clip the code**: the rendered
+  quiet zone is `max(padding, qrCornerSafePadding)` — a corner arc of radius r
+  (inside the frame) eats ≈ 0.293·r into the square, so the pad is widened
+  automatically to keep the finder patterns intact (the designer shows the
+  forced value «0 → 2.2 مم» with an «اعتماد» button). Old templates have no `qr` —
   `normalizeQr` derives it from the generic box background / stroke the
   element used, so every stored card prints as before. The generic
   background / stroke section is hidden for QR elements (this panel
