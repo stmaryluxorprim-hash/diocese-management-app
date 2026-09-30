@@ -10,7 +10,9 @@ import type {
   CardSide,
   ImageFit,
 } from '@/lib/card-types';
-import { ageFromBirthdate, ARABIC_MONTHS, isImageElement, faceDesign } from '@/lib/card-types';
+import {
+  ageFromBirthdate, ARABIC_MONTHS, isImageElement, faceDesign, normalizeQr, qrFrameCss,
+} from '@/lib/card-types';
 import { unitDims, unitFaces } from '@/lib/card-layout';
 
 // ---------- data fed into a card ----------
@@ -151,19 +153,28 @@ const resolveText = (
   return label ? `${label} ${value}` : value;
 };
 
-// QR image as data-url (rendered async once per national_id)
-function QrImage({ value, className }: { value: string; className?: string }) {
+// QR image as data-url (rendered async once per value + module colour).
+// The light modules are TRANSPARENT so the element's own background (colour,
+// expanded pad, or nothing at all) shows through.
+function QrImage({ value, color = '#000000', className }: { value: string; color?: string; className?: string }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    QRCode.toDataURL(value || '—', { margin: 0, width: 256 })
+    QRCode.toDataURL(value || '—', { margin: 0, width: 512, color: { dark: color, light: '#00000000' } })
       .then((u) => alive && setUrl(u))
       .catch(() => {});
     return () => { alive = false; };
-  }, [value]);
+  }, [value, color]);
   if (!url) return null;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt="QR" className={className} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <img
+      src={url}
+      alt="QR"
+      className={className}
+      style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
+    />
+  );
 }
 
 // ---------- single element ----------
@@ -226,11 +237,53 @@ function ElementView({
   }
 
   if (el.type === 'qr') {
+    // layers: element box = [frame] → [background pad (rounded)] → [QR]
+    const q = normalizeQr(el);
+    const frameOn = q.frame.enabled && q.frame.width > 0;
+    const framePx = frameOn ? Math.max(q.frame.width * scale, 0.5) : 0;
+    const outerR = el.borderRadius * scale;
+    const innerR = Math.max(0, outerR - framePx);
+    const padPx = Math.max(0, q.padding) * scale;
+    // the frame is a RING (masked gradient) so a transparent background really
+    // shows the card behind the QR, and metallic gradients follow the corners
+    const ringMask = 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)';
     return (
-      <div style={{ ...base, background: el.bgEnabled ? undefined : '#fff' }}>
-        {bgLayer}
-        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-          <QrImage value={person.national_id} />
+      <div
+        style={{
+          ...base,
+          // the generic stroke is replaced by the QR frame
+          border: undefined,
+        }}
+      >
+        {frameOn && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: outerR,
+              padding: framePx,
+              boxSizing: 'border-box',
+              background: qrFrameCss(q.frame),
+              WebkitMask: ringMask,
+              WebkitMaskComposite: 'xor',
+              mask: ringMask,
+              maskComposite: 'exclude',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+        <div
+          style={{
+            position: 'absolute',
+            inset: framePx,
+            borderRadius: innerR,
+            backgroundColor: q.bgTransparent ? 'transparent' : q.bgColor,
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+            padding: padPx,
+          }}
+        >
+          <QrImage value={person.national_id} color={q.color} />
         </div>
       </div>
     );
