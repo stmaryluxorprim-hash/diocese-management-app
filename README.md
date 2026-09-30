@@ -599,7 +599,11 @@ church / service / class (with "كل الـ..." options) without redesigning.
   (`frame`: a ring drawn inside the element box around the pad, follows the
   corners; **ذهبي / فضي / برونزي** presets with a **متدرّج معدني لامع**
   toggle or a flat colour, or **مخصص** solid colour; width mm). Layers:
-  frame → rounded background pad → QR. Old templates have no `qr` —
+  frame → rounded background pad → QR. The QR is drawn as an **inline SVG
+  path** from the module matrix (`QRCode.create`, viewBox = N×N modules,
+  `xMidYMid`) — not a raster data-url — so it is **exactly centred** inside
+  the background / frame in the preview and on the printed sheet and stays
+  crisp at any zoom. Old templates have no `qr` —
   `normalizeQr` derives it from the generic box background / stroke the
   element used, so every stored card prints as before. The generic
   background / stroke section is hidden for QR elements (this panel
