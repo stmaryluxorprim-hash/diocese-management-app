@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import QRCode from 'qrcode';
 import { User, Landmark } from 'lucide-react';
 import type {
@@ -153,27 +153,48 @@ const resolveText = (
   return label ? `${label} ${value}` : value;
 };
 
-// QR image as data-url (rendered async once per value + module colour).
-// The light modules are TRANSPARENT so the element's own background (colour,
-// expanded pad, or nothing at all) shows through.
+// QR as an inline VECTOR (SVG path built from the module matrix). A raster
+// data-url (toDataURL) rounds the module size to whole pixels and leaves an
+// uneven blank strip on the right / bottom, which shows as the code sitting
+// slightly off-centre inside its background / frame. The SVG viewBox is
+// exactly N×N modules, so the symbol is mathematically centred (xMidYMid)
+// and stays crisp at any zoom / print resolution. The light modules are
+// TRANSPARENT so the element's own background (colour, expanded pad, or
+// nothing at all) shows through.
 function QrImage({ value, color = '#000000', className }: { value: string; color?: string; className?: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    QRCode.toDataURL(value || '—', { margin: 0, width: 512, color: { dark: color, light: '#00000000' } })
-      .then((u) => alive && setUrl(u))
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [value, color]);
-  if (!url) return null;
-  // eslint-disable-next-line @next/next/no-img-element
+  const { size, path } = useMemo(() => {
+    try {
+      const qr = QRCode.create(value || '—', { errorCorrectionLevel: 'M' });
+      const n = qr.modules.size;
+      const parts: string[] = [];
+      for (let y = 0; y < n; y++) {
+        // merge horizontal runs of dark modules into one rect per run
+        let x = 0;
+        while (x < n) {
+          if (!qr.modules.get(y, x)) { x++; continue; }
+          const start = x;
+          while (x < n && qr.modules.get(y, x)) x++;
+          parts.push(`M${start} ${y}h${x - start}v1h${start - x}z`);
+        }
+      }
+      return { size: n, path: parts.join('') };
+    } catch {
+      return { size: 0, path: '' };
+    }
+  }, [value]);
+  if (!size) return null;
   return (
-    <img
-      src={url}
-      alt="QR"
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      preserveAspectRatio="xMidYMid meet"
       className={className}
-      style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
-    />
+      style={{ display: 'block', width: '100%', height: '100%' }}
+      shapeRendering="crispEdges"
+      aria-label="QR"
+      role="img"
+    >
+      <path d={path} fill={color} />
+    </svg>
   );
 }
 
@@ -281,9 +302,15 @@ function ElementView({
             overflow: 'hidden',
             boxSizing: 'border-box',
             padding: padPx,
+            // centre the symbol exactly inside the pad (also for non-square boxes)
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          <QrImage value={person.national_id} color={q.color} />
+          <div style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0 }}>
+            <QrImage value={person.national_id} color={q.color} />
+          </div>
         </div>
       </div>
     );
