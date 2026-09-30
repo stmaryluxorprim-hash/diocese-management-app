@@ -49,7 +49,8 @@ event:
 - **مكالمة** — a call is a *follow-up for this event* (`contact_log`, kind `call`).
 - **رسالة** — WhatsApp / SMS / internal messages are logged *in relation to this
   event* (`contact_log`, kind `whatsapp | sms | internal`, with the message text).
-  The template supports `[اسم المناسبة]`.
+  The template variables: `[الاسم الأول]` · `[الاسم الكامل]` · `[تاريخ الميلاد]` ·
+  `[رقم الهاتف]` · `[الكود]` (the person's code = national id = QR) · `[اسم المناسبة]`.
 
 In the settings hub **إدارة المناسبات** sits directly after **إدارة الفصول**.
 

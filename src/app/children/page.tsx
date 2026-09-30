@@ -79,6 +79,7 @@ const MSG_VARS = [
   { token: '[الاسم الكامل]', label: 'الاسم الكامل' },
   { token: '[تاريخ الميلاد]', label: 'تاريخ الميلاد' },
   { token: '[رقم الهاتف]', label: 'رقم الهاتف' },
+  { token: '[الكود]', label: 'الكود (رمز QR)' },
   { token: '[اسم المناسبة]', label: 'اسم المناسبة' },
 ];
 
@@ -88,6 +89,8 @@ const fillTemplate = (template: string, e: EnrollmentWithPerson, ev?: AppEvent |
     .replaceAll('[الاسم الكامل]', e.person.name)
     .replaceAll('[تاريخ الميلاد]', e.person.birthdate ?? '')
     .replaceAll('[رقم الهاتف]', e.person.phone ?? '')
+    // the person's code = national_id = the QR / scanner code
+    .replaceAll('[الكود]', e.person.national_id ?? '')
     .replaceAll('[اسم المناسبة]', ev?.name ?? '');
 
 // WhatsApp brand icon (lucide has no official one)
