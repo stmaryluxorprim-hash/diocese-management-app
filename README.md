@@ -590,6 +590,20 @@ church / service / class (with "كل الـ..." options) without redesigning.
 - Text style per element: 10 fonts (8 Arabic Google fonts + Arial/Times), size (pt), color, bold/italic, align
 - Per-element **box background** (color + opacity) and **stroke** (border that follows the element's rounded corners, color + width in mm)
 - **Lock aspect ratio** per element (resize handles + W/H inputs keep the ratio; QR defaults to locked)
+- **مظهر رمز QR** (QR element inspector, `CardElement.qr: CardQrSettings`, no migration):
+  **لون الرمز** (module colour) · **لون الخلفية** or **خلفية شفافة** (the QR
+  is rendered with transparent light modules, so the card shows through) ·
+  **توسيع الخلفية** (`padding` mm — expands the background pad / quiet zone
+  around the code, presets 0 · 1 · 2 · 3 mm) · **استدارة أركان الخلفية** (=
+  the element's `borderRadius`, «خلفية دائرية» button) · **إطار حول الرمز**
+  (`frame`: a ring drawn inside the element box around the pad, follows the
+  corners; **ذهبي / فضي / برونزي** presets with a **متدرّج معدني لامع**
+  toggle or a flat colour, or **مخصص** solid colour; width mm). Layers:
+  frame → rounded background pad → QR. Old templates have no `qr` —
+  `normalizeQr` derives it from the generic box background / stroke the
+  element used, so every stored card prints as before. The generic
+  background / stroke section is hidden for QR elements (this panel
+  replaces it).
 
 ### Card back (ظهر الكارت) + flips — no migration needed
 Every template can carry a **back face** designed with the same engine as the

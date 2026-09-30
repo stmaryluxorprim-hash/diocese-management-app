@@ -50,6 +50,73 @@ export interface CardTextStyle {
   align: TextAlign;
 }
 
+// ----- QR code look (element type 'qr') -----
+// The QR sits inside its element box: [frame] → [background pad] → [QR].
+//   color        modules (dark) colour
+//   bgColor      background behind the QR — also fills the "expanded" pad
+//   bgTransparent no background at all (the card shows through the light modules)
+//   padding      mm — expands the background around the QR (quiet zone)
+//   (the rounded corners of the background = the element's borderRadius)
+//   frame        ring around the background — solid colour or a metallic
+//                gradient with gold / silver / bronze presets
+export type QrFramePreset = 'gold' | 'silver' | 'bronze' | 'custom';
+
+export interface CardQrFrame {
+  enabled: boolean;
+  preset: QrFramePreset;
+  color: string; // solid colour (custom preset, or when metallic is off)
+  width: number; // mm
+  metallic: boolean; // gradient shine (gold / silver / bronze)
+}
+
+export interface CardQrSettings {
+  color: string;
+  bgColor: string;
+  bgTransparent: boolean;
+  padding: number; // mm
+  frame: CardQrFrame;
+}
+
+export const QR_FRAME_PRESETS: Record<Exclude<QrFramePreset, 'custom'>, { label: string; color: string; gradient: string }> = {
+  gold: {
+    label: 'ذهبي',
+    color: '#d4af37',
+    gradient: 'linear-gradient(135deg, #bf953f 0%, #fcf6ba 22%, #b38728 48%, #fbf5b7 72%, #aa771c 100%)',
+  },
+  silver: {
+    label: 'فضي',
+    color: '#c0c0c0',
+    gradient: 'linear-gradient(135deg, #8e9eab 0%, #f5f7f8 24%, #a7b3bd 50%, #ffffff 74%, #7d8a96 100%)',
+  },
+  bronze: {
+    label: 'برونزي',
+    color: '#cd7f32',
+    gradient: 'linear-gradient(135deg, #7a4a12 0%, #e3a857 24%, #a0522d 50%, #f1c27d 74%, #6e3b0e 100%)',
+  },
+};
+
+export const QR_FRAME_PRESET_LABELS: Record<QrFramePreset, string> = {
+  gold: 'ذهبي',
+  silver: 'فضي',
+  bronze: 'برونزي',
+  custom: 'لون مخصص',
+};
+
+// CSS background of a QR frame (gradient for metallic presets, else solid)
+export const qrFrameCss = (f: CardQrFrame): string => {
+  if (f.preset !== 'custom' && f.metallic) return QR_FRAME_PRESETS[f.preset].gradient;
+  if (f.preset !== 'custom') return QR_FRAME_PRESETS[f.preset].color;
+  return f.color || '#1e3a8a';
+};
+
+export const DEFAULT_QR_SETTINGS: CardQrSettings = {
+  color: '#000000',
+  bgColor: '#ffffff',
+  bgTransparent: false,
+  padding: 0,
+  frame: { enabled: false, preset: 'gold', color: '#d4af37', width: 0.8, metallic: true },
+};
+
 export interface CardElement {
   id: string;
   type: CardElementType;
@@ -76,6 +143,8 @@ export interface CardElement {
   strokeWidth: number; // mm
   // keep width/height ratio while resizing
   lockAspect: boolean;
+  // QR look (type 'qr' only) — optional so old rows load; normalizeElements fills
+  qr?: CardQrSettings;
 }
 
 // ----- background -----
@@ -350,6 +419,7 @@ export const newElement = (type: CardElementType, partial?: Partial<CardElement>
   strokeColor: '#1e3a8a',
   strokeWidth: 0.3,
   lockAspect: type === 'qr',
+  qr: type === 'qr' ? { ...DEFAULT_QR_SETTINGS, frame: { ...DEFAULT_QR_SETTINGS.frame } } : undefined,
   ...partial,
 });
 
@@ -500,11 +570,38 @@ export const DEFAULT_PRINT_SETTINGS: CardPrintSettings = {
   flipPageV: false,
 };
 
+// QR settings of a stored element. Elements saved before the QR look existed
+// carry no `qr` — derive it from the generic box background / stroke they
+// used so far, so every stored template prints exactly as before.
+export const normalizeQr = (el: Partial<CardElement>): CardQrSettings => {
+  const q = el.qr;
+  if (q) {
+    return {
+      ...DEFAULT_QR_SETTINGS,
+      ...q,
+      frame: { ...DEFAULT_QR_SETTINGS.frame, ...(q.frame ?? {}) },
+    };
+  }
+  return {
+    ...DEFAULT_QR_SETTINGS,
+    bgColor: el.bgEnabled ? (el.bgColor ?? '#ffffff') : '#ffffff',
+    frame: {
+      ...DEFAULT_QR_SETTINGS.frame,
+      enabled: !!el.strokeEnabled,
+      preset: 'custom',
+      color: el.strokeColor ?? '#1e3a8a',
+      width: el.strokeWidth ?? 0.3,
+      metallic: false,
+    },
+  };
+};
+
 const normalizeElements = (els: CardElement[] | undefined, fallback: CardElement[]): CardElement[] =>
   (els ?? fallback).map((el) => ({
     ...newElement(el.type ?? 'text'),
     ...el,
     style: { ...DEFAULT_TEXT_STYLE, ...(el.style ?? {}) },
+    qr: (el.type ?? 'text') === 'qr' ? normalizeQr(el) : undefined,
   }));
 
 export const normalizeBack = (b: Partial<CardBack> | null | undefined): CardBack => ({

@@ -11,12 +11,12 @@ import { createClient } from '@/lib/supabase/client';
 import { uploadPhoto } from '@/lib/upload';
 import type {
   CardDesign, CardElement, CardElementType, CardVariableField, CardConstantField, ImageFit, TextAlign,
-  CardSide, CardFace, CardBack,
+  CardSide, CardFace, CardBack, CardQrSettings, CardQrFrame, QrFramePreset,
 } from '@/lib/card-types';
 import {
   newElement, VARIABLE_FIELDS, BIRTHDAY_VARIABLE_FIELDS, CONSTANT_FIELDS, ELEMENT_TYPE_LABELS,
   IMAGE_FIT_LABELS, FONT_FAMILIES, isImageElement, faceDesign, normalizeBack, sampleBack,
-  DEFAULT_BACK, CARD_SIDE_LABELS,
+  DEFAULT_BACK, CARD_SIDE_LABELS, normalizeQr, QR_FRAME_PRESETS, DEFAULT_QR_SETTINGS, qrFrameCss,
 } from '@/lib/card-types';
 import CardCanvas, { SAMPLE_PERSON, type CardConstantsData, type CardPersonData } from './CardCanvas';
 
@@ -195,6 +195,20 @@ export default function DesignTab({
         e.id === id ? { ...e, style: { ...e.style, ...patch } } : e
       ),
     });
+  // QR look (type 'qr'): patch the element's qr settings / its frame
+  const updateQr = (el: CardElement, patch: Partial<CardQrSettings>) =>
+    updateEl(el.id, { qr: { ...normalizeQr(el), ...patch } });
+  const updateQrFrame = (el: CardElement, patch: Partial<CardQrFrame>) => {
+    const q = normalizeQr(el);
+    updateEl(el.id, { qr: { ...q, frame: { ...q.frame, ...patch } } });
+  };
+  const applyQrPreset = (el: CardElement, preset: QrFramePreset) => {
+    const q = normalizeQr(el);
+    const color = preset === 'custom' ? q.frame.color : QR_FRAME_PRESETS[preset].color;
+    updateEl(el.id, {
+      qr: { ...q, frame: { ...q.frame, enabled: true, preset, color, metallic: preset === 'custom' ? false : q.frame.metallic } },
+    });
+  };
   const removeEl = (id: string) => {
     setFace({ elements: face.elements.filter((e) => e.id !== id) });
     if (selectedId === id) setSelectedId(null);
@@ -798,7 +812,178 @@ export default function DesignTab({
             </label>
           </div>
 
-          {/* ---------- box background & stroke (every element) ---------- */}
+          {/* ---------- QR look: colours · expanded rounded background · frame ---------- */}
+          {selected.type === 'qr' && (() => {
+            const q = normalizeQr(selected);
+            const f = q.frame;
+            return (
+              <div className="mt-3 border-t border-indigo-50 pt-3">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-extrabold text-slate-400">
+                  <QrCode className="h-3.5 w-3.5" /> مظهر رمز QR
+                </p>
+
+                {/* colours */}
+                <div className="grid grid-cols-2 gap-2">
+                  <ColorInput label="لون الرمز (المربعات)" value={q.color} onChange={(v) => updateQr(selected, { color: v })} />
+                  <div>
+                    <ColorInput
+                      label="لون الخلفية"
+                      value={q.bgColor}
+                      onChange={(v) => updateQr(selected, { bgColor: v, bgTransparent: false })}
+                    />
+                    <label className="mt-1.5 flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                      <input
+                        type="checkbox"
+                        checked={q.bgTransparent}
+                        onChange={(e) => updateQr(selected, { bgTransparent: e.target.checked })}
+                        className="h-3.5 w-3.5 accent-primary-600"
+                      />
+                      خلفية شفافة (يظهر الكارت خلف الرمز)
+                    </label>
+                  </div>
+                </div>
+                {q.bgTransparent && (
+                  <p className="mt-1.5 text-[11px] font-bold text-amber-600">
+                    ⚠️ تأكد أن خلفية الكارت خلف الرمز فاتحة ومتباينة مع لون الرمز ليقرأه الماسح بسهولة.
+                  </p>
+                )}
+
+                {/* expanded background + rounded corners */}
+                <div className="mt-2 rounded-xl bg-indigo-50/60 p-2.5">
+                  <p className="mb-1.5 text-[11px] font-extrabold text-slate-500">
+                    توسيع الخلفية حول الرمز (هامش أمان) واستدارة أركانها
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="mb-0.5 flex items-center justify-between text-[11px] font-bold text-slate-500">
+                        <span>توسيع الخلفية</span>
+                        <span dir="ltr">{q.padding} مم</span>
+                      </span>
+                      <input
+                        type="range" min={0} max={Math.max(1, Math.min(selected.w, selected.h) / 2 - 1)} step={0.1}
+                        value={q.padding}
+                        onChange={(e) => updateQr(selected, { padding: Number(e.target.value) })}
+                        className="mt-2 w-full accent-primary-600"
+                        dir="ltr"
+                      />
+                    </label>
+                    <Num
+                      label="استدارة أركان الخلفية" suffix="مم"
+                      value={selected.borderRadius} min={0} max={50} step={0.5}
+                      onChange={(v) => updateEl(selected.id, { borderRadius: v })}
+                    />
+                  </div>
+                  <div className="mt-1.5 flex gap-1.5">
+                    {[
+                      { label: 'بدون توسيع', p: 0 },
+                      { label: 'ضيق 1 مم', p: 1 },
+                      { label: 'متوسط 2 مم', p: 2 },
+                      { label: 'واسع 3 مم', p: 3 },
+                    ].map((o) => (
+                      <button
+                        key={o.label}
+                        onClick={() => updateQr(selected, { padding: o.p })}
+                        className={`flex-1 rounded-lg border py-1.5 text-[10px] font-extrabold transition ${
+                          q.padding === o.p ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-400 hover:bg-slate-50'
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => updateEl(selected.id, { borderRadius: Math.round(Math.min(selected.w, selected.h) / 2 * 10) / 10 })}
+                    className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white py-1.5 text-[11px] font-extrabold text-slate-500 hover:bg-slate-50"
+                  >
+                    ⭕ خلفية دائرية (استدارة = نصف العرض)
+                  </button>
+                </div>
+
+                {/* frame */}
+                <label className="mb-2 mt-3 flex items-center gap-2 text-xs font-extrabold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={f.enabled}
+                    onChange={(e) => updateQrFrame(selected, { enabled: e.target.checked })}
+                    className="h-4 w-4 accent-primary-600"
+                  />
+                  إطار حول الرمز (يتبع استدارة الأركان)
+                </label>
+                {f.enabled && (
+                  <div className="rounded-xl bg-gold-50/60 p-2.5">
+                    <p className="mb-1.5 text-[11px] font-extrabold text-slate-500">لون الإطار — اختصارات معدنية</p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {(Object.keys(QR_FRAME_PRESETS) as Exclude<QrFramePreset, 'custom'>[]).map((p) => {
+                        const preset = QR_FRAME_PRESETS[p];
+                        const active = f.preset === p;
+                        return (
+                          <button
+                            key={p}
+                            onClick={() => applyQrPreset(selected, p)}
+                            className={`flex flex-col items-center gap-1 rounded-xl border py-2 text-[11px] font-extrabold transition ${
+                              active ? 'border-primary-400 bg-white text-primary-700 ring-2 ring-primary-200' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span
+                              className="h-6 w-6 rounded-full border border-black/10 shadow-inner"
+                              style={{ background: f.metallic ? preset.gradient : preset.color }}
+                            />
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                      <button
+                        onClick={() => applyQrPreset(selected, 'custom')}
+                        className={`flex flex-col items-center gap-1 rounded-xl border py-2 text-[11px] font-extrabold transition ${
+                          f.preset === 'custom' ? 'border-primary-400 bg-white text-primary-700 ring-2 ring-primary-200' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="h-6 w-6 rounded-full border border-black/10 shadow-inner" style={{ background: f.color }} />
+                        مخصص
+                      </button>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {f.preset === 'custom' ? (
+                        <ColorInput label="لون الإطار" value={f.color} onChange={(v) => updateQrFrame(selected, { color: v })} />
+                      ) : (
+                        <div>
+                          <span className="mb-0.5 block text-[11px] font-bold text-slate-500">اللمعة المعدنية</span>
+                          <button
+                            onClick={() => updateQrFrame(selected, { metallic: !f.metallic })}
+                            className={`flex w-full items-center justify-center gap-2 rounded-xl border py-2 text-xs font-extrabold transition ${
+                              f.metallic ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 bg-white text-slate-400 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className="h-4 w-4 rounded-full border border-black/10" style={{ background: qrFrameCss(f) }} />
+                            {f.metallic ? 'تدرّج معدني لامع' : 'لون ثابت (مطفي)'}
+                          </button>
+                        </div>
+                      )}
+                      <Num
+                        label="سُمك الإطار" suffix="مم"
+                        value={f.width} min={0.1} max={10} step={0.1}
+                        onChange={(v) => updateQrFrame(selected, { width: v })}
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[10px] font-bold text-slate-400">
+                      الإطار يُرسم داخل صندوق العنصر حول الخلفية — كبّر العنصر أو وسّع الخلفية ليبقى الرمز واضحاً.
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => updateEl(selected.id, { qr: { ...DEFAULT_QR_SETTINGS, frame: { ...DEFAULT_QR_SETTINGS.frame } } })}
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white py-1.5 text-[11px] font-extrabold text-slate-500 hover:bg-slate-50"
+                >
+                  إعادة ضبط مظهر الرمز (أسود على أبيض · بدون إطار)
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* ---------- box background & stroke (every element except QR — it has its own panel) ---------- */}
+          {selected.type !== 'qr' && (
           <div className="mt-3 border-t border-indigo-50 pt-3">
             <label className="mb-2 flex items-center gap-2 text-xs font-extrabold text-slate-600">
               <input
@@ -842,6 +1027,7 @@ export default function DesignTab({
               </div>
             )}
           </div>
+          )}
 
           {/* free text content */}
           {selected.type === 'text' && (
