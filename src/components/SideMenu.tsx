@@ -6,6 +6,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LogOut, Layers, CalendarDays, Clock } from 'lucide-react';
+import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 import { useAuth } from '@/lib/auth-context';
 import { ROLE_LABELS } from '@/lib/types';
 import { formatCairoDate, formatCairoTime } from '@/lib/time';
@@ -194,7 +195,8 @@ export default function SideMenu({ open, onClose }: SideMenuProps) {
         </nav>
 
         {/* ---------- Footer: logout ---------- */}
-        <div className="border-t border-indigo-100 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+        <div className="grid grid-cols-2 gap-2 border-t border-indigo-100 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+          <SwitchAccountButton current="servant" compact />
           <button
             id="side-menu-logout"
             onClick={() => {

@@ -12,6 +12,7 @@ import {
   Pencil, Church, Layers, School, Loader2, Info, ShieldCheck, Smartphone, KeyRound, Eye, EyeOff, CheckCircle2,
 } from 'lucide-react';
 import ChildShell from '@/components/child/ChildShell';
+import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 import { Avatar, PageTitle, fmtDate } from '@/components/child/ChildBits';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
@@ -129,16 +130,19 @@ function OptionsContent() {
       {/* Password (0042) */}
       <ChangePasswordCard />
 
-      {/* Logout */}
+      {/* Switch account (20261003120000) + Logout */}
       {!confirmOut ? (
-        <button
-          id="child-options-logout"
-          onClick={() => setConfirmOut(true)}
-          className="w-full card flex items-center justify-center gap-2 !py-3.5 font-extrabold text-red-600 hover:bg-red-50 transition"
-        >
-          <LogOut className="h-5 w-5" />
-          خروج من البوابة
-        </button>
+        <div id="child-session-actions" className="grid grid-cols-2 gap-2">
+          <SwitchAccountButton current="child" />
+          <button
+            id="child-options-logout"
+            onClick={() => setConfirmOut(true)}
+            className="w-full card flex items-center justify-center gap-2 !py-3.5 font-extrabold text-red-600 hover:bg-red-50 transition"
+          >
+            <LogOut className="h-5 w-5" />
+            خروج من البوابة
+          </button>
+        </div>
       ) : (
         <div className="card space-y-3 border-red-100">
           <p className="text-center text-sm font-bold">ستحتاج لإدخال كودك وكلمة المرور مرة أخرى للدخول — متأكد؟</p>
@@ -181,6 +185,11 @@ function ChangePasswordCard() {
     setBusy(true);
     try {
       await childChangePassword(supabase, token, current, next);
+      // 20261003120000: ONE password per person — push it to the servant login too
+      await fetch('/api/account/sync-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'child', token, password: next }),
+      }).catch(() => undefined);
       setDone(true);
       setCurrent(''); setNext(''); setConfirm('');
       setTimeout(() => { setDone(false); setOpen(false); }, 1800);
@@ -204,7 +213,7 @@ function ChangePasswordCard() {
           <span className="rounded-xl bg-slate-50 p-2"><KeyRound className="h-5 w-5 text-primary-600" /></span>
           <span className="flex-1 min-w-0">
             <span className="block font-bold text-sm">تغيير كلمة المرور</span>
-            <span className="block text-xs text-slate-400">تُغلق الجلسات الأخرى تلقائياً بعد التغيير</span>
+            <span className="block text-xs text-slate-400">كلمة مرور واحدة لكل حساباتك (خادم · مخدوم · كاهن) — تُغلق الجلسات الأخرى بعد التغيير</span>
           </span>
           <ChevronLeft className={`h-4 w-4 text-slate-300 transition ${open ? '-rotate-90' : ''}`} />
         </button>

@@ -37,6 +37,7 @@ import {
   userIdToEmail, codeToUserId, PHONE_PREFIX, PHONE_LOCAL_LENGTH, GENDER_LABELS,
   type Gender, type Church, type Service, type ClassRoom, type SignupCodeLookup, type ServantSignupResult, type ScopeRef,
 } from '@/lib/types';
+import { verifyPersonPassword, existingKinds, kindsLabel } from '@/lib/accounts';
 
 const MONTHS_AR = [
   'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
@@ -122,7 +123,8 @@ function SignupWizard() {
   const className = classes.find((c) => c.id === classId)?.name;
 
   // ---- Step 2: code ----
-  const [code, setCode] = useState('');
+  // 20261003120000: «تغيير الحساب → إضافة حساب» arrives with ?code=<the person's code>
+  const [code, setCode] = useState(params.get('code') ?? '');
   const [showScan, setShowScan] = useState(false);
   const [lookup, setLookup] = useState<SignupCodeLookup | null>(null);
   const [checking, setChecking] = useState(false);
@@ -185,6 +187,11 @@ function SignupWizard() {
 
   const phoneValid = phoneLocal.length === PHONE_LOCAL_LENGTH;
 
+  // 20261003120000: the code already belongs to a person WITH a password
+  // (child / priest account) → same person, same password, new servant account
+  const linkedAccount = !!lookup && !lookup.family && !lookup.has_account && !!lookup.has_password;
+  const linkedKinds = kindsLabel(existingKinds(lookup as never));
+
   // ---- Step 4: password ----
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -221,6 +228,18 @@ function SignupWizard() {
 
     setLoading(true);
     const userId = codeToUserId(code);
+
+    // 0) 20261003120000: ONE password per person — a code that already has a
+    //    password (a child / priest account) must use THAT password here too
+    if (linkedAccount) {
+      let ok = false;
+      try { ok = await verifyPersonPassword(supabase, code, password); } catch { ok = false; }
+      if (!ok) {
+        setError(`هذا الكود له حساب ${kindsLabel(existingKinds(lookup as never))} بالفعل — اكتب كلمة المرور نفسها (لا يمكن أن يكون للشخص الواحد كلمتا مرور)`);
+        setLoading(false);
+        return;
+      }
+    }
 
     // 1) auth account — the login name IS the code
     const { data, error: signErr } = await supabase.auth.signUp({
@@ -272,6 +291,9 @@ function SignupWizard() {
       return;
     }
     void (res as ServantSignupResult);
+    // 20261003120000: the typed password becomes the person's ONE password
+    // (no-op when he already had the same one)
+    await supabase.rpc('servant_mirror_own_password', { p_password: password }).then(() => undefined, () => undefined);
 
     // Hard navigation so AuthProvider re-initializes with the fresh enrollment
     window.location.href = '/';
@@ -396,7 +418,11 @@ function SignupWizard() {
                   <p className="flex items-center gap-1 text-xs font-extrabold text-emerald-700">
                     <UserCheck className="h-4 w-4" /> شخص مسجّل بالفعل: {lookup.name}
                   </p>
-                  <p className="mt-0.5 text-[11px] font-bold text-emerald-600">سيتم ربط حسابك بنفس الشخص وتعبئة بياناته في الخطوة التالية</p>
+                  <p className="mt-0.5 text-[11px] font-bold text-emerald-600">
+                    {linkedAccount
+                      ? `لديه حساب ${linkedKinds} — سيُضاف حساب الخادم لنفس الشخص بنفس كلمة المرور، وستتمكن من التنقل بين الحسابات من زر «تغيير الحساب»`
+                      : 'سيتم ربط حسابك بنفس الشخص وتعبئة بياناته في الخطوة التالية'}
+                  </p>
                 </div>
               )}
               {lookupDone && lookup?.has_account && (
@@ -532,10 +558,15 @@ function SignupWizard() {
                   </div>
                 )}
               </div>
+              {linkedAccount && (
+                <p id="su-linked-hint" className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">
+                  هذا الكود له حساب {linkedKinds} بالفعل — للشخص الواحد كلمة مرور واحدة لكل حساباته. اكتب كلمة مرورك الحالية هنا.
+                </p>
+              )}
               <div>
-                <label htmlFor="su-password" className="mb-1 block text-xs font-bold text-slate-500">كلمة المرور *</label>
+                <label htmlFor="su-password" className="mb-1 block text-xs font-bold text-slate-500">{linkedAccount ? 'كلمة المرور الحالية *' : 'كلمة المرور *'}</label>
                 <input id="su-password" type="password" className="input-field" placeholder="••••••••" dir="ltr"
-                  value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" />
+                  value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete={linkedAccount ? 'current-password' : 'new-password'} />
               </div>
               <div>
                 <label htmlFor="su-confirm" className="mb-1 block text-xs font-bold text-slate-500">تأكيد كلمة المرور *</label>

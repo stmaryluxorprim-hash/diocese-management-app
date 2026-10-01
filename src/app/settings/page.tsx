@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import EditProfileModal from '@/components/EditProfileModal';
+import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
@@ -234,14 +235,18 @@ export default function SettingsPage() {
         </section>
       )}
 
-      <button
-        id="logout-btn"
-        onClick={signOut}
-        className="w-full card flex items-center justify-center gap-2 !py-3.5 font-extrabold text-red-600 hover:bg-red-50 transition"
-      >
-        <LogOut className="h-5 w-5" />
-        تسجيل الخروج
-      </button>
+      {/* 20261003120000: one person · many accounts — switch without signing out */}
+      <div id="settings-session-actions" className="grid grid-cols-2 gap-2">
+        <SwitchAccountButton current="servant" />
+        <button
+          id="logout-btn"
+          onClick={signOut}
+          className="w-full card flex items-center justify-center gap-2 !py-3.5 font-extrabold text-red-600 hover:bg-red-50 transition"
+        >
+          <LogOut className="h-5 w-5" />
+          تسجيل الخروج
+        </button>
+      </div>
 
       <p className="mt-6 text-center text-xs text-slate-400">
         {BRANDING.shortName} — الإصدار 0.2.0

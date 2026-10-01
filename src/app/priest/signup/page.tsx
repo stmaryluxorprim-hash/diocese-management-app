@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { BRANDING, dioceseLogo } from '@/lib/branding';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import {
@@ -17,6 +18,7 @@ import {
   ScanLine, Wand2, Camera, Trash2, UserCheck, Check, AlertTriangle, Clock, CheckCircle2, XCircle, LogIn, Cross,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { kindsLabel, type AccountKind } from '@/lib/accounts';
 import QrScanner from '@/components/store/QrScanner';
 import PhotoCropModal from '@/components/PhotoCropModal';
 import { generateCode as renderCode, normalizeCodes, type CodesConfig } from '@/lib/code-templates';
@@ -50,6 +52,7 @@ export default function PriestSignupPage() {
 }
 
 function Wizard() {
+  const params = useSearchParams();
   const supabase = createClient();
   const [step, setStep] = useState<Step>(1);
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -75,7 +78,8 @@ function Wizard() {
   const churchName = churches.find((c) => c.id === churchId)?.name;
 
   // step 2
-  const [code, setCode] = useState('');
+  // 20261003120000: «تغيير الحساب → إضافة حساب» arrives with ?code=<the person's code>
+  const [code, setCode] = useState(params.get('code') ?? '');
   const [showScan, setShowScan] = useState(false);
   const [lookup, setLookup] = useState<PriestSignupLookup | null>(null);
   const [checking, setChecking] = useState(false);
@@ -119,6 +123,11 @@ function Wizard() {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // 20261003120000: the code already belongs to a person WITH a password
+  // (servant / child) → same person, same password, a priest account is added
+  const linkedAccount = !!lookup?.exists && !lookup.is_priest && !!lookup.has_password;
+  const linkedKinds = kindsLabel(([lookup?.is_servant && 'servant', lookup?.is_child && 'child'].filter(Boolean)) as AccountKind[]);
 
   const next = () => {
     setError('');
@@ -214,7 +223,11 @@ function Wizard() {
               {lookupDone && lookup?.exists && !lookup.is_priest && !lookup.pending && (
                 <div className="rounded-xl bg-emerald-50 px-3 py-2">
                   <p className="flex items-center gap-1 text-xs font-extrabold text-emerald-700"><UserCheck className="h-4 w-4" /> شخص مسجّل بالفعل: {lookup.name}</p>
-                  <p className="mt-0.5 text-[11px] font-bold text-emerald-600">سيُربط حساب الكاهن بنفس الشخص بعد موافقة المالك</p>
+                  <p className="mt-0.5 text-[11px] font-bold text-emerald-600">
+                    {linkedAccount
+                      ? `لديه حساب ${linkedKinds} — سيُضاف حساب الكاهن لنفس الشخص بنفس كلمة المرور بعد موافقة المالك`
+                      : 'سيُربط حساب الكاهن بنفس الشخص بعد موافقة المالك'}
+                  </p>
                 </div>
               )}
               {lookupDone && lookup?.is_priest && (
@@ -287,8 +300,13 @@ function Wizard() {
                 <p dir="ltr" className="text-right">الكود: <b className="text-slate-700">{code.trim()}</b></p>
                 <p>الكنيسة: <b className="text-slate-700">{churchName}</b></p>
               </div>
-              <div><label htmlFor="ps-password" className="mb-1 block text-xs font-bold text-slate-500">كلمة المرور *</label>
-                <input id="ps-password" type="password" className="input-field" dir="ltr" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" minLength={6} /></div>
+              {linkedAccount && (
+                <p id="ps-linked-hint" className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">
+                  هذا الكود له حساب {linkedKinds} بالفعل — للشخص الواحد كلمة مرور واحدة لكل حساباته. اكتب كلمة مرورك الحالية هنا.
+                </p>
+              )}
+              <div><label htmlFor="ps-password" className="mb-1 block text-xs font-bold text-slate-500">{linkedAccount ? 'كلمة المرور الحالية *' : 'كلمة المرور *'}</label>
+                <input id="ps-password" type="password" className="input-field" dir="ltr" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete={linkedAccount ? 'current-password' : 'new-password'} minLength={6} /></div>
               <div><label htmlFor="ps-confirm" className="mb-1 block text-xs font-bold text-slate-500">تأكيد كلمة المرور *</label>
                 <input id="ps-confirm" type="password" className="input-field" dir="ltr" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
                 {confirm && confirm !== password && <p className="mt-1 text-[11px] font-bold text-red-500">كلمتا المرور غير متطابقتين</p>}</div>

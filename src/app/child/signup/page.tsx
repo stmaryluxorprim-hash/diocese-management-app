@@ -23,6 +23,7 @@ import {
   ScanLine, Wand2, Camera, Trash2, UserCheck, Check, AlertTriangle, Clock, CheckCircle2, XCircle, LogIn,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { kindsLabel, type AccountKind } from '@/lib/accounts';
 import QrScanner from '@/components/store/QrScanner';
 import PhotoCropModal from '@/components/PhotoCropModal';
 import { generateCode as renderCode, normalizeCodes, type CodesConfig } from '@/lib/code-templates';
@@ -120,7 +121,8 @@ function ChildSignupWizard() {
   const className = classes.find((c) => c.id === classId)?.name;
 
   // ---- Step 2: code ----
-  const [code, setCode] = useState('');
+  // 20261003120000: «تغيير الحساب → إضافة حساب» arrives with ?code=<the person's code>
+  const [code, setCode] = useState(params.get('code') ?? '');
   const [showScan, setShowScan] = useState(false);
   const [lookup, setLookup] = useState<ChildSignupLookup | null>(null);
   const [checking, setChecking] = useState(false);
@@ -180,6 +182,14 @@ function ChildSignupWizard() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // 20261003120000: a code that already has a password AND a child enrollment =
+  // an existing child account (log in). A code with a password but NO child
+  // enrollment (servant / priest) → same person, same password, a child
+  // account is added after the servant approves.
+  const isChildAccount = !!lookup?.has_password && !!lookup?.is_child;
+  const linkedAccount = !!lookup?.has_password && !lookup?.is_child && !lookup?.family;
+  const linkedKinds = kindsLabel(([lookup?.is_servant && 'servant', lookup?.is_priest && 'priest'].filter(Boolean)) as AccountKind[]);
+
   const next = () => {
     setError('');
     if (step === 1) {
@@ -188,7 +198,7 @@ function ChildSignupWizard() {
     } else if (step === 2) {
       if (!code.trim()) return setError('اكتب الكود أو امسحه بالكاميرا أو ولّد كودًا');
       if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
-      if (lookup?.has_password) return setError('هذا الكود له حساب بالفعل — سجّل الدخول به');
+      if (isChildAccount) return setError('هذا الكود له حساب مخدوم بالفعل — سجّل الدخول به');
       if (lookup?.pending) return setError('يوجد طلب تسجيل قيد المراجعة لهذا الكود');
       setStep(3);
     } else if (step === 3) {
@@ -364,12 +374,16 @@ function ChildSignupWizard() {
                   <Loader2 className="h-3 w-3 animate-spin" /> جارٍ التحقق من الكود...
                 </p>
               )}
-              {lookupDone && lookup?.exists && !lookup.has_password && !lookup.pending && (
+              {lookupDone && lookup?.exists && !isChildAccount && !lookup.family && !lookup.pending && (
                 <div className="rounded-xl bg-emerald-50 px-3 py-2">
                   <p className="flex items-center gap-1 text-xs font-extrabold text-emerald-700">
-                    <UserCheck className="h-4 w-4" /> مخدوم مسجّل بالفعل: {lookup.name}
+                    <UserCheck className="h-4 w-4" /> {linkedAccount ? 'شخص' : 'مخدوم'} مسجّل بالفعل: {lookup.name}
                   </p>
-                  <p className="mt-0.5 text-[11px] font-bold text-emerald-600">سيُربط حسابك بنفس المخدوم بعد موافقة الخادم</p>
+                  <p className="mt-0.5 text-[11px] font-bold text-emerald-600">
+                    {linkedAccount
+                      ? `لديه حساب ${linkedKinds} — سيُضاف حساب المخدوم لنفس الشخص بنفس كلمة المرور بعد موافقة الخادم`
+                      : 'سيُربط حسابك بنفس المخدوم بعد موافقة الخادم'}
+                  </p>
                 </div>
               )}
               {lookupDone && lookup?.family && (
@@ -378,10 +392,10 @@ function ChildSignupWizard() {
                   <span>هذا الكود كود عائلة — لا يمكن أن يكون كود شخص. استخدم كودًا آخر.</span>
                 </div>
               )}
-              {lookupDone && lookup?.has_password && (
+              {lookupDone && isChildAccount && (
                 <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>هذا الكود له حساب بالفعل. <Link href="/login?as=child" className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.</span>
+                  <span>هذا الكود له حساب مخدوم بالفعل. <Link href="/login?as=child" className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.</span>
                 </div>
               )}
               {lookupDone && lookup?.pending && (
@@ -496,10 +510,15 @@ function ChildSignupWizard() {
                 <p dir="ltr" className="text-right">الكود: <b className="text-slate-700">{code.trim()}</b></p>
                 <p>الفصل: <b className="text-slate-700">{[churchName, serviceName, className].filter(Boolean).join(' ← ')}</b></p>
               </div>
+              {linkedAccount && (
+                <p id="cs-linked-hint" className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">
+                  هذا الكود له حساب {linkedKinds} بالفعل — للشخص الواحد كلمة مرور واحدة لكل حساباته. اكتب كلمة مرورك الحالية هنا.
+                </p>
+              )}
               <div>
-                <label htmlFor="cs-password" className="mb-1 block text-xs font-bold text-slate-500">كلمة المرور *</label>
+                <label htmlFor="cs-password" className="mb-1 block text-xs font-bold text-slate-500">{linkedAccount ? 'كلمة المرور الحالية *' : 'كلمة المرور *'}</label>
                 <input id="cs-password" type="password" className="input-field" placeholder="••••••••" dir="ltr"
-                  value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" minLength={6} />
+                  value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete={linkedAccount ? 'current-password' : 'new-password'} minLength={6} />
               </div>
               <div>
                 <label htmlFor="cs-confirm" className="mb-1 block text-xs font-bold text-slate-500">تأكيد كلمة المرور *</label>

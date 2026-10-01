@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import { SlidersHorizontal, KeyRound, LogOut, RefreshCw, Loader2, Check, Pencil, Camera, Bell } from 'lucide-react';
 import PriestShell, { PriestTitle, PersonPhoto } from '@/components/priest/PriestShell';
 import PhotoCropModal from '@/components/PhotoCropModal';
+import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 import { usePriest } from '@/lib/priest-context';
 import { createClient } from '@/lib/supabase/client';
 import { uploadPhoto } from '@/lib/upload';
@@ -51,6 +52,8 @@ function Options() {
             <span className="rounded-xl bg-slate-50 p-2">{refreshing ? <Loader2 className="h-5 w-5 animate-spin text-violet-600" /> : <RefreshCw className="h-5 w-5 text-violet-600" />}</span>
             <span className="text-sm font-bold">تحديث البيانات</span>
           </button>
+          {/* 20261003120000: one person · many accounts */}
+          <SwitchAccountButton current="priest" className="flex w-full items-center gap-3 px-4 py-3.5 text-right text-sm font-extrabold text-primary-700 hover:bg-primary-50 [&>svg]:rounded-xl [&>svg]:bg-primary-50 [&>svg]:p-2 [&>svg]:h-9 [&>svg]:w-9" />
           {!confirmOut ? (
             <button id="priest-logout" type="button" onClick={() => setConfirmOut(true)} className="flex w-full items-center gap-3 px-4 py-3.5 text-right text-red-600 hover:bg-red-50">
               <span className="rounded-xl bg-red-50 p-2"><LogOut className="h-5 w-5" /></span><span className="text-sm font-extrabold">خروج من البوابة</span>
@@ -169,7 +172,14 @@ function PasswordSection() {
     if (next !== confirm) return setErr('كلمتا المرور غير متطابقتين');
     if (!token) return;
     setBusy(true);
-    try { await priestChangePassword(supabase, token, current, next); setDone(true); setCurrent(''); setNext(''); setConfirm(''); setTimeout(() => { setDone(false); setOpen(false); }, 1800); }
+    try {
+      await priestChangePassword(supabase, token, current, next);
+      // 20261003120000: ONE password per person — push it to the servant login too
+      await fetch('/api/account/sync-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'priest', token, password: next }),
+      }).catch(() => undefined);
+      setDone(true); setCurrent(''); setNext(''); setConfirm(''); setTimeout(() => { setDone(false); setOpen(false); }, 1800); }
     catch (er) { setErr(priestErrorMessage(er, 'تعذّر تغيير كلمة المرور')); } finally { setBusy(false); }
   };
   return (
@@ -178,7 +188,7 @@ function PasswordSection() {
       <div className="card !p-0 overflow-hidden">
         <button id="priest-change-password-btn" type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 px-4 py-3.5 text-right hover:bg-indigo-50/50">
           <span className="rounded-xl bg-slate-50 p-2"><KeyRound className="h-5 w-5 text-violet-600" /></span>
-          <span className="flex-1 min-w-0"><span className="block text-sm font-bold">تغيير كلمة المرور</span><span className="block text-xs text-slate-400">تُغلق الجلسات الأخرى تلقائياً</span></span>
+          <span className="flex-1 min-w-0"><span className="block text-sm font-bold">تغيير كلمة المرور</span><span className="block text-xs text-slate-400">كلمة مرور واحدة لكل حساباتك — تُغلق الجلسات الأخرى تلقائياً</span></span>
         </button>
         {open && (
           <form onSubmit={submit} className="space-y-2 border-t border-indigo-50 p-4">

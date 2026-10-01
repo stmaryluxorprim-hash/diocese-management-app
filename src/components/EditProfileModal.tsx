@@ -233,7 +233,11 @@ export default function EditProfileModal({ onClose }: { onClose: () => void }) {
               });
               if (e0) return 'كلمة المرور القديمة غير صحيحة';
               const { error: e } = await supabase.auth.updateUser({ password: pw });
-              if (!e) return null;
+              if (!e) {
+                // 20261003120000: ONE password per person — mirror to the child / priest side
+                await supabase.rpc('servant_mirror_own_password', { p_password: pw }).then(() => undefined, () => undefined);
+                return null;
+              }
               const m = (e.message ?? '').toLowerCase();
               return m.includes('same') || m.includes('different')
                 ? 'اختر كلمة مرور مختلفة عن الحالية'

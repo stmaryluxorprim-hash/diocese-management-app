@@ -94,6 +94,9 @@ function LoginInner() {
         return;
       }
       void logActivity(supabase, 'auth.login', { meta: { remember, ua: navigator.userAgent.slice(0, 120) } });
+      // 20261003120000: ONE password per person — the Auth password just proved
+      // itself, so the person's credentials row converges to it (no-op when equal)
+      await supabase.rpc('servant_mirror_own_password', { p_password: password }).then(() => undefined, () => undefined);
       try {
         if (remember) {
           window.localStorage.removeItem(SERVANT_NO_REMEMBER_KEY);
