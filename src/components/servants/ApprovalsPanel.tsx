@@ -5,11 +5,14 @@
 // to a person. The approver sets role + PLACES (0045: one or many, through
 // ScopePicker → RPC set_servant_scopes) and may attach permission profiles
 // right away.
+// 20261006120000: a servant who ALREADY has an account and opened another
+// invite link files a `servant_scope_requests` row (new place) — listed here
+// too and approved / rejected through review_servant_scope_request.
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import {
-  UserCheck, Check, X, Phone, Loader2, ArrowRight, ShieldQuestion, IdCard, User, KeyRound, Cake, MapPin,
+  UserCheck, Check, X, Phone, Loader2, ArrowRight, ShieldQuestion, IdCard, User, KeyRound, Cake, MapPin, MapPinPlus,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
@@ -22,6 +25,19 @@ import type { ServantEnrollment, Church, Service, ClassRoom, AppRole, Person, Sc
 import { ROLE_LABELS, SERVANTS_TABLE, SERVANT_SCOPES_TABLE, GENDER_LABELS, allScopesOf } from '@/lib/types';
 
 type Request = ServantEnrollment & { person: Person | null; extra_scopes?: ServantScope[] };
+
+/** 20261006120000: a NEW place asked for by an existing servant. */
+interface ScopeRequest {
+  id: string;
+  servant_id: string;
+  church_id: string;
+  service_id: string | null;
+  class_id: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  servant: Pick<ServantEnrollment, 'id' | 'full_name' | 'user_id' | 'role' | 'phone'> | null;
+}
+const SCOPE_REQUESTS_TABLE = 'servant_scope_requests';
 
 /** How deep a place goes for a role. */
 export const roleDepth = (r: AppRole): ScopeDepth => r === 'church_manager' ? 'church' : r === 'service_manager' ? 'service' : 'class';
@@ -41,6 +57,7 @@ export default function ApprovalsPanel() {
   const { profile } = useAuth();
   const supabase = createClient();
   const [pending, setPending] = useState<Request[]>([]);
+  const [scopeRequests, setScopeRequests] = useState<ScopeRequest[]>([]);
   const [churches, setChurches] = useState<Church[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
@@ -54,11 +71,15 @@ export default function ApprovalsPanel() {
   );
 
   const load = useCallback(async () => {
-    const [{ data: p }, { data: ch }, { data: sv }, { data: cl }] = await Promise.all([
+    const [{ data: p }, { data: ch }, { data: sv }, { data: cl }, { data: sr }] = await Promise.all([
       supabase.from(SERVANTS_TABLE).select('*, person:persons!servant_enrollments_person_id_fkey(*)').eq('status', 'pending').order('created_at'),
       supabase.from('churches').select('*').order('sort_order').order('name'),
       supabase.from('services').select('*').order('sort_order').order('name'),
       supabase.from('classes').select('*').order('sort_order').order('name'),
+      // 20261006120000: new-place requests from existing servants (RLS = my grantable area)
+      supabase.from(SCOPE_REQUESTS_TABLE)
+        .select('id, servant_id, church_id, service_id, class_id, status, created_at, servant:servant_enrollments!servant_scope_requests_servant_id_fkey(id, full_name, user_id, role, phone)')
+        .eq('status', 'pending').order('created_at'),
     ]);
     const reqs = (p ?? []) as Request[];
     // 0045: the other places each request asked for
@@ -69,6 +90,10 @@ export default function ApprovalsPanel() {
       reqs.forEach((r) => { r.extra_scopes = by.get(r.id) ?? []; });
     }
     setPending(reqs);
+    setScopeRequests(((sr ?? []) as unknown[]).map((r) => {
+      const x = r as Omit<ScopeRequest, 'servant'> & { servant: ScopeRequest['servant'] | ScopeRequest['servant'][] };
+      return { ...x, servant: Array.isArray(x.servant) ? (x.servant[0] ?? null) : x.servant } as ScopeRequest;
+    }));
     setChurches(ch ?? []);
     setServices(sv ?? []);
     setClasses(cl ?? []);
@@ -79,7 +104,7 @@ export default function ApprovalsPanel() {
     if (profile?.status === 'approved') load();
   }, [profile?.status, load]);
 
-  useDebouncedRealtime(supabase, 'approvals-page', [{ table: SERVANTS_TABLE }, { table: SERVANT_SCOPES_TABLE }], load, { enabled: !!profile });
+  useDebouncedRealtime(supabase, 'approvals-page', [{ table: SERVANTS_TABLE }, { table: SERVANT_SCOPES_TABLE }, { table: SCOPE_REQUESTS_TABLE }], load, { enabled: !!profile });
 
   const isManager =
     profile && ['owner', 'church_manager', 'service_manager'].includes(profile.role);
@@ -101,13 +126,17 @@ export default function ApprovalsPanel() {
         <div className="flex justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
         </div>
-      ) : pending.length === 0 ? (
+      ) : pending.length === 0 && scopeRequests.length === 0 ? (
         <div className="card py-12 text-center text-slate-400">
           <UserCheck className="mx-auto mb-3 h-10 w-10" />
           <p className="font-bold">لا توجد طلبات معلقة 🎉</p>
         </div>
       ) : (
         <>
+        {scopeRequests.length > 0 && (
+          <ScopeRequestsSection requests={scopeRequests} lookups={{ churches, services, classes }} onDone={load} />
+        )}
+        {pending.length > 0 && <>
         <ScopeGroupFilters idPrefix="approvals" scope={scope} onScope={setScope} lookups={lookups}
           search={search} onSearch={setSearch} placeholder="بحث بالاسم أو الكود أو الهاتف..." />
         <ScopeGroups
@@ -129,9 +158,71 @@ export default function ApprovalsPanel() {
             />
           )}
         />
+        </>}
         </>
       )}
     </>
+  );
+}
+
+// ---------- 20261006120000: «أماكن خدمة جديدة» from servants who already have an account ----------
+function ScopeRequestsSection({ requests, lookups, onDone }: {
+  requests: ScopeRequest[];
+  lookups: { churches: Church[]; services: Service[]; classes: ClassRoom[] };
+  onDone: () => void;
+}) {
+  const supabase = createClient();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const review = async (r: ScopeRequest, approve: boolean) => {
+    setError('');
+    setBusy(r.id);
+    const { error: e } = await supabase.rpc('review_servant_scope_request', { p_request: r.id, p_approve: approve, p_note: null });
+    setBusy(null);
+    if (e) {
+      const m = e.message ?? '';
+      setError(m.includes('forbidden') ? 'هذا المكان خارج نطاقك' : m.includes('not_pending') ? 'تمت مراجعة هذا الطلب بالفعل' : 'تعذر حفظ القرار، حاول مجددًا');
+      return;
+    }
+    onDone();
+  };
+
+  return (
+    <section id="scope-requests" className="card mb-4 space-y-2 border-r-4 border-sky-400">
+      <h3 className="flex items-center gap-2 text-sm font-extrabold text-sky-800">
+        <MapPinPlus className="h-4 w-4" /> طلبات أماكن خدمة إضافية
+        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-700">{requests.length}</span>
+      </h3>
+      <p className="text-[11px] text-slate-400">خدام لهم حساب بالفعل فتحوا دعوة خادم أخرى وأثبتوا كلمة مرورهم — الاعتماد يضيف المكان إلى أماكنهم دون حساب جديد.</p>
+      {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{error}</p>}
+      <ul className="space-y-2">
+        {requests.map((r) => (
+          <li key={r.id} id={`scope-request-${r.id}`} className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-extrabold text-slate-800">
+                {r.servant?.full_name ?? 'خادم'}
+                {r.servant?.role && <span className="mr-1 text-[11px] font-bold text-slate-400">({ROLE_LABELS[r.servant.role]})</span>}
+              </p>
+              <p className="flex items-center gap-1 text-xs font-bold text-sky-700">
+                <MapPin className="h-3 w-3" /> {scopeLabel({ church_id: r.church_id, service_id: r.service_id, class_id: r.class_id }, lookups)}
+              </p>
+              {r.servant?.user_id && <p className="text-[11px] text-slate-400" dir="ltr">{r.servant.user_id}</p>}
+            </div>
+            <div className="flex gap-1.5">
+              <button type="button" disabled={busy === r.id} onClick={() => review(r, true)}
+                className="flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-extrabold text-white active:scale-95 disabled:opacity-50">
+                {busy === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} اعتماد
+              </button>
+              <button type="button" disabled={busy === r.id} onClick={() => review(r, false)}
+                className="flex items-center gap-1 rounded-xl bg-white px-3 py-1.5 text-xs font-extrabold text-red-600 ring-1 ring-red-200 active:scale-95 disabled:opacity-50">
+                <X className="h-3.5 w-3.5" /> رفض
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

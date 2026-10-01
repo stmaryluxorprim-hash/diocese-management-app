@@ -38,6 +38,8 @@ export interface OwnerServantInfo {
   service_id: string | null;
   class_id: string | null;
   scopes: ScopeRef[];
+  /** places he asked for from another invite link — awaiting review (20261006120000). */
+  pending_scopes?: ScopeRef[];
 }
 
 /** The priest account bound to this person (20261005120000). */
@@ -173,6 +175,20 @@ export async function bulkDeletePersons(
 }
 
 // ---------- 20261005120000: add a priest account to an existing person ----------
+/** Another servant place for an EXISTING servant account (owner_add_servant_places, 20261006120000). */
+export async function addServantPlaces(
+  supabase: SupabaseClient,
+  servantId: string,
+  scopes: ScopeRef[],
+): Promise<{ servant_id: string; scopes: ScopeRef[]; count: number }> {
+  const { data, error } = await supabase.rpc('owner_add_servant_places', {
+    p_servant: servantId,
+    p_scopes: scopes.map((s) => ({ church_id: s.church_id, service_id: s.service_id ?? null, class_id: s.class_id ?? null })),
+  });
+  if (error) throw error;
+  return data as { servant_id: string; scopes: ScopeRef[]; count: number };
+}
+
 export async function addPriestForPerson(
   supabase: SupabaseClient,
   personId: string,

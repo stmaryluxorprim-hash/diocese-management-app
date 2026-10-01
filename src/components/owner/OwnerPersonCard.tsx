@@ -64,8 +64,15 @@ export default function OwnerPersonCard({
   const isPriest = !!row.priest;
   const kinds = personKinds(row);
   const age = ageOf(row.birthdate);
-  const unenrolled = row.enrollments.length === 0 && !isPriest;
-  const enrollmentCount = row.enrollments.length + (isPriest ? 1 : 0);
+  // 20261006120000: servant places WITHOUT a class (whole church / whole service)
+  // have no mirror enrollment row — list them explicitly so the person is never
+  // «بدون تسجيلات» while he has a church
+  const servantPlaces = row.servant
+    ? [{ church_id: row.servant.church_id, service_id: row.servant.service_id, class_id: row.servant.class_id }, ...row.servant.scopes]
+        .filter((s) => s.church_id && !s.class_id)
+    : [];
+  const unenrolled = row.enrollments.length === 0 && !isPriest && servantPlaces.length === 0;
+  const enrollmentCount = row.enrollments.length + servantPlaces.length + (isPriest ? 1 : 0);
   const totalPoints = row.enrollments.reduce((s, e) => s + e.points, 0);
   const totalAttendance = row.enrollments.reduce((s, e) => s + e.attendance_count, 0);
 
@@ -146,8 +153,26 @@ export default function OwnerPersonCard({
       </div>
 
       {/* enrollments — always visible (compact), each with its kind */}
-      {(row.enrollments.length > 0 || isPriest) && (
+      {(row.enrollments.length > 0 || isPriest || servantPlaces.length > 0) && (
         <ul id={`op-enrollments-${row.id}`} className="mt-2.5 space-y-1">
+          {servantPlaces.map((s, i) => (
+            <li key={`sp-${i}`} className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ring-1 ${
+              row.servant!.status === 'approved' ? 'bg-emerald-50/60 ring-emerald-100' : 'bg-slate-100 ring-slate-200'}`}>
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-emerald-500"><ShieldCheck className="h-3.5 w-3.5" /></span>
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-x-1 font-bold text-slate-700">
+                  <ChurchIcon className="h-3 w-3 text-gold-500" /> {nameOf(churches, s.church_id)}
+                  <span className="text-slate-300">←</span>
+                  <Layers className="h-3 w-3 text-accent-600" /> {s.service_id ? nameOf(services, s.service_id) : 'كل الخدمات'}
+                  {s.service_id && (<><span className="text-slate-300">←</span><School className="h-3 w-3 text-sky-600" /> كل الفصول</>)}
+                </span>
+              </span>
+              {row.servant!.status !== 'approved' && (
+                <span className="badge !py-0 bg-slate-200 text-slate-600"><Ban className="h-3 w-3" /> {STATUS_LABELS[row.servant!.status]}</span>
+              )}
+              <span className="badge !py-0 bg-emerald-100 text-emerald-700">{ENROLLMENT_KIND_LABELS.servant.as}</span>
+            </li>
+          ))}
           {row.enrollments.map((e) => {
             const stopped = e.status === 'stopped';
             const servantRow = e.kind === 'servant';
