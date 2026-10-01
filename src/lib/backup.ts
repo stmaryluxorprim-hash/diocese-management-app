@@ -64,6 +64,7 @@ export const TABLE_META: Record<string, { label: string; group: string }> = {
   enrollments:              { label: 'تسجيلات المخدومين', group: 'people' },
   person_credentials:       { label: 'كلمات مرور بوابة المخدوم', group: 'people' },
   child_sessions:           { label: 'جلسات بوابة المخدوم', group: 'people' },
+  account_switch_tickets:   { label: 'تذاكر تبديل الحساب', group: 'people' },
   child_join_requests:      { label: 'طلبات تسجيل المخدومين', group: 'people' },
   priests:                  { label: 'الكهنة', group: 'people' },
   priest_requests:          { label: 'طلبات حسابات الكهنة', group: 'people' },

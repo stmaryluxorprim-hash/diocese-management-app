@@ -156,6 +156,10 @@ export interface SignupCodeLookup {
   has_account: boolean;
   /** 20260930120000: true when the code belongs to a FAMILY (no person fields then) */
   family?: boolean;
+  /** 20261003120000: the person already has THE password (child / priest account) */
+  has_password?: boolean;
+  is_child?: boolean;
+  is_priest?: boolean;
 }
 
 // ---------- Add servants directly (migration 0041 + /api/servants/create) ----------
@@ -193,6 +197,8 @@ export type AddServantOutcome =
       national_id: string;
       user_id: string;
       profiles_granted: number;
+      /** 20261003120000: the person already had a password — the typed one was ignored */
+      password_reused?: boolean;
     }
   | { ok: false; error: AddServantError; user_id?: string; detail?: string };
 

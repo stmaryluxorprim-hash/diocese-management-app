@@ -429,6 +429,10 @@ export interface ChildSignupLookup {
   name: string | null;
   /** 20260930120000: the code belongs to a FAMILY — a person can never take it */
   family?: boolean;
+  /** 20261003120000: the accounts the person behind the code already has */
+  is_child?: boolean;
+  is_servant?: boolean;
+  is_priest?: boolean;
 }
 
 export async function childSignupLookupCode(supabase: SupabaseClient, code: string): Promise<ChildSignupLookup> {
@@ -505,7 +509,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   enrollment_stopped: 'هذا التسجيل موقوف — لا يمكن تسجيل حضور أو نقاط',
   wrong_password: 'كلمة المرور غير صحيحة',
   weak_password: 'كلمة المرور قصيرة — 6 أحرف على الأقل',
-  already_registered: 'هذا الكود له حساب بالفعل — سجّل الدخول بدلاً من ذلك',
+  already_registered: 'هذا الكود له حساب مخدوم بالفعل — سجّل الدخول بدلاً من ذلك',
+  wrong_password_signup: 'كلمة المرور غير صحيحة — هذا الكود له حساب بالفعل واكتب كلمة مروره نفسها',
   code_required: 'الكود مطلوب',
   name_required: 'الاسم مطلوب',
   church_required: 'اختر الكنيسة والخدمة والفصل',

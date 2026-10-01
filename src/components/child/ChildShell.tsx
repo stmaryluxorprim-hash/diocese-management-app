@@ -26,6 +26,7 @@ import { syncPushRegistration, kickDispatcher } from '@/lib/push';
 import { useChildConfession } from '@/components/child/ConfessionBits';
 import { useChildFamily } from '@/components/child/FamilyBits';
 import { Loader2 } from 'lucide-react';
+import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 
 export const CHILD_NAV: { href: string; label: string; icon: LucideIcon; id: string }[] = [
   { href: '/child', label: 'الرئيسية', icon: Home, id: 'child-nav-home' },
@@ -498,7 +499,8 @@ function ChildSideMenu({ open, onClose }: { open: boolean; onClose: () => void }
           )}
         </nav>
 
-        <div className="border-t border-indigo-100 p-3">
+        <div className="space-y-2 border-t border-indigo-100 p-3">
+          <SwitchAccountButton current="child" compact />
           <button
             id="child-logout-btn"
             onClick={() => { logout(); onClose(); router.replace('/login?as=child'); }}

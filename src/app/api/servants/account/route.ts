@@ -86,6 +86,8 @@ export async function POST(req: NextRequest) {
     if (password.length < 6) return NextResponse.json({ error: 'weak_password' }, { status: 400 });
     const { error } = await admin.auth.admin.updateUserById(servantId, { password });
     if (error) return NextResponse.json({ error: 'failed', detail: error.message }, { status: 500 });
+    // 20261003120000: ONE password per person — the child / priest side follows
+    await admin.rpc('admin_mirror_servant_password', { p_servant: servantId, p_password: password, p_source: 'admin' });
     return NextResponse.json({ ok: true });
   }
 

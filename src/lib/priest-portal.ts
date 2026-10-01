@@ -214,7 +214,11 @@ export async function priestChangePassword(supabase: SupabaseClient, token: stri
 }
 
 // ---------- Signup ----------
-export interface PriestSignupLookup { exists: boolean; is_priest: boolean; pending: boolean; name: string | null }
+export interface PriestSignupLookup {
+  exists: boolean; is_priest: boolean; pending: boolean; name: string | null;
+  /** 20261003120000: the other accounts of the person behind the code */
+  is_servant?: boolean; is_child?: boolean; has_password?: boolean; family?: boolean;
+}
 export async function priestSignupLookupCode(supabase: SupabaseClient, code: string): Promise<PriestSignupLookup> {
   const { data, error } = await supabase.rpc('priest_signup_lookup_code', { p_code: code.trim() });
   if (error) throw error;

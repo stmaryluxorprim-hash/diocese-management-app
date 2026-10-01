@@ -143,9 +143,14 @@ export async function POST(req: NextRequest) {
     seenLogins.add(userId);
 
     // 3a. login account
+    // 20261003120000: ONE password per person — when the code already belongs
+    // to a person with a password (a child / priest), the servant account is
+    // created with the SAME bcrypt hash and the typed password is ignored.
+    const { data: existingHash } = await admin.rpc('admin_person_password_hash', { p_code: it.code });
+    const reusePassword = typeof existingHash === 'string' && existingHash.length > 20;
     const { data: created, error: authErr } = await admin.auth.admin.createUser({
       email: userIdToEmail(userId),
-      password: it.password,
+      ...(reusePassword ? { password_hash: existingHash as string } : { password: it.password }),
       email_confirm: true,
       user_metadata: { code: it.code, full_name: it.full_name, added_by: actor.id },
     });
@@ -183,10 +188,16 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+    // 20261003120000: a NEW password becomes the person's one password
+    if (!reusePassword) {
+      await admin.rpc('admin_mirror_servant_password', { p_servant: accountId, p_password: it.password, p_source: 'admin' });
+    }
+
     const r = (data ?? {}) as Record<string, unknown>;
     results.push({
       ok: true,
       servant_id: accountId,
+      password_reused: reusePassword,
       person_id: (r.person_id as string) ?? null,
       person_created: !!r.person_created,
       national_id: (r.national_id as string) ?? it.code,

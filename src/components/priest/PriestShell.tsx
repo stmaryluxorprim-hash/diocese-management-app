@@ -13,6 +13,7 @@ import {
   Home, Users, CalendarClock, PhoneCall, SlidersHorizontal, Menu, X, LogOut, CalendarDays, Clock, User, Loader2, Cross, UsersRound, MapPinned, Footprints, type LucideIcon,
 } from 'lucide-react';
 import { BRANDING, dioceseLogo } from '@/lib/branding';
+import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 import { usePriest } from '@/lib/priest-context';
 import { formatCairoDate, formatCairoTime } from '@/lib/time';
 
@@ -117,6 +118,7 @@ function PriestSideMenu({ open, onClose }: { open: boolean; onClose: () => void 
           })}
         </nav>
         <div className="border-t border-indigo-100 p-3">
+          <SwitchAccountButton current="priest" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-extrabold text-primary-700 transition hover:bg-primary-50" />
           <button id="priest-logout-btn" onClick={() => { logout(); onClose(); router.replace('/login?as=priest'); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-extrabold text-red-600 transition hover:bg-red-50"><LogOut className="h-5 w-5" /> خروج من البوابة</button>
         </div>
       </aside>
