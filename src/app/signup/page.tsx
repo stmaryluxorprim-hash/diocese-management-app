@@ -17,6 +17,10 @@
 //
 // Submit: auth.signUp (login name = the code) → RPC `servant_signup` which
 // upserts the person by code and creates the PENDING servant enrollment.
+//
+// 20261004120000: the page opens ONLY through ?invite=<token> generated in
+// the app (دعوة خادم). The invite's scope is locked; the token is passed as
+// p_invite and consumed by the RPC.
 
 import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { BRANDING, dioceseLogo } from '@/lib/branding';
@@ -37,7 +41,8 @@ import {
   userIdToEmail, codeToUserId, PHONE_PREFIX, PHONE_LOCAL_LENGTH, GENDER_LABELS,
   type Gender, type Church, type Service, type ClassRoom, type SignupCodeLookup, type ServantSignupResult, type ScopeRef,
 } from '@/lib/types';
-import { verifyPersonPassword, existingKinds, kindsLabel } from '@/lib/accounts';
+import { verifyPersonPassword, existingKinds, kindsLabel, checkSignupInvite, type InviteCheck } from '@/lib/accounts';
+import InviteGate, { useSignupInvite } from '@/components/InviteGate';
 
 const MONTHS_AR = [
   'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
@@ -75,10 +80,24 @@ function SignupWizard() {
   const params = useSearchParams();
   const supabase = createClient();
 
-  // ---- Invite-link scope (locked when present) ----
-  const inviteChurch = params.get('church') ?? '';
-  const inviteService = params.get('service') ?? '';
-  const inviteClass = params.get('class') ?? '';
+  // ---- 20261004120000: invite-only — ?invite=<token> must be valid ----
+  const inviteToken = params.get('invite');
+  const invite = useSignupInvite(supabase, inviteToken, 'servant');
+  return (
+    <InviteGate invite={invite} kind="servant" token={inviteToken}>
+      {invite?.valid && <SignupForm invite={invite} inviteToken={inviteToken ?? ''} />}
+    </InviteGate>
+  );
+}
+
+function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken: string }) {
+  const params = useSearchParams();
+  const supabase = createClient();
+
+  // ---- Invite scope (locked when present — the DB applies it anyway) ----
+  const inviteChurch = invite.church_id ?? '';
+  const inviteService = invite.service_id ?? '';
+  const inviteClass = invite.class_id ?? '';
   const churchLocked = !!inviteChurch;
   const serviceLocked = !!inviteService;
   const classLocked = !!inviteClass;
@@ -241,6 +260,15 @@ function SignupWizard() {
       }
     }
 
+    // 0.5) 20261004120000: the invite must still be valid — checked BEFORE the
+    //      auth user is created so an expired invite leaves no orphan account
+    const stillValid = await checkSignupInvite(supabase, inviteToken, 'servant');
+    if (!stillValid.valid) {
+      setError('رابط الدعوة لم يعد صالحًا — اطلب رابطًا جديدًا من مسؤول الخدمة');
+      setLoading(false);
+      return;
+    }
+
     // 1) auth account — the login name IS the code
     const { data, error: signErr } = await supabase.auth.signUp({
       email: userIdToEmail(userId),
@@ -277,6 +305,8 @@ function SignupWizard() {
       p_image_url: imageUrl,
       // 0045: every place (the first = primary)
       p_scopes: scopes.length ? scopes : null,
+      // 20261004120000: the invite that opened this page
+      p_invite: inviteToken,
     });
 
     if (rpcErr) {
@@ -285,6 +315,7 @@ function SignupWizard() {
         m.includes('code_taken') ? 'هذا الكود مستخدم من خادم آخر'
         : m.includes('already_registered') ? 'هذا الحساب مسجّل بالفعل'
         : m.includes('phone_required') ? 'رقم الهاتف مطلوب'
+        : m.includes('invite_') ? 'رابط الدعوة لم يعد صالحًا — اطلب رابطًا جديدًا من مسؤول الخدمة'
         : 'تعذر حفظ البيانات، حاول مرة أخرى'
       );
       setLoading(false);

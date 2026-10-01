@@ -5,6 +5,7 @@
 -- =====================================================================
 \set ON_ERROR_STOP on
 begin;
+\i supabase/tests/_test_invites.sql
 
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000001'),  -- owner
@@ -171,7 +172,8 @@ begin
   r := public.servant_signup('NEW-1', 'خادم جديد', 'male', null, '+201000000008', null, null, null, null, null, null,
         jsonb_build_array(
           jsonb_build_object('church_id', '10000000-0000-0000-0000-000000000001', 'service_id', '20000000-0000-0000-0000-000000000001', 'class_id', '30000000-0000-0000-0000-000000000001'),
-          jsonb_build_object('church_id', '10000000-0000-0000-0000-000000000001', 'service_id', '20000000-0000-0000-0000-000000000002', 'class_id', '30000000-0000-0000-0000-000000000002')));
+          jsonb_build_object('church_id', '10000000-0000-0000-0000-000000000001', 'service_id', '20000000-0000-0000-0000-000000000002', 'class_id', '30000000-0000-0000-0000-000000000002')),
+        current_setting('test.inv_servant'));
   if (r->>'scopes')::int <> 2 then raise exception 'F1'; end if;
   if (select class_id from public.servant_enrollments where id = '00000000-0000-0000-0000-000000000008') <> '30000000-0000-0000-0000-000000000001' then raise exception 'F2 primary'; end if;
   if (select count(*) from public.servant_scopes where servant_id = '00000000-0000-0000-0000-000000000008') <> 1 then raise exception 'F3 one extra'; end if;

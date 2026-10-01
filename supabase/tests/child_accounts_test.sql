@@ -5,6 +5,7 @@
 -- =====================================================================
 \set ON_ERROR_STOP on
 begin;
+\i supabase/tests/_test_invites.sql
 
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000001'),  -- owner
@@ -128,13 +129,13 @@ begin
   if not (r->>'has_password')::boolean then raise exception 'lookup must flag the existing account'; end if;
   begin
     perform public.child_signup('KID-1', 'x', 'secret9', null, null, null, null, null, null,
-      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', current_setting('test.inv_child'));
     raise exception 'signup with an existing account must fail';
   exception when others then
     if sqlerrm not like '%already_registered%' then raise; end if;
   end;
   r := public.child_signup('KID-2', 'مريم', 'secret9', 'female', '2015-01-02', '+201000000002', null, null, null,
-      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', current_setting('test.inv_child'));
   perform set_config('test.req', r->>'request_id', true);
   if (public.child_signup_status((r->>'request_id')::uuid)->>'status') <> 'pending' then raise exception 'status must be pending'; end if;
   -- login before approval → no password yet

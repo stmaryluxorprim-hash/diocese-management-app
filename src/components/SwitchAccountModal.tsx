@@ -9,10 +9,9 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { X, Loader2, Users, GraduationCap, Cross, ArrowLeftRight, Check, Clock, Ban, Plus, type LucideIcon } from 'lucide-react';
-import Link from 'next/link';
+import { X, Loader2, Users, GraduationCap, Cross, ArrowLeftRight, Check, Clock, Ban, type LucideIcon } from 'lucide-react';
 import {
-  fetchMyAccounts, switchAccount, currentSessionToken, accountUsable, placeLabel, accountErrorMessage,
+  fetchMyAccounts, switchAccount, currentSessionToken, accountUsable, accountErrorMessage, accountRowKey, isCurrentRow,
   ACCOUNT_KIND_LABELS, ACCOUNT_STATUS_LABELS,
   type AccountKind, type MyAccounts, type PersonAccount,
 } from '@/lib/accounts';
@@ -23,7 +22,6 @@ const COLORS: Record<AccountKind, string> = {
   child: 'bg-gold-50 text-gold-700 ring-gold-200',
   priest: 'bg-violet-50 text-violet-700 ring-violet-200',
 };
-const SIGNUP: Record<AccountKind, string> = { servant: '/signup', child: '/child/signup', priest: '/priest/signup' };
 const ROLE_AR: Record<string, string> = {
   owner: 'مالك التطبيق', church_manager: 'مدير كنيسة', service_manager: 'مسؤول خدمة', class_servant: 'خادم فصل',
 };
@@ -32,7 +30,7 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
   const [supabase] = useState(() => createClient());
   const [data, setData] = useState<MyAccounts | null>(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState<AccountKind | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,11 +40,17 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
     return () => { cancelled = true; };
   }, [supabase, current]);
 
-  const go = async (to: AccountKind) => {
-    if (busy || to === current) return;
-    setBusy(to); setError('');
+  // 20261004120000: every row is ONE enrollment — the servant switches the
+  // place of his login, the child the class, the priest his single account
+  const go = async (a: PersonAccount) => {
+    const key = accountRowKey(a);
+    if (busy || !data || isCurrentRow(a, data)) return;
+    setBusy(key); setError('');
     try {
-      const href = await switchAccount(supabase, current, to, { remember: true });
+      const href = await switchAccount(supabase, current, {
+        kind: a.kind, enrollment_id: a.enrollment_id,
+        church_id: a.church_id ?? null, service_id: a.service_id ?? null, class_id: a.class_id ?? null,
+      }, { remember: true });
       // hard navigation: every portal boots its provider from storage / cookies
       window.location.href = href;
     } catch (e) {
@@ -56,7 +60,6 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
   };
 
   const accounts = data?.accounts ?? [];
-  const missing = (['servant', 'child', 'priest'] as AccountKind[]).filter((k) => !accounts.some((a) => a.kind === k));
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
@@ -85,28 +88,17 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
 
         {data && (
           <ul id="switch-account-list" className="space-y-2">
-            {accounts.map((a) => (
-              <AccountRow key={a.kind} a={a} isCurrent={a.kind === current} busy={busy === a.kind} disabled={!!busy} onPick={() => go(a.kind)} />
-            ))}
+            {accounts.map((a) => {
+              const key = accountRowKey(a);
+              return <AccountRow key={key} a={a} isCurrent={isCurrentRow(a, data)} busy={busy === key} disabled={!!busy} onPick={() => go(a)} />;
+            })}
           </ul>
         )}
 
-        {data && missing.length > 0 && (
-          <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-2.5">
-            <p className="mb-1.5 flex items-center gap-1 text-[11px] font-extrabold text-slate-500"><Plus className="h-3.5 w-3.5" /> إضافة حساب آخر لنفس الكود</p>
-            <div className="flex flex-wrap gap-1.5">
-              {missing.map((k) => {
-                const Icon = ICONS[k];
-                return (
-                  <Link key={k} id={`switch-account-add-${k}`} href={`${SIGNUP[k]}?code=${encodeURIComponent(data.person.code)}`}
-                    className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold ring-1 ${COLORS[k]}`}>
-                    <Icon className="h-3.5 w-3.5" /> {ACCOUNT_KIND_LABELS[k]}
-                  </Link>
-                );
-              })}
-            </div>
-            <p className="mt-1.5 text-[10px] text-slate-400">تُسجَّل بنفس الكود وكلمة المرور الحالية — لا حاجة لحساب جديد منفصل.</p>
-          </div>
+        {data && (
+          <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[11px] font-bold text-slate-500">
+            كل سطر = تسجيل واحد (مكان خدمة · فصل · حساب الكاهن) وتعمل الجلسة عليه وحده. لإضافة تسجيل جديد لنفس الكود استخدم رابط الدعوة من المسؤول — بنفس كلمة المرور.
+          </p>
         )}
 
         {error && <p id="switch-account-error" className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600">{error}</p>}
@@ -122,12 +114,12 @@ function AccountRow({ a, isCurrent, busy, disabled, onPick }: {
 }) {
   const Icon = ICONS[a.kind];
   const usable = accountUsable(a);
-  const places = a.places.map(placeLabel).filter(Boolean);
+  const places = a.label2 ? [a.label2] : [];
   const sub = a.kind === 'servant' && a.role ? ROLE_AR[a.role] ?? a.role : a.kind === 'priest' && a.title ? a.title : null;
   return (
     <li>
       <button
-        id={`switch-account-${a.kind}`}
+        id={`switch-account-${a.kind}-${a.enrollment_id.slice(0, 8)}${a.class_id ? '-' + a.class_id.slice(0, 8) : ''}`}
         type="button"
         disabled={isCurrent || !usable || disabled}
         onClick={onPick}

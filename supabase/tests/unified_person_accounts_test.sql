@@ -6,6 +6,7 @@
 -- =====================================================================
 \set ON_ERROR_STOP on
 begin;
+\i supabase/tests/_test_invites.sql
 
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000001'),  -- owner
@@ -62,21 +63,22 @@ begin
   if not public.person_verify_password('SRV-1', 'srvpass1') then raise exception 'verify must pass on right pw'; end if;
   begin
     perform public.child_signup('SRV-1', 'مينا', 'otherpass', 'male', null, null, null, null, null,
-      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', current_setting('test.inv_child'));
   exception when others then ok := sqlerrm like '%wrong_password%'; end;
   if not ok then raise exception 'child signup with a different password must be refused'; end if;
   r := public.child_signup('SRV-1', 'مينا', 'srvpass1', 'male', null, null, null, null, null,
-      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', current_setting('test.inv_child'));
   if not (r->>'linked')::boolean then raise exception 'signup must be linked to the existing person'; end if;
   -- a brand-new child code still works the old way
   r := public.child_signup('KID-NEW', 'يوسف', 'newpass1', 'male', null, null, null, null, null,
-      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002', current_setting('test.inv_child'));
   if (r->>'linked')::boolean then raise exception 'new code must not be linked'; end if;
-  -- an existing CHILD with a password → still «already_registered»
+  -- an existing CHILD in the SAME class → «already_registered» (20261004120000:
+  -- another class may be added with the same password)
   ok := false;
   begin
     perform public.child_signup('KID-1', 'x', 'kidpass1', null, null, null, null, null, null,
-      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
+      '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', current_setting('test.inv_child'));
   exception when others then ok := sqlerrm like '%already_registered%'; end;
   if not ok then raise exception 'existing child must be refused'; end if;
 end $$;
@@ -124,10 +126,10 @@ do $$
 declare r jsonb; ok boolean := false;
 begin
   begin
-    perform public.priest_signup('SRV-1', 'أبونا مينا', 'badpass1', '10000000-0000-0000-0000-000000000001', 'القس');
+    perform public.priest_signup('SRV-1', 'أبونا مينا', 'badpass1', '10000000-0000-0000-0000-000000000001', 'القس', null, null, null, null, null, null, current_setting('test.inv_priest'));
   exception when others then ok := sqlerrm like '%wrong_password%'; end;
   if not ok then raise exception 'priest signup with another password must be refused'; end if;
-  r := public.priest_signup('SRV-1', 'أبونا مينا', 'srvpass1', '10000000-0000-0000-0000-000000000001', 'القس');
+  r := public.priest_signup('SRV-1', 'أبونا مينا', 'srvpass1', '10000000-0000-0000-0000-000000000001', 'القس', null, null, null, null, null, null, current_setting('test.inv_priest'));
   if not (r->>'linked')::boolean then raise exception 'priest signup must be linked'; end if;
 end $$;
 

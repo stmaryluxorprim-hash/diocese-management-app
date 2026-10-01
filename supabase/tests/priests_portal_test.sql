@@ -5,6 +5,7 @@
 -- =====================================================================
 \set ON_ERROR_STOP on
 begin;
+\i supabase/tests/_test_invites.sql
 
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000001'),  -- owner
@@ -39,12 +40,12 @@ declare r jsonb; l jsonb; ok boolean := false;
 begin
   l := public.priest_signup_lookup_code('PR-1');
   if (l->>'exists')::boolean then raise exception 'code must be new'; end if;
-  r := public.priest_signup('PR-1', 'أبونا يوحنا', 'pass123', '10000000-0000-0000-0000-000000000001', 'القمص', 'male', null, '+201000000009', null, null, null);
+  r := public.priest_signup('PR-1', 'أبونا يوحنا', 'pass123', '10000000-0000-0000-0000-000000000001', 'القمص', 'male', null, '+201000000009', null, null, null, current_setting('test.inv_priest'));
   if r->>'request_id' is null then raise exception 'signup must return request id'; end if;
   l := public.priest_signup_lookup_code('PR-1');
   if not (l->>'pending')::boolean then raise exception 'lookup must report pending'; end if;
   begin
-    perform public.priest_signup('PR-1', 'x', 'pass123', '10000000-0000-0000-0000-000000000001');
+    perform public.priest_signup('PR-1', 'x', 'pass123', '10000000-0000-0000-0000-000000000001', null, null, null, null, null, null, null, current_setting('test.inv_priest'));
   exception when others then ok := sqlerrm like '%pending_exists%'; end;
   if not ok then raise exception 'second pending signup must fail'; end if;
   ok := false;
