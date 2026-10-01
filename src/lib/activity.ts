@@ -468,6 +468,9 @@ export function activityErrorMessage(e: unknown, fallback: string): string {
   const msg = (e as { message?: string; code?: string })?.message ?? '';
   const code = (e as { code?: string })?.code ?? '';
   if (code === '42883' || code === '42P01' || /activity_(feed|summary|log)/.test(msg) && /does not exist/.test(msg)) return MIGRATION_HINT;
+  if (code === '57014' || /statement timeout|canceling statement/i.test(msg))
+    return 'استغرق التحميل وقتًا طويلًا — شغّل migration 20261007120000 (تسريع سجل النشاط) أو ضيّق الفترة والفلاتر';
+  if (code === '42501' || code === 'PGRST301' || /permission denied|JWT/i.test(msg)) return 'غير مسموح لك بعرض سجل النشاط';
   if (msg === 'not_allowed') return 'غير مسموح لك بهذه العملية';
   return fallback;
 }

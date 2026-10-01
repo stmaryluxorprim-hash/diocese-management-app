@@ -253,6 +253,9 @@ export async function setServantActivePlace(supabase: SupabaseClient, place: { c
 export interface SignupInvite {
   id: string; kind: AccountKind; church_id: string | null; service_id: string | null; class_id: string | null;
   created_by: string | null; created_at: string; expires_at: string; max_uses: number | null; uses: number; revoked_at: string | null; note: string | null;
+  /** الرمز الخام (20261007120000) — يقرأه منشئ الدعوة / المالك فقط لإعادة عرض الرابط. null للدعوات الأقدم من الـ migration. */
+  token?: string | null;
+  updated_at?: string | null;
 }
 export interface InviteCheck {
   valid: boolean; kind?: AccountKind; church_id?: string | null; service_id?: string | null; class_id?: string | null;
@@ -272,9 +275,7 @@ export async function createSignupInvite(
   });
   if (error) throw error;
   const r = data as { id: string; token: string; expires_at: string };
-  const url = new URL(SIGNUP_PATH[kind], window.location.origin);
-  url.searchParams.set('invite', r.token);
-  return { ...r, url: url.toString() };
+  return { ...r, url: inviteUrlFor(kind, r.token) };
 }
 
 export async function checkSignupInvite(supabase: SupabaseClient, token: string | null, kind: AccountKind): Promise<InviteCheck> {
@@ -284,18 +285,50 @@ export async function checkSignupInvite(supabase: SupabaseClient, token: string 
   return (data ?? { valid: false }) as InviteCheck;
 }
 
+/** رابط التسجيل الكامل لرمز دعوة */
+export function inviteUrlFor(kind: AccountKind, token: string): string {
+  const url = new URL(SIGNUP_PATH[kind], window.location.origin);
+  url.searchParams.set('invite', token);
+  return url.toString();
+}
+
+const INVITE_COLUMNS = 'id, kind, church_id, service_id, class_id, created_by, created_at, expires_at, max_uses, uses, revoked_at, note, token, updated_at';
+const INVITE_COLUMNS_LEGACY = 'id, kind, church_id, service_id, class_id, created_by, created_at, expires_at, max_uses, uses, revoked_at, note';
+
 export async function fetchMyInvites(supabase: SupabaseClient, kind?: AccountKind): Promise<SignupInvite[]> {
-  let q = supabase.from('signup_invites')
-    .select('id, kind, church_id, service_id, class_id, created_by, created_at, expires_at, max_uses, uses, revoked_at, note')
-    .order('created_at', { ascending: false }).limit(50);
-  if (kind) q = q.eq('kind', kind);
-  const { data, error } = await q;
+  const run = async (cols: string) => {
+    let q = supabase.from('signup_invites').select(cols).order('created_at', { ascending: false }).limit(50);
+    if (kind) q = q.eq('kind', kind);
+    return q;
+  };
+  let { data, error } = await run(INVITE_COLUMNS);
+  // the DB may not have 20261007120000 yet (no `token` column) → fall back
+  if (error && (error.code === '42703' || /token|updated_at/.test(error.message ?? ''))) ({ data, error } = await run(INVITE_COLUMNS_LEGACY));
   if (error) throw error;
-  return (data ?? []) as SignupInvite[];
+  return (data ?? []) as unknown as SignupInvite[];
 }
 
 export async function revokeSignupInvite(supabase: SupabaseClient, id: string) {
   const { error } = await supabase.from('signup_invites').update({ revoked_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw error;
+}
+
+/** تعديل دعوة: الصلاحية (أيام من الآن) · عدد الاستخدامات · الملاحظة · إعادة التفعيل (20261007120000) */
+export async function updateSignupInvite(
+  supabase: SupabaseClient, id: string,
+  patch: { days?: number | null; max_uses?: number | null; clear_max_uses?: boolean; note?: string | null; reactivate?: boolean },
+): Promise<SignupInvite> {
+  const { data, error } = await supabase.rpc('signup_invite_update', {
+    p_id: id, p_days: patch.days ?? null, p_max_uses: patch.max_uses ?? null, p_clear_max_uses: patch.clear_max_uses ?? false,
+    p_note: patch.note ?? null, p_reactivate: patch.reactivate ?? false,
+  });
+  if (error) throw error;
+  return data as SignupInvite;
+}
+
+/** حذف دعوة نهائياً (منشئها أو المالك) */
+export async function deleteSignupInvite(supabase: SupabaseClient, id: string) {
+  const { error } = await supabase.rpc('signup_invite_delete', { p_id: id });
   if (error) throw error;
 }
 
@@ -365,6 +398,9 @@ const ERRORS: Record<string, string> = {
   invite_required: 'التسجيل متاح من رابط الدعوة فقط — اطلب الرابط من المسؤول',
   invite_invalid: 'رابط الدعوة غير صالح أو انتهت صلاحيته — اطلب رابطًا جديدًا من المسؤول',
   forbidden: 'ليس لديك صلاحية لهذا الإجراء',
+  invite_not_found: 'هذه الدعوة لم تعد موجودة',
+  signup_invite_update: 'شغّل migration 20261007120000 أولاً لتعديل الدعوات',
+  signup_invite_delete: 'شغّل migration 20261007120000 أولاً لحذف الدعوات',
   scope_required: 'اختر الكنيسة والخدمة والفصل',
 };
 export function accountErrorMessage(err: unknown, fallback = 'تعذّر تبديل الحساب، حاول مجدداً'): string {

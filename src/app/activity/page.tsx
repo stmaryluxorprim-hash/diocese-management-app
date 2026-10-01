@@ -149,6 +149,8 @@ function ActivityInner() {
   const [more, setMore] = useState(false);
   const [done, setDone] = useState(false);
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [actors, setActors] = useState<ActivityActor[]>([]);
   const [detail, setDetail] = useState<ActivityRow | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -158,14 +160,24 @@ function ActivityInner() {
 
   useEffect(() => { fetchPermissions(supabase).then(setPerms); }, [supabase]);
 
+  // The feed and the summary load INDEPENDENTLY: a slow / failing summary
+  // (big logs) must not take the timeline down with it, and vice versa.
+  const loadSummary = useCallback(async () => {
+    setSummaryLoading(true); setSummaryError(null);
+    try { setSummary(await fetchSummary(supabase, filters)); }
+    catch (e) { setSummaryError(activityErrorMessage(e, 'تعذر تحميل الإحصائيات')); }
+    finally { setSummaryLoading(false); }
+  }, [supabase, filters]);
+
   const loadFirst = useCallback(async () => {
     setLoading(true);
+    loadSummary();
     try {
-      const [r, s] = await Promise.all([fetchFeed(supabase, filters, pageSize), fetchSummary(supabase, filters)]);
-      setRows(r); setDone(r.length < pageSize); setSummary(s); setFresh(0);
+      const r = await fetchFeed(supabase, filters, pageSize);
+      setRows(r); setDone(r.length < pageSize); setFresh(0);
     } catch (e) { flash(activityErrorMessage(e, 'تعذر تحميل السجل')); }
     finally { setLoading(false); }
-  }, [supabase, filters, pageSize]);
+  }, [supabase, filters, pageSize, loadSummary]);
 
   useEffect(() => { loadFirst(); }, [loadFirst]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -324,12 +336,16 @@ function ActivityInner() {
       {tab === 'users' && (
         <UsersTab actors={actors} loading={loading} onPick={(a) => setParams({ tab: 'feed', actor: a.actor_id, kind: a.actor_kind, person: null, batch: null })} />
       )}
-      {tab === 'ops' && summary && (
+      {tab === 'ops' && (summary ? (
         <OpsTab summary={summary} onPick={(a) => setParams({ tab: 'feed', action: a, group: null, batch: null })} onGroup={(g) => setParams({ tab: 'feed', group: g, action: null, batch: null })} />
-      )}
-      {tab === 'overview' && (
-        <OverviewTab summary={summary} loading={loading} isOwner={profile?.role === 'owner'} supabase={supabase} flash={flash} onPruned={loadFirst} />
-      )}
+      ) : (
+        <SummaryState loading={summaryLoading} error={summaryError} onRetry={loadSummary} />
+      ))}
+      {tab === 'overview' && (summary ? (
+        <OverviewTab summary={summary} isOwner={profile?.role === 'owner'} supabase={supabase} flash={flash} onPruned={loadFirst} />
+      ) : (
+        <SummaryState loading={summaryLoading} error={summaryError} onRetry={loadSummary} />
+      ))}
 
       <ActivityDetails row={detail} onClose={() => setDetail(null)} scopeNames={scopeNames}
         onFilterActor={(r) => { setDetail(null); goActor(r); }} onFilterTarget={(r) => { setDetail(null); goTarget(r); }}
@@ -459,9 +475,21 @@ function OpsTab({ summary, onPick, onGroup }: { summary: ActivitySummary; onPick
   );
 }
 
+// ---------- Summary placeholder (loading / failed) ----------
+function SummaryState({ loading, error, onRetry }: { loading: boolean; error: string | null; onRetry: () => void }) {
+  if (loading || !error) return <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary-500" /></div>;
+  return (
+    <div id="activity-summary-error" className="card flex flex-col items-center gap-3 py-8 text-center">
+      <PieChart className="h-7 w-7 text-slate-300" />
+      <p className="text-sm font-extrabold text-slate-600">{error}</p>
+      <button type="button" onClick={onRetry} className="btn-secondary inline-flex items-center gap-1 !py-2 !px-3 text-sm"><RefreshCw className="h-4 w-4" /> إعادة المحاولة</button>
+    </div>
+  );
+}
+
 // ---------- Overview ----------
-function OverviewTab({ summary, loading, isOwner, supabase, flash, onPruned }: {
-  summary: ActivitySummary | null; loading: boolean; isOwner: boolean;
+function OverviewTab({ summary, isOwner, supabase, flash, onPruned }: {
+  summary: ActivitySummary; isOwner: boolean;
   supabase: ReturnType<typeof createClient>; flash: (m: string) => void; onPruned: () => void;
 }) {
   const [settings, setSettings] = useState<ActivitySettings | null>(null);
@@ -469,8 +497,6 @@ function OverviewTab({ summary, loading, isOwner, supabase, flash, onPruned }: {
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (isOwner) fetchSettings(supabase).then((s) => { setSettings(s); setKeep(s.keep_days); }).catch(() => {}); }, [isOwner, supabase]);
 
-  if (loading && !summary) return <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary-500" /></div>;
-  if (!summary) return null;
   const days = [...summary.by_day].sort((a, b) => a.day.localeCompare(b.day));
   const maxD = Math.max(...days.map((d) => Number(d.n)), 1);
   const hours = Array.from({ length: 24 }, (_, h) => Number(summary.by_hour.find((x) => x.hour === h)?.n ?? 0));
