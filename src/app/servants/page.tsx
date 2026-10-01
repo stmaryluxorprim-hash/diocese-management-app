@@ -51,11 +51,15 @@ function ServantsModule() {
   const isManager = !!profile && ['owner', 'church_manager', 'service_manager'].includes(profile.role);
 
   const loadCount = useCallback(async () => {
+    // 20261006120000: pending signups + pending new-place requests (RPC);
+    // fallback to the plain count before the migration is applied
+    const { data, error } = await supabase.rpc('pending_servant_requests_count');
+    if (!error && typeof data === 'number') { setPendingCount(data); return; }
     const { count } = await supabase.from(SERVANTS_TABLE).select('id', { count: 'exact', head: true }).eq('status', 'pending');
     setPendingCount(count ?? 0);
   }, [supabase]);
   useEffect(() => { if (profile?.status === 'approved') loadCount(); }, [profile?.status, loadCount]);
-  useDebouncedRealtime(supabase, 'servants-module-count', [{ table: SERVANTS_TABLE }], loadCount, { enabled: isManager });
+  useDebouncedRealtime(supabase, 'servants-module-count', [{ table: SERVANTS_TABLE }, { table: 'servant_scope_requests' }], loadCount, { enabled: isManager });
 
   const setTab = (t: Tab) => router.replace(t === 'servants' ? '/servants' : `/servants?tab=${t}`);
 

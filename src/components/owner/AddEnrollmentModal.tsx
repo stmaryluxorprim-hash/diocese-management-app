@@ -11,9 +11,11 @@
 //               when he has none yet — 20261003120000 rule)
 //   • ككاهن   — church + title → owner_add_priest_for_person (approved at
 //               once; the trigger adopts the person's password)
-// Kinds the person already holds are shown but disabled (a servant / priest
-// account is one per person — manage it from إدارة الخدام / الكهنة; the
-// child kind is always available for more classes).
+// Any kind may be added AGAIN (20261006120000): more classes for a served
+// child, more places for an existing servant account
+// (owner_add_servant_places — same account, same password, places appended).
+// Only the priest kind is one per person (one church) — manage it from
+// إدارة الكهنة.
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -21,10 +23,11 @@ import { Loader2, Plus, User, ShieldCheck, Cross, AlertTriangle, Check, KeyRound
 import { createClient } from '@/lib/supabase/client';
 import { ModalFrame } from '@/components/PersonDataModals';
 import ScopePicker, { clampScope, type ScopeDepth } from '@/components/ScopePicker';
+import { scopeKey } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import {
-  bulkEnroll, addPriestForPerson, ownerPersonsError, ENROLLMENT_KIND_LABELS, personKinds,
+  bulkEnroll, addPriestForPerson, addServantPlaces, ownerPersonsError, ENROLLMENT_KIND_LABELS, personKinds,
   type OwnerPersonRow, type EnrollmentKind,
 } from '@/lib/owner-persons';
 import {
@@ -61,8 +64,13 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
     return { ...lookups, classes: lookups.classes.filter((c) => !inIds.has(c.id)) };
   }, [row, lookups]);
 
-  // servant
-  const [role, setRole] = useState<AppRole>('class_servant');
+  // servant — when he already has an account we only APPEND places to it
+  const existingServant = row.servant;
+  const heldServantKeys = useMemo(() => new Set(existingServant
+    ? [{ church_id: existingServant.church_id ?? '', service_id: existingServant.service_id, class_id: existingServant.class_id }, ...existingServant.scopes]
+      .filter((s) => s.church_id).map((s) => scopeKey(s as ScopeRef))
+    : []), [existingServant]);
+  const [role, setRole] = useState<AppRole>(existingServant?.role ?? 'class_servant');
   const [servantScopes, setServantScopes] = useState<ScopeRef[]>([]);
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([]);
   const depth = roleDepth(role);
@@ -77,7 +85,7 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
   const [showPw, setShowPw] = useState(false);
   const needsPassword = !row.has_password && kind !== 'child';
 
-  const disabledKind = (k: EnrollmentKind) => k !== 'child' && held.includes(k);
+  const disabledKind = (k: EnrollmentKind) => k === 'priest' && held.includes(k);
 
   const run = async () => {
     setError('');
@@ -88,6 +96,14 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
         if (classScopes.length === 0) { setBusy(false); return setError('اختر فصلًا واحدًا على الأقل'); }
         const r = await bulkEnroll(supabase, [row.id], classScopes);
         onDone(`تم تسجيل «${row.name}» كمخدوم في ${r.added} ${r.added === 1 ? 'فصل' : 'فصول'}${r.skipped ? ` — ${r.skipped} كانت موجودة` : ''}`);
+      } else if (kind === 'servant' && existingServant) {
+        // another place for the SAME servant account — nothing else changes
+        if (servantScopes.length === 0) { setBusy(false); return setError('اختر مكان الخدمة الجديد (الكنيسة على الأقل)'); }
+        const fresh = servantScopes.map((s) => clampScope(s, depth)).filter((s) => !heldServantKeys.has(scopeKey(s)));
+        if (fresh.length === 0) { setBusy(false); return setError('كل الأماكن المختارة لديه بالفعل'); }
+        const r = await addServantPlaces(supabase, existingServant.id, fresh);
+        const n = r.count ?? fresh.length;
+        onDone(`تمت إضافة ${n} ${n === 1 ? 'مكان خدمة' : 'أماكن خدمة'} لحساب «${row.name}» كخادم${fresh.length < servantScopes.length ? ' — الباقي كان لديه' : ''}`);
       } else if (kind === 'servant') {
         if (servantScopes.length === 0) { setBusy(false); return setError('اختر مكان الخدمة (الكنيسة على الأقل)'); }
         const scopes = servantScopes.map((s) => clampScope(s, depth));
@@ -149,7 +165,10 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
         })}
       </div>
       <p className="mb-3 flex items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] font-bold text-slate-500">
-        <Icon className="h-3.5 w-3.5" /> {KIND_META[kind].hint}
+        <Icon className="h-3.5 w-3.5" />
+        {kind === 'servant' && existingServant
+          ? `له حساب خادم بالفعل (${ROLE_LABELS[existingServant.role]}) — تُضاف الأماكن الجديدة إلى الحساب نفسه`
+          : KIND_META[kind].hint}
       </p>
 
       {kind === 'child' && (
@@ -161,13 +180,13 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
         <div className="space-y-2">
           <div>
             <label htmlFor="ae-role" className="mb-1 block text-xs font-bold text-slate-500">الدور</label>
-            <select id="ae-role" className="input-field" value={role} onChange={(e) => onRole(e.target.value as AppRole)}>
+            <select id="ae-role" className="input-field" value={role} disabled={!!existingServant} onChange={(e) => onRole(e.target.value as AppRole)}>
               {(['church_manager', 'service_manager', 'class_servant'] as AppRole[]).map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </select>
           </div>
-          <ScopePicker idPrefix="ae-servant" title="أماكن الخدمة" value={servantScopes} onChange={setServantScopes} lookups={lookups}
-            depth={depth} emptyText="اختر مكان الخدمة" />
-          {permissionProfiles.length > 0 && (
+          <ScopePicker idPrefix="ae-servant" title={existingServant ? 'أماكن خدمة جديدة' : 'أماكن الخدمة'} value={servantScopes} onChange={setServantScopes} lookups={lookups}
+            depth={depth} primaryLabel={existingServant ? null : undefined} emptyText={existingServant ? 'اختر المكان الجديد الذي يُضاف إلى حسابه' : 'اختر مكان الخدمة'} />
+          {!existingServant && permissionProfiles.length > 0 && (
             <div className="rounded-xl bg-slate-50 p-2.5">
               <p className="mb-1.5 flex items-center gap-1 text-xs font-extrabold text-slate-500">
                 <KeyRound className="h-3.5 w-3.5 text-primary-500" /> ملفات الصلاحيات <span className="font-normal">(اختياري)</span>
@@ -210,8 +229,8 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
         </div>
       )}
 
-      {/* password — only when the person has none yet */}
-      {kind !== 'child' && (
+      {/* password — only when the person has none yet (never for appending places) */}
+      {kind !== 'child' && !(kind === 'servant' && existingServant) && (
         <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-[11px]">
           {row.has_password ? (
             <p className="flex items-center gap-1.5 font-bold text-emerald-700"><Check className="h-3.5 w-3.5" /> للشخص كلمة مرور بالفعل — سيدخل بها إلى هذا الحساب أيضًا</p>
@@ -236,8 +255,11 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
         </p>
       )}
 
-      {kind === 'servant' && held.includes('servant') && (
-        <p className="mt-3 text-xs text-slate-500">حساب الخادم واحد لكل شخص — عدّل أماكنه من <Link href="/servants" className="font-bold text-emerald-700 underline">إدارة الخدام</Link>.</p>
+      {kind === 'servant' && existingServant && (
+        <p className="mt-3 text-xs text-slate-500">لتغيير دوره أو حذف مكان من أماكنه استخدم <Link href="/servants" className="font-bold text-emerald-700 underline">إدارة الخدام</Link>.</p>
+      )}
+      {kind === 'priest' && held.includes('priest') && (
+        <p className="mt-3 text-xs text-slate-500">حساب الكاهن واحد لكل شخص (كنيسة واحدة) — عدّله من <Link href="/owner/priests" className="font-bold text-violet-700 underline">إدارة الكهنة</Link>.</p>
       )}
 
       <div className="mt-4 flex gap-2">
@@ -245,7 +267,7 @@ export default function AddEnrollmentModal({ row, lookups, onDone, onClose }: {
         <button id="ae-submit" type="button" onClick={run} disabled={busy || disabledKind(kind)}
           className="btn-primary flex flex-1 items-center justify-center gap-2">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-          تسجيل {ENROLLMENT_KIND_LABELS[kind].as}
+          {kind === 'servant' && existingServant ? 'إضافة الأماكن' : `تسجيل ${ENROLLMENT_KIND_LABELS[kind].as}`}
         </button>
       </div>
     </ModalFrame>

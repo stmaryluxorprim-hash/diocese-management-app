@@ -222,6 +222,37 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
   const [claimedPassword, setClaimedPassword] = useState('');
   useEffect(() => { setClaimedPassword(''); }, [code]);
 
+  // 20261006120000: the code ALREADY owns a servant account and he opened
+  // another invite link (another service / class) → after proving the
+  // password we sign him in and file a servant_scope_request for the new
+  // places (approved by the responsible person). No second account.
+  const [requested, setRequested] = useState<{ requested: number; skipped: number } | null>(null);
+  const requestMorePlaces = async (pw: string) => {
+    setError('');
+    setLoading(true);
+    try {
+      const { error: signErr } = await supabase.auth.signInWithPassword({ email: userIdToEmail(codeToUserId(code)), password: pw });
+      if (signErr) throw new Error('bad_login');
+      const { data, error: rpcErr } = await supabase.rpc('servant_request_scopes', {
+        p_scopes: scopes.length ? scopes : null,
+        p_invite: inviteToken || null,
+      });
+      if (rpcErr) throw rpcErr;
+      setRequested((data ?? { requested: 0, skipped: 0 }) as { requested: number; skipped: number });
+    } catch (e) {
+      const m = (e as Error).message ?? '';
+      setError(
+        m === 'bad_login' ? 'كلمة المرور غير صحيحة — لا يمكن إضافة مكان خدمة دون إثبات الهوية'
+        : m.includes('scopes_required') ? 'اختر مكان الخدمة الجديد في الخطوة الأولى أولًا'
+        : m.includes('account_not_approved') ? 'حسابك لم يُعتمد بعد — انتظر اعتماده ثم افتح الرابط مجددًا'
+        : m.includes('invite_') ? 'رابط الدعوة لم يعد صالحًا — اطلب رابطًا جديدًا من مسؤول الخدمة'
+        : 'تعذر إرسال الطلب، حاول مرة أخرى',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -237,7 +268,7 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
       if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
       // a code with an account → ask «هل أنت نفس الشخص؟» (password · change code · sign in)
       if ((lookup?.has_account || linkedAccount) && !claimedPassword) { setAskExisting(true); return; }
-      if (lookup?.has_account) return setError('هذا الكود مرتبط بحساب خادم بالفعل — سجّل الدخول به');
+      if (lookup?.has_account) return setError('هذا الكود مرتبط بحساب خادم بالفعل — اضغط «نعم أنا هو» لإضافة مكان الخدمة إلى حسابك');
       if (lookup && !prefilled) fillFromLookup(lookup);
       setStep(3);
     } else if (step === 3) {
@@ -338,6 +369,36 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
     // Hard navigation so AuthProvider re-initializes with the fresh enrollment
     window.location.href = '/';
   };
+
+  // 20261006120000: existing servant → new places requested, awaiting review
+  if (requested) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center px-4 py-8">
+        <section id="signup-requested" className="card w-full max-w-md text-center">
+          <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+            <Check className="h-8 w-8" />
+          </div>
+          <h1 className="text-xl font-extrabold">
+            {requested.requested > 0 ? 'تم إرسال طلب إضافة مكان الخدمة' : 'لا جديد لإضافته'}
+          </h1>
+          <p className="mt-2 text-sm text-slate-500">
+            {requested.requested > 0
+              ? `${requested.requested === 1 ? 'مكان واحد' : `${requested.requested} أماكن`} بانتظار اعتماد مسؤول الخدمة — ستظهر في حسابك فور الاعتماد.`
+              : 'كل الأماكن المختارة موجودة في حسابك بالفعل أو مطلوبة من قبل.'}
+            {requested.skipped > 0 && requested.requested > 0 && ` (${requested.skipped} كانت لديك بالفعل)`}
+          </p>
+          {scopes.length > 0 && (
+            <ul className="mt-3 space-y-1 rounded-xl bg-slate-50 px-3 py-2 text-right text-xs text-slate-600">
+              {scopes.map((s, i) => <li key={i} className="flex items-center gap-1"><MapPin className="h-3 w-3 text-primary-500" />{scopeLabel(s, lookups)}</li>)}
+            </ul>
+          )}
+          <button id="su-go-home" type="button" onClick={() => { window.location.href = '/'; }} className="btn-primary mt-5 w-full">
+            الدخول إلى حسابي
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-4 py-8">
@@ -466,9 +527,13 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
                 </div>
               )}
               {lookupDone && lookup?.has_account && (
-                <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
+                <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>هذا الكود مرتبط بحساب خادم بالفعل. <Link href={`/login?code=${encodeURIComponent(code.trim())}`} className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.</span>
+                  <span>
+                    هذا الكود له حساب خادم بالفعل{lookup.name ? ` (${lookup.name})` : ''}. إن كنت أنت — اضغط «التالي» وأثبت كلمة مرورك ليُضاف
+                    {scopes.length ? ' مكان الخدمة الذي اخترته' : ' مكان الخدمة الذي دعاك إليه الرابط'} إلى حسابك بعد اعتماد المسؤول — أو{' '}
+                    <Link href={`/login?code=${encodeURIComponent(code.trim())}`} className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.
+                  </span>
                 </div>
               )}
               {claimedPassword && (
@@ -658,11 +723,15 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
           code={code.trim()}
           name={lookup?.name}
           kinds={lookup?.has_account ? ['servant', ...existingKinds(lookup as never).filter((k) => k !== 'servant')] : existingKinds(lookup as never)}
-          canClaim={!lookup?.has_account}
-          cannotClaimReason="لهذا الكود حساب خادم بالفعل — حساب الخادم واحد لكل شخص. سجّل الدخول، ولإضافة مكان خدمة آخر اطلب من المسؤول إضافته من إدارة الخدام."
           approverLabel="مسؤول الخدمة"
           onVerified={(pw) => {
-            setClaimedPassword(pw); setPassword(pw); setConfirm(pw); setAskExisting(false);
+            setAskExisting(false);
+            if (lookup?.has_account) {
+              // same servant account → request the new places (no second account)
+              void requestMorePlaces(pw);
+              return;
+            }
+            setClaimedPassword(pw); setPassword(pw); setConfirm(pw);
             if (lookup && !prefilled) fillFromLookup(lookup);
             setStep(3);
           }}
