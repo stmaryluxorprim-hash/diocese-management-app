@@ -28,8 +28,12 @@ interface AuthState {
    * `servant_scopes` rows. Empty for the owner / a servant without a scope.
    */
   scopes: ScopeRef[];
-  /** true when the servant serves in more than one place */
+  /** true when the SESSION covers more than one place */
   multiScope: boolean;
+  /** 20261004120000: EVERY place of the servant (regardless of the active one) */
+  allScopes: ScopeRef[];
+  /** the place chosen for this login — null = all his places */
+  activePlace: ScopeRef | null;
   church: Church | null;
   service: Service | null;
   loading: boolean;
@@ -43,6 +47,8 @@ const AuthContext = createContext<AuthState>({
   person: null,
   scopes: [],
   multiScope: false,
+  allScopes: [],
+  activePlace: null,
   church: null,
   service: null,
   loading: true,
@@ -55,6 +61,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<ServantEnrollment | null>(null);
   const [person, setPerson] = useState<Person | null>(null);
   const [scopes, setScopes] = useState<ScopeRef[]>([]);
+  const [allScopes, setAllScopes] = useState<ScopeRef[]>([]);
+  const [activePlace, setActivePlace] = useState<ScopeRef | null>(null);
   const [church, setChurch] = useState<Church | null>(null);
   const [service, setService] = useState<Service | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,13 +92,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const prof = (p ?? null) as ServantEnrollment | null;
 
       if (!prof) {
-        setProfile(null); setScopes([]); setPerson(null); setChurch(null); setService(null);
+        setProfile(null); setScopes([]); setAllScopes([]); setActivePlace(null); setPerson(null); setChurch(null); setService(null);
         configureRealtimeBus(supabase, { uid, role: 'pending', churchIds: [] });
         return;
       }
 
       // Everything else in PARALLEL — was 4 sequential round-trips before
-      const [extraRes, perRes, chRes, svRes] = await Promise.all([
+      const [extraRes, perRes, chRes, svRes, activeRes] = await Promise.all([
         supabase.from(SERVANT_SCOPES_TABLE).select('church_id, service_id, class_id').eq('servant_id', uid),
         prof.person_id
           ? supabase.from('persons').select('*').eq('id', prof.person_id).maybeSingle()
@@ -101,15 +109,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         prof.service_id
           ? supabase.from('services').select('*').eq('id', prof.service_id).maybeSingle()
           : Promise.resolve({ data: null }),
+        // 20261004120000: the place chosen for THIS login (null = all his places)
+        supabase.from('servant_active_places').select('church_id, service_id, class_id').eq('servant_id', uid).maybeSingle(),
       ]);
       if (seq !== loadSeq.current) return;
 
-      const all = allScopesOf(prof, ((extraRes as { data: ScopeRef[] | null }).data ?? []) as ScopeRef[]);
-      setProfile(prof);
+      const every = allScopesOf(prof, ((extraRes as { data: ScopeRef[] | null }).data ?? []) as ScopeRef[]);
+      const active = ((activeRes as { data: ScopeRef | null }).data ?? null);
+      const activeMatch = active?.church_id
+        ? every.find((x) => x.church_id === active.church_id && (x.service_id ?? null) === (active.service_id ?? null) && (x.class_id ?? null) === (active.class_id ?? null)) ?? null
+        : null;
+      // the SESSION works on one place when one is chosen — the RLS does the same
+      const all = activeMatch ? [activeMatch] : every;
+      setProfile(activeMatch ? { ...prof, church_id: activeMatch.church_id, service_id: activeMatch.service_id ?? null, class_id: activeMatch.class_id ?? null } : prof);
+      setAllScopes(every);
+      setActivePlace(activeMatch);
       setScopes(all);
       setPerson(((perRes as { data: Person | null }).data ?? null));
-      setChurch(((chRes as { data: Church | null }).data ?? null));
-      setService(((svRes as { data: Service | null }).data ?? null));
+      if (activeMatch && (activeMatch.church_id !== prof.church_id || (activeMatch.service_id ?? null) !== (prof.service_id ?? null))) {
+        // the church / service objects follow the ACTIVE place
+        const [c2, s2] = await Promise.all([
+          supabase.from('churches').select('*').eq('id', activeMatch.church_id).maybeSingle(),
+          activeMatch.service_id ? supabase.from('services').select('*').eq('id', activeMatch.service_id).maybeSingle() : Promise.resolve({ data: null }),
+        ]);
+        if (seq !== loadSeq.current) return;
+        setChurch(((c2 as { data: Church | null }).data ?? null));
+        setService(((s2 as { data: Service | null }).data ?? null));
+      } else {
+        setChurch(((chRes as { data: Church | null }).data ?? null));
+        setService(((svRes as { data: Service | null }).data ?? null));
+      }
 
       // 0046: join the broadcast topics of my scopes (owner → scope:all)
       // (a pending servant may only join his own user:<uid> topic — the
@@ -128,6 +157,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
     setPerson(null);
     setScopes([]);
+    setAllScopes([]);
+    setActivePlace(null);
     setChurch(null);
     setService(null);
     configureRealtimeBus(supabase, null);
@@ -188,7 +219,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const bump = () => { if (t) clearTimeout(t); t = setTimeout(() => loadProfile(user.id), 600); };
     const offA = onBusTable('servant_enrollments', bump);
     const offB = onBusTable('servant_scopes', bump);
-    return () => { if (t) clearTimeout(t); offA(); offB(); };
+    const offC = onBusTable('servant_active_places', bump);
+    return () => { if (t) clearTimeout(t); offA(); offB(); offC(); };
   }, [user, loadProfile]);
 
   const signOut = useCallback(async () => {
@@ -201,7 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [supabase]);
 
   return (
-    <AuthContext.Provider value={{ user, profile, person, scopes, multiScope: scopes.length > 1, church, service, loading, refresh, signOut }}>
+    <AuthContext.Provider value={{ user, profile, person, scopes, multiScope: scopes.length > 1, allScopes, activePlace, church, service, loading, refresh, signOut }}>
       {children}
     </AuthContext.Provider>
   );

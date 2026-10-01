@@ -454,6 +454,8 @@ export interface ChildSignupInput {
   church_id: string;
   service_id: string;
   class_id: string;
+  /** 20261004120000: رمز الدعوة الذي فتح صفحة التسجيل (إلزامي) */
+  invite: string;
 }
 
 export async function childSignup(
@@ -473,6 +475,7 @@ export async function childSignup(
     p_church: input.church_id,
     p_service: input.service_id,
     p_class: input.class_id,
+    p_invite: input.invite,
   });
   if (error) throw error;
   return data as { request_id: string; code: string };
@@ -509,7 +512,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   enrollment_stopped: 'هذا التسجيل موقوف — لا يمكن تسجيل حضور أو نقاط',
   wrong_password: 'كلمة المرور غير صحيحة',
   weak_password: 'كلمة المرور قصيرة — 6 أحرف على الأقل',
-  already_registered: 'هذا الكود له حساب مخدوم بالفعل — سجّل الدخول بدلاً من ذلك',
+  already_registered: 'هذا الكود مسجّل في هذا الفصل بالفعل — سجّل الدخول بدلاً من ذلك',
+  invite_required: 'التسجيل بالدعوة فقط — افتح رابط الدعوة من خادم الفصل',
+  invite_invalid: 'رابط الدعوة غير صالح أو انتهت صلاحيته — اطلب رابطًا جديدًا',
   wrong_password_signup: 'كلمة المرور غير صحيحة — هذا الكود له حساب بالفعل واكتب كلمة مروره نفسها',
   code_required: 'الكود مطلوب',
   name_required: 'الاسم مطلوب',

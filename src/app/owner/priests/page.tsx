@@ -5,13 +5,15 @@
 // delete) · الطلبات (pending signups → approve with church / title or reject;
 // history) · إضافة (add a priest directly — approved right away).
 // Migration 20260927120000 — every write goes through owner_* RPCs.
+// 20261004120000 — tab «دعوة»: priest signup is invite-only (signup_invites).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Cross, Users, Inbox, UserPlus, Loader2, Check, X, Pencil, Trash2, KeyRound, Ban, Play, Phone, Search, Clock } from 'lucide-react';
+import { ArrowRight, Cross, Users, Inbox, UserPlus, Ticket, Loader2, Check, X, Pencil, Trash2, KeyRound, Ban, Play, Phone, Search, Clock } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { OwnerGate } from '@/components/ModuleGate';
 import ResetPasswordSection from '@/components/ResetPasswordSection';
+import SignupInvitePanel from '@/components/SignupInvitePanel';
 import { PersonAvatar } from '@/components/CallFeedback';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
@@ -23,7 +25,7 @@ import {
 } from '@/lib/priest-portal';
 import { fmtDateTime, fmtDay } from '@/components/child/ChildBits';
 
-type Tab = 'list' | 'requests' | 'add';
+type Tab = 'list' | 'requests' | 'add' | 'invite';
 const TITLES = ['القس', 'القمص', 'الأب', 'الراهب القس', 'نيافة الأنبا'];
 
 export default function OwnerPriestsPage() {
@@ -57,10 +59,10 @@ function Inner() {
         <h2 className="flex items-center gap-2 text-lg font-extrabold"><Cross className="h-5 w-5 text-violet-600" /> الكهنة</h2>
       </section>
       <p className="mb-4 rounded-2xl bg-violet-50 px-4 py-3 text-xs font-bold text-violet-800">
-        الكاهن يسجّل من «إنشاء حساب كاهن» في صفحة الدخول، والمالك وحده يوافق ويعدّل ويوقف. لكل كاهن كنيسة واحدة، وفي بوابته وحدتا «المعترفين» و«الافتقاد».
+        الكاهن يسجّل من رابط دعوة يولّده المالك من تبويب «دعوة»، والمالك وحده يوافق ويعدّل ويوقف. لكل كاهن كنيسة واحدة، وفي بوابته وحدتا «المعترفين» و«الافتقاد».
       </p>
-      <div role="tablist" className="mb-4 grid grid-cols-3 gap-1 rounded-2xl bg-slate-100 p-1">
-        {([['list', 'الكهنة', Users, priests?.length], ['requests', 'الطلبات', Inbox, pending.length], ['add', 'إضافة', UserPlus, undefined]] as const).map(([k, l, I, n]) => (
+      <div role="tablist" className="mb-4 grid grid-cols-4 gap-1 rounded-2xl bg-slate-100 p-1">
+        {([['list', 'الكهنة', Users, priests?.length], ['requests', 'الطلبات', Inbox, pending.length], ['add', 'إضافة', UserPlus, undefined], ['invite', 'دعوة', Ticket, undefined]] as const).map(([k, l, I, n]) => (
           <button key={k} id={`op-tab-${k}`} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-extrabold transition ${tab === k ? 'bg-white text-violet-700 shadow' : 'text-slate-500'}`}>
             <I className="h-4 w-4" />{l}{n !== undefined && n > 0 && <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${k === 'requests' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-600'}`}>{n}</span>}
           </button>
@@ -69,6 +71,7 @@ function Inner() {
       {tab === 'list' && <PriestsList priests={priests} churches={churches} onChanged={load} />}
       {tab === 'requests' && <RequestsPanel requests={requests} churches={churches} onChanged={load} />}
       {tab === 'add' && <AddPanel churches={churches} onAdded={() => { load(); setTab('list'); }} />}
+      {tab === 'invite' && <SignupInvitePanel kind="priest" hideScope />}
     </>
   );
 }

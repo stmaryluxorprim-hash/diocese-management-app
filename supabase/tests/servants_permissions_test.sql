@@ -6,6 +6,7 @@
 -- =====================================================================
 \set ON_ERROR_STOP on
 begin;
+\i supabase/tests/_test_invites.sql
 
 insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000001'),  -- owner
@@ -40,7 +41,7 @@ do $$ begin
 end $$;
 
 do $$ begin
-  perform public.servant_signup('29901010000009', 'مينا', 'male', null, null);
+  perform public.servant_signup('29901010000009', 'مينا', 'male', null, null, null, null, null, null, null, null, null, current_setting('test.inv_servant'));
   raise exception 'phone should be required';
 exception when others then
   if sqlerrm <> 'phone_required' then raise; end if;
@@ -48,7 +49,7 @@ end $$;
 
 do $$ begin
   perform public.servant_signup('29901010000009', 'مينا', 'male', null, '+201001234567', null, null,
-    '10000000-0000-0000-0000-000000000001', null, '30000000-0000-0000-0000-000000000001');
+    '10000000-0000-0000-0000-000000000001', null, '30000000-0000-0000-0000-000000000001', null, null, current_setting('test.inv_servant'));
   raise exception 'class without service should fail';
 exception when others then
   if sqlerrm <> 'class_not_in_service' then raise; end if;
@@ -56,7 +57,7 @@ end $$;
 
 create temp table _v (k text primary key, v text);
 insert into _v values ('r', public.servant_signup('29901010000009', 'مينا خادم', 'male', '1999-01-01', '+201001234567', 'الأقصر', 'ملاحظة',
-  '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001')::text);
+  '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', null, null, current_setting('test.inv_servant'))::text);
 do $$ declare r jsonb := (select v::jsonb from _v where k = 'r'); begin
   if not (r->>'person_created')::boolean then raise exception 'person should be created'; end if;
   if r->>'user_id' <> '29901010000009' then raise exception 'user_id should equal the code'; end if;
@@ -83,7 +84,7 @@ end $$;
 
 set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000003';
 do $$ begin
-  perform public.servant_signup('29901010000009', 'آخر', 'male', null, '+201000000000');
+  perform public.servant_signup('29901010000009', 'آخر', 'male', null, '+201000000000', null, null, null, null, null, null, null, current_setting('test.inv_servant'));
   raise exception 'duplicate code must fail';
 exception when others then
   if sqlerrm <> 'code_taken' then raise; end if;

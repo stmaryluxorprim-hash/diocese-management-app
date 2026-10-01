@@ -12,6 +12,11 @@
 // Submit → RPC child_signup → a PENDING join request the class servant
 // reviews in «إدارة المخدومين → الطلبات». The page then polls
 // child_signup_status and offers the login button once approved.
+//
+// 20261004120000: opens ONLY through ?invite=<token> (دعوة مخدوم) — the
+// invite's scope is locked and the token is consumed by child_signup. A code
+// that already has a child account may enroll in ANOTHER class (same
+// password); only the same class is refused (already_registered).
 
 import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { BRANDING, dioceseLogo } from '@/lib/branding';
@@ -23,7 +28,8 @@ import {
   ScanLine, Wand2, Camera, Trash2, UserCheck, Check, AlertTriangle, Clock, CheckCircle2, XCircle, LogIn,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { kindsLabel, type AccountKind } from '@/lib/accounts';
+import { kindsLabel, type AccountKind, type InviteCheck } from '@/lib/accounts';
+import InviteGate, { useSignupInvite } from '@/components/InviteGate';
 import QrScanner from '@/components/store/QrScanner';
 import PhotoCropModal from '@/components/PhotoCropModal';
 import { generateCode as renderCode, normalizeCodes, type CodesConfig } from '@/lib/code-templates';
@@ -72,11 +78,23 @@ export default function ChildSignupPage() {
 function ChildSignupWizard() {
   const params = useSearchParams();
   const supabase = createClient();
+  const inviteToken = params.get('invite');
+  const invite = useSignupInvite(supabase, inviteToken, 'child');
+  return (
+    <InviteGate invite={invite} kind="child" token={inviteToken}>
+      {invite?.valid && <ChildSignupForm invite={invite} inviteToken={inviteToken ?? ''} />}
+    </InviteGate>
+  );
+}
 
-  // ---- Invite-link scope (locked when present) ----
-  const inviteChurch = params.get('church') ?? '';
-  const inviteService = params.get('service') ?? '';
-  const inviteClass = params.get('class') ?? '';
+function ChildSignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken: string }) {
+  const params = useSearchParams();
+  const supabase = createClient();
+
+  // ---- Invite scope (locked when present) ----
+  const inviteChurch = invite.church_id ?? '';
+  const inviteService = invite.service_id ?? '';
+  const inviteClass = invite.class_id ?? '';
   const churchLocked = !!inviteChurch;
   const serviceLocked = !!inviteService;
   const classLocked = !!inviteClass;
@@ -186,9 +204,12 @@ function ChildSignupWizard() {
   // an existing child account (log in). A code with a password but NO child
   // enrollment (servant / priest) → same person, same password, a child
   // account is added after the servant approves.
+  // 20261004120000: an existing child account is NOT a blocker any more — the
+  // same person may be enrolled in another class (same password); the RPC
+  // refuses only the same class.
   const isChildAccount = !!lookup?.has_password && !!lookup?.is_child;
-  const linkedAccount = !!lookup?.has_password && !lookup?.is_child && !lookup?.family;
-  const linkedKinds = kindsLabel(([lookup?.is_servant && 'servant', lookup?.is_priest && 'priest'].filter(Boolean)) as AccountKind[]);
+  const linkedAccount = !!lookup?.has_password && !lookup?.family;
+  const linkedKinds = kindsLabel(([lookup?.is_servant && 'servant', lookup?.is_child && 'child', lookup?.is_priest && 'priest'].filter(Boolean)) as AccountKind[]);
 
   const next = () => {
     setError('');
@@ -198,7 +219,6 @@ function ChildSignupWizard() {
     } else if (step === 2) {
       if (!code.trim()) return setError('اكتب الكود أو امسحه بالكاميرا أو ولّد كودًا');
       if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
-      if (isChildAccount) return setError('هذا الكود له حساب مخدوم بالفعل — سجّل الدخول به');
       if (lookup?.pending) return setError('يوجد طلب تسجيل قيد المراجعة لهذا الكود');
       setStep(3);
     } else if (step === 3) {
@@ -235,6 +255,7 @@ function ChildSignupWizard() {
         church_id: churchId,
         service_id: serviceId,
         class_id: classId,
+        invite: inviteToken,
       });
       setChildSignupRequest(r.request_id);
       setRequestId(r.request_id);
@@ -374,13 +395,15 @@ function ChildSignupWizard() {
                   <Loader2 className="h-3 w-3 animate-spin" /> جارٍ التحقق من الكود...
                 </p>
               )}
-              {lookupDone && lookup?.exists && !isChildAccount && !lookup.family && !lookup.pending && (
+              {lookupDone && lookup?.exists && !lookup.family && !lookup.pending && (
                 <div className="rounded-xl bg-emerald-50 px-3 py-2">
                   <p className="flex items-center gap-1 text-xs font-extrabold text-emerald-700">
                     <UserCheck className="h-4 w-4" /> {linkedAccount ? 'شخص' : 'مخدوم'} مسجّل بالفعل: {lookup.name}
                   </p>
                   <p className="mt-0.5 text-[11px] font-bold text-emerald-600">
-                    {linkedAccount
+                    {isChildAccount
+                      ? 'لديه حساب مخدوم — سيُضاف تسجيل في هذا الفصل لنفس الشخص بنفس كلمة المرور بعد موافقة الخادم (لا يمكن التسجيل في فصله الحالي مرة أخرى)'
+                      : linkedAccount
                       ? `لديه حساب ${linkedKinds} — سيُضاف حساب المخدوم لنفس الشخص بنفس كلمة المرور بعد موافقة الخادم`
                       : 'سيُربط حسابك بنفس المخدوم بعد موافقة الخادم'}
                   </p>
@@ -390,12 +413,6 @@ function ChildSignupWizard() {
                 <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>هذا الكود كود عائلة — لا يمكن أن يكون كود شخص. استخدم كودًا آخر.</span>
-                </div>
-              )}
-              {lookupDone && isChildAccount && (
-                <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>هذا الكود له حساب مخدوم بالفعل. <Link href="/login?as=child" className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.</span>
                 </div>
               )}
               {lookupDone && lookup?.pending && (
