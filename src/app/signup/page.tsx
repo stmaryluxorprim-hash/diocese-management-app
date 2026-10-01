@@ -43,6 +43,7 @@ import {
 } from '@/lib/types';
 import { verifyPersonPassword, existingKinds, kindsLabel, checkSignupInvite, type InviteCheck } from '@/lib/accounts';
 import InviteGate, { useSignupInvite } from '@/components/InviteGate';
+import ExistingCodeDialog from '@/components/ExistingCodeDialog';
 
 const MONTHS_AR = [
   'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
@@ -215,6 +216,12 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
 
+  // 20261005120000: «الكود مسجّل بالفعل — هل أنت نفس الشخص؟» dialog on step 2.
+  // Verified password → it is reused on step 4 (one password per person).
+  const [askExisting, setAskExisting] = useState(false);
+  const [claimedPassword, setClaimedPassword] = useState('');
+  useEffect(() => { setClaimedPassword(''); }, [code]);
+
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -228,6 +235,8 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
     } else if (step === 2) {
       if (!code.trim()) return setError('اكتب الكود أو امسحه بالكاميرا أو ولّد كودًا');
       if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
+      // a code with an account → ask «هل أنت نفس الشخص؟» (password · change code · sign in)
+      if ((lookup?.has_account || linkedAccount) && !claimedPassword) { setAskExisting(true); return; }
       if (lookup?.has_account) return setError('هذا الكود مرتبط بحساب خادم بالفعل — سجّل الدخول به');
       if (lookup && !prefilled) fillFromLookup(lookup);
       setStep(3);
@@ -459,8 +468,13 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
               {lookupDone && lookup?.has_account && (
                 <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>هذا الكود مرتبط بحساب خادم بالفعل. <Link href="/login" className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.</span>
+                  <span>هذا الكود مرتبط بحساب خادم بالفعل. <Link href={`/login?code=${encodeURIComponent(code.trim())}`} className="underline">سجّل الدخول</Link> أو استخدم كودًا آخر.</span>
                 </div>
+              )}
+              {claimedPassword && (
+                <p className="flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700">
+                  <Check className="h-3.5 w-3.5" /> تم التحقق — سيُضاف حساب الخادم لنفس الشخص بكلمة مروره الحالية
+                </p>
               )}
               {lookupDone && !lookup && code.trim() && (
                 <p className="text-[11px] font-bold text-slate-400">كود جديد — ستُدخل بياناتك في الخطوة التالية</p>
@@ -638,6 +652,24 @@ function SignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
           <Link href="/login" className="font-bold text-primary-600 hover:underline">تسجيل الدخول</Link>
         </p>
       </section>
+
+      {askExisting && (
+        <ExistingCodeDialog
+          code={code.trim()}
+          name={lookup?.name}
+          kinds={lookup?.has_account ? ['servant', ...existingKinds(lookup as never).filter((k) => k !== 'servant')] : existingKinds(lookup as never)}
+          canClaim={!lookup?.has_account}
+          cannotClaimReason="لهذا الكود حساب خادم بالفعل — حساب الخادم واحد لكل شخص. سجّل الدخول، ولإضافة مكان خدمة آخر اطلب من المسؤول إضافته من إدارة الخدام."
+          approverLabel="مسؤول الخدمة"
+          onVerified={(pw) => {
+            setClaimedPassword(pw); setPassword(pw); setConfirm(pw); setAskExisting(false);
+            if (lookup && !prefilled) fillFromLookup(lookup);
+            setStep(3);
+          }}
+          onChangeCode={() => { setAskExisting(false); setCode(''); setLookup(null); setLookupDone(false); }}
+          onClose={() => setAskExisting(false)}
+        />
+      )}
 
       {rawImage && (
         <PhotoCropModal

@@ -3,19 +3,21 @@
 // ---------- OWNER MODULE → إدارة الأفراد (/owner/persons) ----------
 // EVERY person in the system (children AND servants — the `persons` table)
 // with all his data and ALL his enrollments, in one owner-only page:
-//   * filters: search · الكل / مخدومون / خدام · كنيسة → خدمة → فصل ·
+//   * filters: search · الكل / مخدومون / خدام / كهنة · كنيسة → خدمة → فصل ·
 //     «بدون تسجيلات» (persons in no enrollment) · النوع
-//   * per person: تعديل (persons data) · الفصول (add to / remove from
-//     classes) · حذف (cascade)
+//   * per person: تعديل (persons data) · تسجيل (add an enrollment of ANY
+//     kind — كمخدوم / كخادم / ككاهن, 20261005120000) · دمج (merge with
+//     another persons row that is the same human) · حذف (cascade)
 //   * multi-select (per card, select page, select all matches) + bulk bar:
-//     إضافة إلى فصول · حذف من نطاق · حذف نهائي
-// Data: RPCs of 20260923120000_owner_persons_management.sql (owner only).
+//     إضافة إلى فصول · حذف من نطاق · حذف نهائي · دمج (exactly two selected)
+// Data: RPCs of 20260923120000_owner_persons_management.sql +
+// 20261005120000_person_enrollment_kinds_merge.sql (owner only).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight, Users, Search, Loader2, ChevronRight, ChevronLeft, CheckSquare, Square, X, Plus,
-  UserMinus, Trash2, Church as ChurchIcon, Layers, School, Ban, ShieldCheck, User, RefreshCw,
+  UserMinus, Trash2, Church as ChurchIcon, Layers, School, Ban, ShieldCheck, User, RefreshCw, Cross, GitMerge,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { OwnerGate } from '@/components/ModuleGate';
@@ -25,8 +27,9 @@ import { useDebouncedRealtime } from '@/lib/realtime';
 import { cachedLookup, ALL } from '@/lib/queries';
 import { ScopeSelect, PanelNotice } from '@/components/ScopeTree';
 import { EditPersonModal } from '@/components/PersonDataModals';
-import PersonClassesModal from '@/components/children/PersonClassesModal';
 import OwnerPersonCard from '@/components/owner/OwnerPersonCard';
+import AddEnrollmentModal from '@/components/owner/AddEnrollmentModal';
+import MergePersonsModal from '@/components/owner/MergePersonsModal';
 import { BulkEnrollModal, BulkUnenrollModal, BulkDeleteModal } from '@/components/owner/OwnerBulkModals';
 import {
   fetchOwnerPersons, fetchOwnerPersonsCounts, ownerPersonsError, OWNER_PAGE_SIZE,
@@ -37,7 +40,7 @@ import {
   type Church, type Service, type ClassRoom, type Gender, type EnrollmentWithPerson, type Person,
 } from '@/lib/types';
 
-type BulkModal = 'enroll' | 'unenroll' | 'delete' | null;
+type BulkModal = 'enroll' | 'unenroll' | 'delete' | 'merge' | null;
 
 export default function OwnerPersonsPage() {
   const { profile } = useAuth();
@@ -86,7 +89,8 @@ export default function OwnerPersonsPage() {
 
   // per-row modals
   const [editRow, setEditRow] = useState<OwnerPersonRow | null>(null);
-  const [classesRow, setClassesRow] = useState<OwnerPersonRow | null>(null);
+  const [enrollRow, setEnrollRow] = useState<OwnerPersonRow | null>(null);
+  const [mergeRow, setMergeRow] = useState<OwnerPersonRow | null>(null);
   const [deleteRow, setDeleteRow] = useState<OwnerPersonRow | null>(null);
 
   const loadLookups = useCallback(async (force = false) => {
@@ -142,7 +146,7 @@ export default function OwnerPersonsPage() {
   }, [isOwner, load]);
   useDebouncedRealtime(
     supabase, 'owner-persons',
-    [{ table: 'persons' }, { table: 'enrollments' }, { table: SERVANTS_TABLE }],
+    [{ table: 'persons' }, { table: 'enrollments' }, { table: SERVANTS_TABLE }, { table: 'priests' }],
     load,
     { enabled: isOwner }
   );
@@ -219,13 +223,17 @@ export default function OwnerPersonsPage() {
 
         {/* counters */}
         {counts && (
-          <div id="op-counters" className="mb-3 grid grid-cols-4 gap-2">
+          <div id="op-counters" className={`mb-3 grid gap-2 ${counts.priests !== undefined ? 'grid-cols-5' : 'grid-cols-4'}`}>
             <Counter icon={<Users className="h-4 w-4" />} label="الكل" value={counts.total} tone="bg-slate-50 text-slate-700" active={kind === 'all' && !unenrolledOnly}
               onClick={() => { setKind('all'); setUnenrolledOnly(false); }} />
             <Counter icon={<User className="h-4 w-4" />} label="مخدومون" value={counts.children} tone="bg-primary-50 text-primary-700" active={kind === 'child' && !unenrolledOnly}
               onClick={() => { setKind('child'); setUnenrolledOnly(false); }} />
             <Counter icon={<ShieldCheck className="h-4 w-4" />} label="خدام" value={counts.servants} tone="bg-emerald-50 text-emerald-700" active={kind === 'servant' && !unenrolledOnly}
               onClick={() => { setKind('servant'); setUnenrolledOnly(false); }} />
+            {counts.priests !== undefined && (
+              <Counter icon={<Cross className="h-4 w-4" />} label="كهنة" value={counts.priests} tone="bg-violet-50 text-violet-700" active={kind === 'priest' && !unenrolledOnly}
+                onClick={() => { setKind('priest'); setUnenrolledOnly(false); }} />
+            )}
             <Counter icon={<Ban className="h-4 w-4" />} label="بدون تسجيل" value={counts.unenrolled} tone="bg-amber-50 text-amber-700" active={unenrolledOnly}
               onClick={() => { setUnenrolledOnly((v) => !v); setKind('all'); }} />
           </div>
@@ -251,8 +259,8 @@ export default function OwnerPersonsPage() {
               onChange={setCls} all="كل الفصول" options={visibleClasses} />
           </div>
           <div className="flex items-center gap-2">
-            <div id="op-kind" role="tablist" className="grid flex-1 grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
-              {([['all', 'الكل'], ['child', 'مخدومون'], ['servant', 'خدام']] as [PersonKindFilter, string][]).map(([v, l]) => (
+            <div id="op-kind" role="tablist" className="grid flex-1 grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1">
+              {([['all', 'الكل'], ['child', 'مخدومون'], ['servant', 'خدام'], ['priest', 'كهنة']] as [PersonKindFilter, string][]).map(([v, l]) => (
                 <button key={v} id={`op-kind-${v}`} type="button" role="tab" aria-selected={kind === v} onClick={() => setKind(v)}
                   className={`h-8 rounded-lg text-[11px] font-extrabold transition ${kind === v ? 'bg-white shadow text-primary-700' : 'text-slate-500'}`}>
                   {l}
@@ -312,7 +320,8 @@ export default function OwnerPersonsPage() {
                 onSelect={(on) => toggleRow(r, on)}
                 churches={churches} services={services} classes={classes}
                 onEdit={() => setEditRow(r)}
-                onAddScope={() => setClassesRow(r)}
+                onAddScope={() => setEnrollRow(r)}
+                onMerge={() => setMergeRow(r)}
                 onDelete={() => setDeleteRow(r)}
               />
             ))}
@@ -345,7 +354,13 @@ export default function OwnerPersonsPage() {
                   <X className="h-3.5 w-3.5" /> إلغاء التحديد
                 </button>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className={`grid gap-2 ${selected.size === 2 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+                {selected.size === 2 && (
+                  <button id="op-bulk-merge" type="button" onClick={() => setBulk('merge')}
+                    className="flex h-10 items-center justify-center gap-1.5 rounded-xl bg-gold-500 text-xs font-extrabold transition hover:bg-gold-400 active:scale-95">
+                    <GitMerge className="h-4 w-4" /> دمج الاثنين
+                  </button>
+                )}
                 <button id="op-bulk-enroll" type="button" onClick={() => setBulk('enroll')}
                   className="flex h-10 items-center justify-center gap-1.5 rounded-xl bg-violet-500 text-xs font-extrabold transition hover:bg-violet-400 active:scale-95">
                   <Plus className="h-4 w-4" /> إضافة إلى فصول
@@ -376,13 +391,21 @@ export default function OwnerPersonsPage() {
           <BulkDeleteModal rows={selectedRows} onClose={() => setBulk(null)}
             onDone={(m) => { flash('ok', m); clearSelection(); load(); }} />
         )}
+        {bulk === 'merge' && selectedRows.length === 2 && (
+          <MergePersonsModal first={selectedRows[0]} second={selectedRows[1]} lookups={lookups} onClose={() => setBulk(null)}
+            onDone={(m) => { flash('ok', m); clearSelection(); load(); }} />
+        )}
 
         {editRow && (
           <EditPersonModal enrollment={asEnrollment(editRow)} onSaved={load} onClose={() => setEditRow(null)} />
         )}
-        {classesRow && (
-          <PersonClassesModal person={asPerson(classesRow)} churches={churches} services={services} classes={classes}
-            allowLast onChanged={load} onClose={() => setClassesRow(null)} />
+        {enrollRow && (
+          <AddEnrollmentModal row={enrollRow} lookups={lookups} onClose={() => setEnrollRow(null)}
+            onDone={(m) => { flash('ok', m); load(); }} />
+        )}
+        {mergeRow && (
+          <MergePersonsModal first={mergeRow} lookups={lookups} onClose={() => setMergeRow(null)}
+            onDone={(m) => { flash('ok', m); setSelected((s) => { const n = new Map(s); n.delete(mergeRow.id); return n; }); load(); }} />
         )}
         {deleteRow && (
           <BulkDeleteModal rows={[deleteRow]} onClose={() => setDeleteRow(null)}

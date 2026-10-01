@@ -23,6 +23,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { kindsLabel, type AccountKind, type InviteCheck } from '@/lib/accounts';
 import InviteGate, { useSignupInvite } from '@/components/InviteGate';
+import ExistingCodeDialog from '@/components/ExistingCodeDialog';
 import QrScanner from '@/components/store/QrScanner';
 import PhotoCropModal from '@/components/PhotoCropModal';
 import { generateCode as renderCode, normalizeCodes, type CodesConfig } from '@/lib/code-templates';
@@ -144,15 +145,22 @@ function WizardForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
   // 20261003120000: the code already belongs to a person WITH a password
   // (servant / child) → same person, same password, a priest account is added
   const linkedAccount = !!lookup?.exists && !lookup.is_priest && !!lookup.has_password;
-  const linkedKinds = kindsLabel(([lookup?.is_servant && 'servant', lookup?.is_child && 'child'].filter(Boolean)) as AccountKind[]);
+  const existingKindList = ([lookup?.is_servant && 'servant', lookup?.is_child && 'child', lookup?.is_priest && 'priest'].filter(Boolean)) as AccountKind[];
+  const linkedKinds = kindsLabel(existingKindList.filter((k) => k !== 'priest'));
+
+  // 20261005120000: «الكود مسجّل بالفعل — هل أنت نفس الشخص؟» on step 2
+  const [askExisting, setAskExisting] = useState(false);
+  const [claimedPassword, setClaimedPassword] = useState('');
+  useEffect(() => { setClaimedPassword(''); }, [code]);
 
   const next = () => {
     setError('');
     if (step === 1) { if (!churchId) return setError('اختر الكنيسة'); setStep(2); }
     else if (step === 2) {
       if (!code.trim()) return setError('اكتب الكود أو امسحه أو ولّد كودًا');
-      if (lookup?.is_priest) return setError('هذا الكود له حساب كاهن بالفعل — سجّل الدخول به');
       if (lookup?.pending) return setError('يوجد طلب قيد المراجعة لهذا الكود');
+      if ((lookup?.is_priest || linkedAccount) && !claimedPassword) { setAskExisting(true); return; }
+      if (lookup?.is_priest) return setError('هذا الكود له حساب كاهن بالفعل — سجّل الدخول به');
       setStep(3);
     } else if (step === 3) {
       if (!name.trim()) return setError('اكتب الاسم');
@@ -256,6 +264,11 @@ function WizardForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
                 <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700"><Clock className="mt-0.5 h-4 w-4 shrink-0" /><span>يوجد طلب قيد المراجعة لهذا الكود — انتظر رد المالك.</span></div>
               )}
               {lookupDone && lookup && !lookup.exists && code.trim() && <p className="text-[11px] font-bold text-slate-400">كود جديد — ستُدخل بياناتك في الخطوة التالية</p>}
+              {claimedPassword && (
+                <p className="flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700">
+                  <Check className="h-3.5 w-3.5" /> تم التحقق — سيُضاف حساب الكاهن لنفس الشخص بكلمة مروره الحالية بعد موافقة المالك
+                </p>
+              )}
             </section>
           )}
 
@@ -347,6 +360,20 @@ function WizardForm({ invite, inviteToken }: { invite: InviteCheck; inviteToken:
 
         <p className="mt-6 text-center text-sm text-slate-500">لديك حساب بالفعل؟ <Link href="/login?as=priest" className="font-bold text-violet-700 hover:underline">تسجيل الدخول</Link></p>
       </section>
+
+      {askExisting && (
+        <ExistingCodeDialog
+          code={code.trim()}
+          name={lookup?.name}
+          kinds={existingKindList}
+          canClaim={!lookup?.is_priest}
+          cannotClaimReason="لهذا الكود حساب كاهن بالفعل — حساب الكاهن واحد لكل شخص. سجّل الدخول به."
+          approverLabel="المالك"
+          onVerified={(pw) => { setClaimedPassword(pw); setPassword(pw); setConfirm(pw); setAskExisting(false); setStep(3); }}
+          onChangeCode={() => { setAskExisting(false); setCode(''); setLookup(null); setLookupDone(false); }}
+          onClose={() => setAskExisting(false)}
+        />
+      )}
 
       {rawImage && (
         <PhotoCropModal src={rawImage}

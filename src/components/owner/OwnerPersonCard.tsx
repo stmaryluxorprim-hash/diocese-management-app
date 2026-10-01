@@ -4,9 +4,11 @@
 // Shows EVERYTHING the system knows about the person: identity data
 // (code · gender · birthdate · phone · address · notes · photo · password
 // state · created/edited), his servant account (role · status · places) and
-// EVERY enrollment (church ← service ← class, status, attendance, points).
+// EVERY enrollment (church ← service ← class, status, attendance, points)
+// each labelled with its KIND — كمخدوم · كخادم · ككاهن (20261005120000: the
+// priest account is listed as an enrollment of the church too).
 // A checkbox selects it for the bulk bar; the action row offers
-// تعديل · إضافة إلى فصل · حذف.
+// تعديل · إضافة تسجيل · دمج · حذف.
 
 import { useState } from 'react';
 import Image from 'next/image';
@@ -14,10 +16,12 @@ import Link from 'next/link';
 import {
   User, IdCard, Phone, MapPin, StickyNote, CalendarDays, Star, CalendarCheck, School, Layers,
   Church as ChurchIcon, Ban, ShieldCheck, KeyRound, Pencil, Trash2, Plus, CheckSquare, Square,
-  ChevronDown, Clock, Copy, Check,
+  ChevronDown, Clock, Copy, Check, Cross, GitMerge,
 } from 'lucide-react';
 import { GENDER_LABELS, ROLE_LABELS, STATUS_LABELS, type Church, type Service, type ClassRoom } from '@/lib/types';
-import type { OwnerPersonRow } from '@/lib/owner-persons';
+import { ENROLLMENT_KIND_LABELS, personKinds, type OwnerPersonRow } from '@/lib/owner-persons';
+
+const PRIEST_STATUS: Record<string, string> = { approved: 'مفعّل', pending: 'قيد المراجعة', rejected: 'مرفوض', suspended: 'موقوف' };
 
 const nameOf = (list: { id: string; name: string }[], id: string | null | undefined, fb = '—') =>
   id ? list.find((x) => x.id === id)?.name ?? fb : fb;
@@ -39,7 +43,7 @@ const ageOf = (birthdate: string | null) => {
 };
 
 export default function OwnerPersonCard({
-  row, index, selected, onSelect, churches, services, classes, onEdit, onAddScope, onDelete, disabled,
+  row, index, selected, onSelect, churches, services, classes, onEdit, onAddScope, onMerge, onDelete, disabled,
 }: {
   row: OwnerPersonRow;
   index: number;
@@ -50,15 +54,18 @@ export default function OwnerPersonCard({
   classes: ClassRoom[];
   onEdit: () => void;
   onAddScope: () => void;
+  onMerge?: () => void;
   onDelete: () => void;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const isServant = !!row.servant;
+  const isPriest = !!row.priest;
+  const kinds = personKinds(row);
   const age = ageOf(row.birthdate);
-  const unenrolled = row.enrollments.length === 0;
-  const childRows = row.enrollments.filter((e) => e.kind === 'child');
+  const unenrolled = row.enrollments.length === 0 && !isPriest;
+  const enrollmentCount = row.enrollments.length + (isPriest ? 1 : 0);
   const totalPoints = row.enrollments.reduce((s, e) => s + e.points, 0);
   const totalAttendance = row.enrollments.reduce((s, e) => s + e.attendance_count, 0);
 
@@ -92,7 +99,7 @@ export default function OwnerPersonCard({
 
         {/* photo */}
         <div className={`relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl ring-2 ${
-          isServant ? 'bg-emerald-50 ring-emerald-100 text-emerald-400' : 'bg-primary-50 ring-primary-100 text-primary-300'}`}>
+          isPriest ? 'bg-violet-50 ring-violet-100 text-violet-400' : isServant ? 'bg-emerald-50 ring-emerald-100 text-emerald-400' : 'bg-primary-50 ring-primary-100 text-primary-300'}`}>
           {row.image_url ? (
             <Image src={row.image_url} alt={row.name} fill sizes="56px" className="object-cover" />
           ) : (
@@ -104,14 +111,14 @@ export default function OwnerPersonCard({
         <div className="min-w-0 flex-1">
           <p className="truncate font-extrabold">{row.name}</p>
           <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-            {isServant ? (
-              <span className="badge bg-emerald-100 text-emerald-700"><ShieldCheck className="h-3 w-3" /> خادم · {ROLE_LABELS[row.servant!.role]}</span>
-            ) : (
-              <span className="badge bg-primary-100 text-primary-700"><User className="h-3 w-3" /> مخدوم</span>
-            )}
+            {/* every kind the person holds — مخدوم · خادم · كاهن */}
+            {kinds.includes('child') && <span className="badge bg-primary-100 text-primary-700"><User className="h-3 w-3" /> مخدوم</span>}
+            {isServant && <span className="badge bg-emerald-100 text-emerald-700"><ShieldCheck className="h-3 w-3" /> خادم · {ROLE_LABELS[row.servant!.role]}</span>}
+            {isPriest && <span className="badge bg-violet-100 text-violet-700"><Cross className="h-3 w-3" /> كاهن{row.priest!.title ? ` · ${row.priest!.title}` : ''}</span>}
+            {kinds.length === 0 && !unenrolled && <span className="badge bg-slate-100 text-slate-600"><User className="h-3 w-3" /> شخص</span>}
             {unenrolled && <span className="badge bg-amber-100 text-amber-700"><Ban className="h-3 w-3" /> بدون تسجيلات</span>}
             {!unenrolled && (
-              <span className="badge bg-sky-100 text-sky-700"><School className="h-3 w-3" /> {row.enrollments.length} {row.enrollments.length === 1 ? 'تسجيل' : 'تسجيلات'}</span>
+              <span className="badge bg-sky-100 text-sky-700"><School className="h-3 w-3" /> {enrollmentCount} {enrollmentCount === 1 ? 'تسجيل' : 'تسجيلات'}</span>
             )}
             {row.gender && (
               <span className={`badge ${row.gender === 'male' ? 'bg-blue-50 text-blue-600' : 'bg-pink-50 text-pink-600'}`}>{GENDER_LABELS[row.gender]}</span>
@@ -138,16 +145,17 @@ export default function OwnerPersonCard({
         </button>
       </div>
 
-      {/* enrollments — always visible (compact) */}
-      {row.enrollments.length > 0 && (
+      {/* enrollments — always visible (compact), each with its kind */}
+      {(row.enrollments.length > 0 || isPriest) && (
         <ul id={`op-enrollments-${row.id}`} className="mt-2.5 space-y-1">
           {row.enrollments.map((e) => {
             const stopped = e.status === 'stopped';
+            const servantRow = e.kind === 'servant';
             return (
               <li key={e.id} className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ring-1 ${
-                e.kind === 'servant' ? 'bg-emerald-50/60 ring-emerald-100' : stopped ? 'bg-slate-100 ring-slate-200' : 'bg-slate-50 ring-slate-100'}`}>
-                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${e.kind === 'servant' ? 'bg-white text-emerald-500' : 'bg-white text-primary-500'}`}>
-                  {e.kind === 'servant' ? <ShieldCheck className="h-3.5 w-3.5" /> : <School className="h-3.5 w-3.5" />}
+                servantRow ? 'bg-emerald-50/60 ring-emerald-100' : stopped ? 'bg-slate-100 ring-slate-200' : 'bg-primary-50/40 ring-primary-100'}`}>
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${servantRow ? 'bg-white text-emerald-500' : 'bg-white text-primary-500'}`}>
+                  {servantRow ? <ShieldCheck className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-x-1 font-bold text-slate-700">
@@ -159,12 +167,30 @@ export default function OwnerPersonCard({
                   </span>
                 </span>
                 {stopped && <span className="badge !py-0 bg-slate-200 text-slate-600"><Ban className="h-3 w-3" /> موقوف</span>}
-                {e.kind === 'servant' && <span className="badge !py-0 bg-emerald-100 text-emerald-700">كخادم</span>}
+                <span className={`badge !py-0 ${servantRow ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'}`}>
+                  {ENROLLMENT_KIND_LABELS[servantRow ? 'servant' : 'child'].as}
+                </span>
                 <span className="badge !py-0 bg-emerald-100 text-emerald-700"><CalendarCheck className="h-3 w-3" /> {e.attendance_count}</span>
                 <span className="badge !py-0 bg-gold-100 text-gold-600"><Star className="h-3 w-3" /> {e.points}</span>
               </li>
             );
           })}
+          {isPriest && (
+            <li key="priest" className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ring-1 ${
+              row.priest!.status === 'approved' ? 'bg-violet-50/60 ring-violet-100' : 'bg-slate-100 ring-slate-200'}`}>
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white text-violet-500"><Cross className="h-3.5 w-3.5" /></span>
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-x-1 font-bold text-slate-700">
+                  <ChurchIcon className="h-3 w-3 text-gold-500" /> {nameOf(churches, row.priest!.church_id)}
+                  {row.priest!.title && <span className="text-slate-500">· {row.priest!.title}</span>}
+                </span>
+              </span>
+              {row.priest!.status !== 'approved' && (
+                <span className="badge !py-0 bg-slate-200 text-slate-600"><Ban className="h-3 w-3" /> {PRIEST_STATUS[row.priest!.status] ?? row.priest!.status}</span>
+              )}
+              <span className="badge !py-0 bg-violet-100 text-violet-700">{ENROLLMENT_KIND_LABELS.priest.as}</span>
+            </li>
+          )}
         </ul>
       )}
 
@@ -205,19 +231,38 @@ export default function OwnerPersonCard({
               <Link href="/servants" className="mt-1 inline-block font-bold text-emerald-700 underline">إدارة الخدام</Link>
             </div>
           )}
+
+          {row.priest && (
+            <div className="rounded-xl bg-violet-50 px-3 py-2 text-[11px]">
+              <p className="flex flex-wrap items-center gap-1.5 font-extrabold text-violet-800">
+                <Cross className="h-3.5 w-3.5" /> حساب كاهن{row.priest.title ? ` — ${row.priest.title}` : ''}
+                <span className={`badge !py-0 ${row.priest.status === 'approved' ? 'bg-violet-100 text-violet-700' : row.priest.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                  {PRIEST_STATUS[row.priest.status] ?? row.priest.status}
+                </span>
+              </p>
+              <p className="mt-1 text-violet-700">{nameOf(churches, row.priest.church_id)}</p>
+              <Link href="/owner/priests" className="mt-1 inline-block font-bold text-violet-700 underline">الكهنة</Link>
+            </div>
+          )}
         </div>
       )}
 
       {/* actions */}
-      <div className="mt-2.5 grid grid-cols-3 gap-2 border-t border-slate-100 pt-2.5">
+      <div className={`mt-2.5 grid gap-2 border-t border-slate-100 pt-2.5 ${onMerge ? 'grid-cols-4' : 'grid-cols-3'}`}>
         <button id={`op-edit-${row.id}`} type="button" onClick={onEdit} disabled={disabled}
           className="flex items-center justify-center gap-1.5 rounded-xl bg-primary-50 py-2 text-xs font-bold text-primary-600 transition hover:bg-primary-100 disabled:opacity-60">
           <Pencil className="h-3.5 w-3.5" /> تعديل
         </button>
         <button id={`op-add-${row.id}`} type="button" onClick={onAddScope} disabled={disabled}
           className="flex items-center justify-center gap-1.5 rounded-xl bg-violet-50 py-2 text-xs font-bold text-violet-600 transition hover:bg-violet-100 disabled:opacity-60">
-          <Plus className="h-3.5 w-3.5" /> {childRows.length ? 'الفصول' : 'إضافة إلى فصل'}
+          <Plus className="h-3.5 w-3.5" /> تسجيل
         </button>
+        {onMerge && (
+          <button id={`op-merge-${row.id}`} type="button" onClick={onMerge} disabled={disabled}
+            className="flex items-center justify-center gap-1.5 rounded-xl bg-amber-50 py-2 text-xs font-bold text-amber-700 transition hover:bg-amber-100 disabled:opacity-60">
+            <GitMerge className="h-3.5 w-3.5" /> دمج
+          </button>
+        )}
         <button id={`op-delete-${row.id}`} type="button" onClick={onDelete} disabled={disabled}
           className="flex items-center justify-center gap-1.5 rounded-xl bg-red-50 py-2 text-xs font-bold text-red-600 transition hover:bg-red-100 disabled:opacity-60">
           <Trash2 className="h-3.5 w-3.5" /> حذف

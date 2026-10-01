@@ -30,6 +30,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { kindsLabel, type AccountKind, type InviteCheck } from '@/lib/accounts';
 import InviteGate, { useSignupInvite } from '@/components/InviteGate';
+import ExistingCodeDialog from '@/components/ExistingCodeDialog';
 import QrScanner from '@/components/store/QrScanner';
 import PhotoCropModal from '@/components/PhotoCropModal';
 import { generateCode as renderCode, normalizeCodes, type CodesConfig } from '@/lib/code-templates';
@@ -209,7 +210,14 @@ function ChildSignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteT
   // refuses only the same class.
   const isChildAccount = !!lookup?.has_password && !!lookup?.is_child;
   const linkedAccount = !!lookup?.has_password && !lookup?.family;
-  const linkedKinds = kindsLabel(([lookup?.is_servant && 'servant', lookup?.is_child && 'child', lookup?.is_priest && 'priest'].filter(Boolean)) as AccountKind[]);
+  const existingKindList = ([lookup?.is_servant && 'servant', lookup?.is_child && 'child', lookup?.is_priest && 'priest'].filter(Boolean)) as AccountKind[];
+  const linkedKinds = kindsLabel(existingKindList);
+
+  // 20261005120000: «الكود مسجّل بالفعل — هل أنت نفس الشخص؟» on step 2; the verified
+  // password is reused on step 4
+  const [askExisting, setAskExisting] = useState(false);
+  const [claimedPassword, setClaimedPassword] = useState('');
+  useEffect(() => { setClaimedPassword(''); }, [code]);
 
   const next = () => {
     setError('');
@@ -220,6 +228,7 @@ function ChildSignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteT
       if (!code.trim()) return setError('اكتب الكود أو امسحه بالكاميرا أو ولّد كودًا');
       if (lookup?.family) return setError('هذا الكود كود عائلة — لا يمكن استخدامه لشخص، اختر كودًا آخر');
       if (lookup?.pending) return setError('يوجد طلب تسجيل قيد المراجعة لهذا الكود');
+      if (linkedAccount && !claimedPassword) { setAskExisting(true); return; }
       setStep(3);
     } else if (step === 3) {
       if (!name.trim()) return setError('اكتب الاسم الكامل');
@@ -424,6 +433,11 @@ function ChildSignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteT
               {lookupDone && lookup && !lookup.exists && !lookup.family && code.trim() && (
                 <p className="text-[11px] font-bold text-slate-400">كود جديد — ستُدخل بياناتك في الخطوة التالية</p>
               )}
+              {claimedPassword && (
+                <p className="flex items-center gap-1 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700">
+                  <Check className="h-3.5 w-3.5" /> تم التحقق — سيُضاف التسجيل لنفس الشخص بكلمة مروره الحالية بعد موافقة الخادم
+                </p>
+              )}
             </section>
           )}
 
@@ -575,6 +589,18 @@ function ChildSignupForm({ invite, inviteToken }: { invite: InviteCheck; inviteT
           <Link href="/login?as=child" className="font-bold text-gold-700 hover:underline">تسجيل الدخول</Link>
         </p>
       </section>
+
+      {askExisting && (
+        <ExistingCodeDialog
+          code={code.trim()}
+          name={lookup?.name}
+          kinds={existingKindList}
+          approverLabel="خادم الفصل"
+          onVerified={(pw) => { setClaimedPassword(pw); setPassword(pw); setConfirm(pw); setAskExisting(false); setStep(3); }}
+          onChangeCode={() => { setAskExisting(false); setCode(''); setLookup(null); setLookupDone(false); }}
+          onClose={() => setAskExisting(false)}
+        />
+      )}
 
       {rawImage && (
         <PhotoCropModal
