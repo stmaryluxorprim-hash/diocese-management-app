@@ -11,6 +11,10 @@
 //       → servant_enrollments.user_id = normalized code
 //       → persons.national_id = code (the servant's identity row; also
 //         re-keys his QR card, portal code and every mirror enrollment)
+//   { action: 'realign', servant_id }                  (20261005120000)
+//       → after owner_merge_persons: the Auth account is re-synced with the
+//         person's FINAL code (login e-mail) and ONE password hash
+//         (admin_servant_identity). Owner only.
 //
 // Who may call: an APPROVED owner / church manager / service manager whose
 // scope covers the target servant (same rule as editing him in ServantsPanel:
@@ -43,7 +47,10 @@ function adminClient() {
 type Actor = { id: string; role: string; status: string; church_id: string | null; service_id: string | null };
 type Target = { id: string; role: string; person_id: string | null; church_id: string | null; service_id: string | null; user_id: string };
 
-function canManage(actor: Actor, target: Target, action: 'reset_password' | 'change_code'): boolean {
+type Action = 'reset_password' | 'change_code' | 'realign';
+
+function canManage(actor: Actor, target: Target, action: Action): boolean {
+  if (action === 'realign') return actor.role === 'owner';
   if (actor.id === target.id) {
     // self: own password = old + new in the browser, never here.
     // own code: the OWNER only.
@@ -70,7 +77,7 @@ export async function POST(req: NextRequest) {
   const action = body.action;
   const servantId = typeof body.servant_id === 'string' && UUID_RE.test(body.servant_id) ? body.servant_id : null;
   if (!servantId) return NextResponse.json({ error: 'servant_required' }, { status: 400 });
-  if (action !== 'reset_password' && action !== 'change_code') return NextResponse.json({ error: 'bad_action' }, { status: 400 });
+  if (action !== 'reset_password' && action !== 'change_code' && action !== 'realign') return NextResponse.json({ error: 'bad_action' }, { status: 400 });
 
   const [{ data: actor }, { data: target }] = await Promise.all([
     admin.from(SERVANTS_TABLE).select('id, role, status, church_id, service_id').eq('id', user.id).maybeSingle(),
@@ -79,6 +86,22 @@ export async function POST(req: NextRequest) {
   if (!actor || actor.status !== 'approved') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (!canManage(actor as Actor, target as Target, action)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  // ---------- realign (after a merge) ----------
+  if (action === 'realign') {
+    const { data: idn, error: idErr } = await admin.rpc('admin_servant_identity', { p_servant: servantId });
+    const ident = idn as { code: string; user_id: string; password_hash: string | null } | null;
+    if (idErr || !ident?.user_id) return NextResponse.json({ error: 'failed', detail: idErr?.message ?? 'no_identity' }, { status: 500 });
+    const attrs: Record<string, unknown> = { email: userIdToEmail(ident.user_id), email_confirm: true, user_metadata: { code: ident.code } };
+    if (ident.password_hash && ident.password_hash.length > 20) attrs.password_hash = ident.password_hash;
+    const { error } = await admin.auth.admin.updateUserById(servantId, attrs);
+    if (error) {
+      const m = error.message.toLowerCase();
+      const taken = m.includes('already') || m.includes('exists') || m.includes('registered');
+      return NextResponse.json({ error: taken ? 'code_taken' : 'failed', detail: error.message }, { status: taken ? 409 : 500 });
+    }
+    return NextResponse.json({ ok: true, user_id: ident.user_id, code: ident.code });
+  }
 
   // ---------- reset password ----------
   if (action === 'reset_password') {

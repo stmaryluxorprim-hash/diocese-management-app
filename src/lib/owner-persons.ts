@@ -8,6 +8,9 @@
 //   owner_bulk_enroll           add many persons → many classes
 //   owner_bulk_unenroll         remove many persons from a scope
 //   owner_bulk_delete_persons   delete many persons completely (cascade)
+// 20261005120000:
+//   owner_add_priest_for_person a priest account for an existing person
+//   owner_merge_persons         two persons rows → one (the owner picks the values)
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppRole, ApprovalStatus, EnrollmentStatus, Gender, Person, ScopeRef } from '@/lib/types';
@@ -37,17 +40,44 @@ export interface OwnerServantInfo {
   scopes: ScopeRef[];
 }
 
+/** The priest account bound to this person (20261005120000). */
+export interface OwnerPriestInfo {
+  id: string;
+  church_id: string;
+  title: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'suspended';
+  created_at: string;
+}
+
 /** A row of إدارة الأفراد — the full person + everything bound to him. */
 export interface OwnerPersonRow extends Omit<Person, 'created_by' | 'edited_by'> {
   gender: Gender | null;
   enrollments: OwnerEnrollment[];
   servant: OwnerServantInfo | null;
+  priest: OwnerPriestInfo | null;
   has_password: boolean;
   total_count: number;
 }
 
 export type ScopeMode = 'all' | 'scope' | 'none';
-export type PersonKindFilter = 'all' | 'child' | 'servant';
+export type PersonKindFilter = 'all' | 'child' | 'servant' | 'priest';
+
+/** The kinds of enrollment a person can hold — كمخدوم · كخادم · ككاهن. */
+export type EnrollmentKind = 'child' | 'servant' | 'priest';
+export const ENROLLMENT_KIND_LABELS: Record<EnrollmentKind, { as: string; noun: string }> = {
+  child: { as: 'كمخدوم', noun: 'مخدوم' },
+  servant: { as: 'كخادم', noun: 'خادم' },
+  priest: { as: 'ككاهن', noun: 'كاهن' },
+};
+
+/** every kind the person currently holds (for the card badges) */
+export function personKinds(r: Pick<OwnerPersonRow, 'enrollments' | 'servant' | 'priest'>): EnrollmentKind[] {
+  const k: EnrollmentKind[] = [];
+  if (r.enrollments.some((e) => e.kind === 'child')) k.push('child');
+  if (r.servant) k.push('servant');
+  if (r.priest) k.push('priest');
+  return k;
+}
 
 export interface OwnerPersonsFilter {
   search?: string;
@@ -83,6 +113,7 @@ export async function fetchOwnerPersons(
     ...r,
     enrollments: (r.enrollments ?? []) as OwnerEnrollment[],
     servant: (r.servant ?? null) as OwnerServantInfo | null,
+    priest: (r.priest ?? null) as OwnerPriestInfo | null,
   }));
   return { rows, total: rows[0]?.total_count ?? 0 };
 }
@@ -92,6 +123,8 @@ export interface OwnerPersonsCounts {
   unenrolled: number;
   servants: number;
   children: number;
+  /** 20261005120000 (undefined before the migration) */
+  priests?: number;
 }
 
 export async function fetchOwnerPersonsCounts(supabase: SupabaseClient): Promise<OwnerPersonsCounts | null> {
@@ -139,6 +172,67 @@ export async function bulkDeletePersons(
   return data as { deleted: number; skipped_servants: number };
 }
 
+// ---------- 20261005120000: add a priest account to an existing person ----------
+export async function addPriestForPerson(
+  supabase: SupabaseClient,
+  personId: string,
+  churchId: string,
+  title: string | null,
+  password: string | null,
+): Promise<{ priest_id: string; person_id: string; code: string }> {
+  const { data, error } = await supabase.rpc('owner_add_priest_for_person', {
+    p_person: personId, p_church: churchId, p_title: title, p_password: password,
+  });
+  if (error) throw error;
+  return data as { priest_id: string; person_id: string; code: string };
+}
+
+// ---------- 20261005120000: merge two persons ----------
+/** The identity fields the owner chooses between when merging. */
+export type MergeField = 'name' | 'gender' | 'birthdate' | 'phone' | 'address' | 'notes' | 'image_url' | 'national_id';
+export const MERGE_FIELDS: { key: MergeField; label: string }[] = [
+  { key: 'national_id', label: 'الكود' },
+  { key: 'name', label: 'الاسم' },
+  { key: 'gender', label: 'النوع' },
+  { key: 'birthdate', label: 'تاريخ الميلاد' },
+  { key: 'phone', label: 'الهاتف' },
+  { key: 'address', label: 'العنوان' },
+  { key: 'notes', label: 'ملاحظات' },
+  { key: 'image_url', label: 'الصورة' },
+];
+
+export interface MergeResult {
+  person_id: string;
+  code: string;
+  moved: Record<string, number>;
+  servant_id: string | null;
+  priest_id: string | null;
+  /** the servant Auth account must be re-synced — POST /api/servants/account {action:'realign'} */
+  realign_servant: boolean;
+}
+
+export async function mergePersons(
+  supabase: SupabaseClient,
+  keepId: string,
+  removeId: string,
+  fields: Partial<Record<MergeField, string | null>>,
+): Promise<MergeResult> {
+  const { data, error } = await supabase.rpc('owner_merge_persons', { p_keep: keepId, p_remove: removeId, p_fields: fields });
+  if (error) throw error;
+  const r = data as MergeResult;
+  if (r.realign_servant && r.servant_id) {
+    // the login e-mail / password hash of the servant account follow the merged person
+    try {
+      const res = await fetch('/api/servants/account', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'realign', servant_id: r.servant_id }),
+      });
+      if (res.ok) r.realign_servant = false;
+    } catch { /* reported to the owner by the caller */ }
+  }
+  return r;
+}
+
 /** Human message for the RPC errors above. */
 export function ownerPersonsError(err: unknown, fallback = 'تعذر تنفيذ العملية'): string {
   const m = (err as { message?: string; code?: string } | null)?.message ?? '';
@@ -153,5 +247,12 @@ export function ownerPersonsError(err: unknown, fallback = 'تعذر تنفيذ 
   if (m.includes('church_required')) return 'اختر الكنيسة أولاً';
   if (m.includes('persons_required')) return 'لم يُحدَّد أي شخص';
   if (m.includes('scopes_required')) return 'اختر فصلًا واحدًا على الأقل';
+  if (m.includes('both_servants')) return 'للشخصين حسابا خادم — احذف أحدهما من إدارة الخدام أولاً ثم ادمج';
+  if (m.includes('both_priests')) return 'للشخصين حسابا كاهن — احذف أحدهما من الكهنة أولاً ثم ادمج';
+  if (m.includes('two_persons_required')) return 'اختر شخصين مختلفين';
+  if (m.includes('person_not_found')) return 'لم يعد أحد الشخصين موجودًا — حدّث الصفحة';
+  if (m.includes('already_registered')) return 'لهذا الشخص حساب من هذا النوع بالفعل';
+  if (m.includes('weak_password')) return 'كلمة المرور 6 أحرف على الأقل';
+  if (m.includes('invalid_code')) return 'الكود المختار يجب أن يكون كود أحد الشخصين';
   return fallback;
 }
