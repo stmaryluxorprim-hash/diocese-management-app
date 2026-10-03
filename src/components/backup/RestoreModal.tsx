@@ -7,12 +7,12 @@
 // 3. progress (stage → delete → apply → auth) → result
 
 import { useMemo, useRef, useState } from 'react';
-import { X, HardDriveUpload, Loader2, CheckCircle2, TriangleAlert, FileJson, Upload, ShieldAlert } from 'lucide-react';
+import { X, HardDriveUpload, Loader2, CheckCircle2, TriangleAlert, FileJson, Upload, ShieldAlert, MapPin } from 'lucide-react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import TableSelector from './TableSelector';
 import {
-  AUTH_USERS_KEY, RESTORE_MODE_LABELS, backupErrorMessage, formatBytes, logBackupRun, parseBackup,
-  restoreBackup, restoreWarnings, tableLabel,
+  AUTH_USERS_KEY, RESTORE_MODE_LABELS, backupErrorMessage, formatBytes, isFullScope, logBackupRun, parseBackup,
+  restoreBackup, restoreWarnings, scopeLabel, tableLabel,
   type BackupFile, type BackupProgress, type BackupTableInfo, type RestoreMode, type RestoreResult,
 } from '@/lib/backup';
 
@@ -50,6 +50,8 @@ export default function RestoreModal({
       const parsed = parseBackup(await f.text());
       setFile(parsed);
       setFileMeta({ name: f.name, size: f.size });
+      // a scoped file (one church / service / class) can only be merged
+      if (!isFullScope(parsed.scope)) { setMode('merge'); setConfirmWord(''); }
       const names = Object.keys(parsed.tables).filter((t) => known.has(t));
       if (parsed.auth_users?.length) names.push(AUTH_USERS_KEY);
       setSelected(new Set(names));
@@ -68,14 +70,15 @@ export default function RestoreModal({
   const tables = Array.from(selected).filter((t) => t !== AUTH_USERS_KEY && known.has(t));
   const restoreAuth = selected.has(AUTH_USERS_KEY) && !!file?.auth_users?.length;
   const totalRows = tables.reduce((s, t) => s + (file?.tables[t]?.rows.length ?? 0), 0);
-  const canRun = !!file && (tables.length > 0 || restoreAuth) && (mode === 'merge' || confirmWord.trim() === 'استبدال');
+  const scopedFile = !!file && !isFullScope(file.scope);
+  const canRun = !!file && (tables.length > 0 || restoreAuth) && (mode === 'merge' || (!scopedFile && confirmWord.trim() === 'استبدال'));
 
   const run = async () => {
     if (!file || !canRun) return;
     setBusy(true); setError(null);
     const runId = await logBackupRun(supabase, {
       kind: 'restore', status: 'running', mode, tables, include_auth: restoreAuth, file_name: fileMeta?.name ?? null,
-      size_bytes: fileMeta?.size ?? null, created_by: actorId,
+      size_bytes: fileMeta?.size ?? null, scope: file.scope ?? null, created_by: actorId,
     });
     try {
       const r = await restoreBackup(supabase, { file, tables, mode, restoreAuth, onProgress: setProgress });
@@ -204,6 +207,15 @@ export default function RestoreModal({
 
               {file && (
                 <>
+                  {/* 1b. scope of the file (20261009) */}
+                  <p id="restore-file-scope" className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-xs font-bold ${scopedFile ? 'bg-primary-50 text-primary-700' : 'bg-slate-50 text-slate-500'}`}>
+                    <MapPin className="h-4 w-4 shrink-0" />
+                    <span>
+                      {scopeLabel(file.scope)}
+                      {scopedFile && <span className="block font-normal text-primary-600">نسخة لنطاق محدد — تُسترجع بوضع «دمج» فقط؛ الاستبدال كان سيحذف كل ما خارج النطاق.</span>}
+                    </span>
+                  </p>
+
                   {/* 2. mode */}
                   <div className="grid grid-cols-2 gap-2">
                     {(Object.keys(RESTORE_MODE_LABELS) as RestoreMode[]).map((m) => (
@@ -211,8 +223,9 @@ export default function RestoreModal({
                         key={m}
                         type="button"
                         data-mode={m}
+                        disabled={m === 'replace' && scopedFile}
                         onClick={() => setMode(m)}
-                        className={`rounded-2xl border-2 px-3 py-3 text-right transition ${
+                        className={`rounded-2xl border-2 px-3 py-3 text-right transition disabled:cursor-not-allowed disabled:opacity-40 ${
                           mode === m
                             ? m === 'replace' ? 'border-red-400 bg-red-50' : 'border-emerald-400 bg-emerald-50'
                             : 'border-slate-200 hover:bg-slate-50'

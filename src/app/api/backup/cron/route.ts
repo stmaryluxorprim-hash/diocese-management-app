@@ -2,7 +2,7 @@
 //   GET   — Vercel Cron (DAILY — the Hobby plan refuses to deploy crons that
 //           run more often; see vercel.json). When CRON_SECRET is set the
 //           request must carry `Authorization: Bearer <secret>` (Vercel adds it).
-//   POST  — the owner, from /settings/backup, «تشغيل الآن» for ONE schedule
+//   POST  — the owner, from /owner/backup, «تشغيل الآن» for ONE schedule
 //           ({ schedule_id }) or every due one ({}).
 // Files land in the private bucket `backups/<schedule>/<file>.json`; the
 // history row in backup_runs keeps the path so the owner can download it
