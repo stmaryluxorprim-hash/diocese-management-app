@@ -263,7 +263,8 @@ export function FamilyFormModal({
         : m.includes('area_church_mismatch') ? 'منطقة العائلة من كنيسة أخرى — لا يمكن تغيير الكنيسة'
         : m.includes('code_is_person') ? 'هذا الكود لشخص — اختر كوداً آخر للعائلة'
         : m.includes('duplicate') || m.includes('unique') ? 'هذا الكود مستخدم لعائلة أخرى'
-        : 'تعذر الحفظ، حاول مجدداً (تأكد من تطبيق تحديث قاعدة البيانات)');
+        // unknown DB error → show its text so the cause is visible (not just «check the database»)
+        : `تعذر الحفظ — ${m || 'خطأ غير معروف'} (تأكد من تطبيق آخر تحديث لقاعدة البيانات)`);
       return;
     }
     onSaved(data as Family);
