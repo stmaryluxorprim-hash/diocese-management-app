@@ -2,22 +2,25 @@
 
 // ---------- Scheduled backup — add / edit ----------
 // name · frequency (daily / weekly + weekday / monthly + day) · hour (Cairo)
-// · what to back up (all or a selection) · keep last N files.
+// · scope (الكل · كنيسة · خدمة · فصل — 20261009120000) · what to back up (all or
+// a selection) · keep last N files.
 
 import { useMemo, useState } from 'react';
-import { X, CalendarClock, Save, Loader2 } from 'lucide-react';
+import { X, CalendarClock, Save, Loader2, MapPin } from 'lucide-react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import TableSelector from './TableSelector';
-import { AUTH_USERS_KEY, FREQUENCY_LABELS, type BackupFrequency, type BackupSchedule, type BackupTableInfo } from '@/lib/backup';
+import BackupScopePicker, { type ScopeLookups } from './BackupScopePicker';
+import { AUTH_USERS_KEY, FREQUENCY_LABELS, scopeIds, type BackupFrequency, type BackupSchedule, type BackupScope, type BackupTableInfo } from '@/lib/backup';
 import { WEEKDAY_LABELS } from '@/lib/time';
 
 export default function ScheduleFormModal({
-  supabase, catalogue, actorId, schedule, onClose, onSaved,
+  supabase, catalogue, actorId, schedule, lookups, onClose, onSaved,
 }: {
   supabase: SupabaseClient;
   catalogue: BackupTableInfo[];
   actorId: string | null;
   schedule: BackupSchedule | null;
+  lookups: ScopeLookups | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -28,6 +31,7 @@ export default function ScheduleFormModal({
   const [dayOfMonth, setDayOfMonth] = useState(schedule?.day_of_month ?? 1);
   const [hour, setHour] = useState(schedule?.hour ?? 3);
   const [keepLast, setKeepLast] = useState(schedule?.keep_last ?? 10);
+  const [place, setPlace] = useState<BackupScope | null>(scopeIds(schedule?.scope));
   const [scope, setScope] = useState<'all' | 'custom'>(schedule?.tables?.length ? 'custom' : 'all');
   const [selected, setSelected] = useState<Set<string>>(() => {
     if (!schedule) return new Set(allNames);
@@ -43,9 +47,16 @@ export default function ScheduleFormModal({
     const tables = scope === 'all' ? null : Array.from(selected).filter((t) => t !== AUTH_USERS_KEY);
     const includeAuth = scope === 'all' ? true : selected.has(AUTH_USERS_KEY);
     if (scope === 'custom' && (tables?.length ?? 0) === 0 && !includeAuth) { setError('اختر جدولاً واحدًا على الأقل'); setSaving(false); return; }
+    // the scope is stored with its names so the list can show them without a lookup
+    let scopeInfo: Record<string, unknown> | null = null;
+    if (place) {
+      const { data, error: se } = await supabase.rpc('backup_scope_describe', { p_scope: place });
+      if (se) { setError(se.message); setSaving(false); return; }
+      scopeInfo = (data as Record<string, unknown> | null) ?? null;
+    }
     const row = {
       name: name.trim() || 'نسخة مجدولة', frequency, weekday, day_of_month: dayOfMonth, hour, keep_last: keepLast,
-      tables, include_auth: includeAuth,
+      tables, include_auth: includeAuth, scope: scopeInfo,
     };
     const q = schedule
       ? supabase.from('backup_schedules').update(row).eq('id', schedule.id)
@@ -121,6 +132,11 @@ export default function ScheduleFormModal({
                 {[3, 5, 10, 20, 30, 60].map((n) => <option key={n} value={n}>{n} نسخ</option>)}
               </select>
             </label>
+          </div>
+
+          <div>
+            <span className="mb-1 flex items-center gap-1 text-xs font-bold text-slate-500"><MapPin className="h-3.5 w-3.5 text-violet-500" /> نطاق النسخة</span>
+            <BackupScopePicker value={place} onChange={setPlace} lookups={lookups} idPrefix="schedule-scope" accent="violet" />
           </div>
 
           <div>

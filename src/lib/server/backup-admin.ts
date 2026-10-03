@@ -10,7 +10,7 @@ import { createClient as createAdminClient, type SupabaseClient } from '@supabas
 import { createClient as createSessionClient } from '@/lib/supabase/server';
 import { SERVANTS_TABLE } from '@/lib/types';
 import {
-  exportBackup, fetchBackupTables, serializeBackup, backupFileName, AUTH_USERS_KEY,
+  exportBackup, fetchBackupTables, serializeBackup, backupFileName, AUTH_USERS_KEY, scopeIds,
   type BackupSchedule, type BackupRun,
 } from '@/lib/backup';
 
@@ -51,19 +51,21 @@ export interface ScheduledOutcome {
 
 export async function runSchedule(admin: SupabaseClient, s: BackupSchedule, appVersion?: string): Promise<ScheduledOutcome> {
   const out: ScheduledOutcome = { schedule_id: s.id, name: s.name, status: 'failed', run_id: null };
+  // 20261009: a schedule may cover one church / service / class
+  const scope = scopeIds(s.scope);
   const { data: runRow } = await admin.from('backup_runs')
-    .insert({ kind: 'scheduled', schedule_id: s.id, status: 'running', tables: s.tables ?? [], include_auth: s.include_auth, created_by: s.created_by })
+    .insert({ kind: 'scheduled', schedule_id: s.id, status: 'running', tables: s.tables ?? [], include_auth: s.include_auth, scope: s.scope ?? null, created_by: s.created_by })
     .select('id').maybeSingle();
   const runId = (runRow as { id: string } | null)?.id ?? null;
   out.run_id = runId;
 
   try {
-    const cat = await fetchBackupTables(admin);
+    const cat = await fetchBackupTables(admin, scope);
     const tables = (s.tables && s.tables.length ? s.tables : cat.map((t) => t.name))
       .filter((t) => cat.some((c) => c.name === t));
-    const file = await exportBackup(admin, { tables, includeAuth: s.include_auth, kind: 'scheduled', appVersion, catalogue: cat });
+    const file = await exportBackup(admin, { tables, includeAuth: s.include_auth, kind: 'scheduled', appVersion, scope, catalogue: cat });
     const body = serializeBackup(file);
-    const name = backupFileName('scheduled');
+    const name = backupFileName('scheduled', new Date(), file.scope);
     const path = `${s.id}/${name}`;
     const { error: upErr } = await admin.storage.from(BACKUPS_BUCKET)
       .upload(path, Buffer.from(body, 'utf8'), { contentType: 'application/json', upsert: true });
@@ -73,7 +75,7 @@ export async function runSchedule(admin: SupabaseClient, s: BackupSchedule, appV
     if (runId) {
       await admin.from('backup_runs').update({
         status: 'done', tables, row_counts: file.counts, size_bytes: size, file_name: name,
-        storage_path: path, finished_at: new Date().toISOString(),
+        storage_path: path, scope: file.scope ?? null, finished_at: new Date().toISOString(),
       }).eq('id', runId);
     }
     out.pruned = await pruneSchedule(admin, s);

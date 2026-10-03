@@ -1,7 +1,7 @@
 // ---------- Backup & Restore — النسخ الاحتياطي والاسترجاع (migration 0044) ----------
 //
 // One engine, two callers:
-//   • the browser (owner, /settings/backup) — manual backup downloaded to the
+//   • the browser (owner, /owner/backup) — manual backup downloaded to the
 //     device, restore from a file on the device;
 //   • the server (/api/backup/cron, service role) — scheduled backups saved
 //     in the private `backups` bucket.
@@ -11,10 +11,19 @@
 // FILE FORMAT (.json — a single JSON document, readable, diff-able):
 // {
 //   format: 'dma-backup', version: 1, created_at, app_version,
+//   scope?: { church_id, service_id, class_id, label, level … } | null,   // 20261009: scoped backup
 //   tables: { [name]: { columns: string[], rows: object[] } },
 //   auth_users?: [{ id, email, encrypted_password, ... }],   // servants' login accounts
 //   counts: { [name]: n }
 // }
+//
+// SCOPE (migration 20261009120000) — a backup may cover ONE church, ONE
+// service or ONE class instead of the whole database. The rows that belong
+// to a scope are decided in the database (`backup_scope_predicate`): the
+// branch of the structure, every table with church/service/class columns
+// (NULL = shared row → included), the persons referenced from the scope,
+// and every child table through its NOT NULL foreign keys. A scoped file
+// can only be restored in «دمج» mode.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -26,13 +35,57 @@ export const AUTH_USERS_KEY = '__auth_users';   // pseudo-table in the selector
 export const DUMP_PAGE = 1000;
 export const STAGE_CHUNK = 500;
 
+// ---------- scope — نطاق النسخة ----------
+/** What the client sends: ids only (null / all-null = everything). */
+export interface BackupScope {
+  church_id: string | null;
+  service_id: string | null;
+  class_id: string | null;
+}
+/** What the DB answers (`backup_scope_describe`) and what is stored in the file / history. */
+export interface BackupScopeInfo extends BackupScope {
+  church_name?: string | null;
+  service_name?: string | null;
+  class_name?: string | null;
+  level?: 'church' | 'service' | 'class';
+  label?: string;
+}
+export type BackupScopeLevel = NonNullable<BackupScopeInfo['level']>;
+export const SCOPE_LEVEL_LABELS: Record<BackupScopeLevel, string> = { church: 'كنيسة', service: 'خدمة', class: 'فصل' };
+
+/** true when the scope means «everything». */
+export const isFullScope = (s: BackupScope | BackupScopeInfo | null | undefined): boolean =>
+  !s || (!s.church_id && !s.service_id && !s.class_id);
+/** Only the ids (what the RPCs expect) — null for a full backup. */
+export const scopeIds = (s: BackupScope | BackupScopeInfo | null | undefined): BackupScope | null =>
+  isFullScope(s) ? null : { church_id: s!.church_id ?? null, service_id: s!.service_id ?? null, class_id: s!.class_id ?? null };
+export const scopeLevelOf = (s: BackupScope | BackupScopeInfo | null | undefined): BackupScopeLevel | null =>
+  isFullScope(s) ? null : s!.class_id ? 'class' : s!.service_id ? 'service' : 'church';
+/** «كل البيانات» or «فصل: كنيسة أ ← مدارس الأحد ← فصل ٣». */
+export function scopeLabel(s: BackupScopeInfo | null | undefined): string {
+  if (isFullScope(s)) return 'كل البيانات';
+  const lvl = s!.level ?? scopeLevelOf(s);
+  const label = s!.label ?? [s!.church_name, s!.service_name, s!.class_name].filter(Boolean).join(' ← ');
+  return `${lvl ? SCOPE_LEVEL_LABELS[lvl] : 'نطاق'}: ${label || '—'}`;
+}
+/** Ask the DB for the names + label of a scope (null for a full backup). */
+export async function describeScope(supabase: SupabaseClient, scope: BackupScope | null | undefined): Promise<BackupScopeInfo | null> {
+  const ids = scopeIds(scope);
+  if (!ids) return null;
+  const { data, error } = await supabase.rpc('backup_scope_describe', { p_scope: ids });
+  if (error) throw new Error(error.message);
+  return (data as BackupScopeInfo | null) ?? null;
+}
+
 // ---------- catalogue (from the DB) ----------
 export interface BackupTableInfo {
   name: string;
-  rows: number;
+  rows: number;          // rows IN THE SCOPE when the catalogue was fetched with one
   pk: string[];
   columns: string[];
   parents: string[];
+  /** 20261009: false = the table has no link to the structure → copied completely even in a scoped backup */
+  scoped?: boolean;
 }
 
 // ---------- Arabic labels + groups ----------
@@ -153,6 +206,8 @@ export interface BackupFile {
   created_at: string;
   app_version?: string;
   kind?: 'manual' | 'scheduled';
+  /** null / absent = the whole database */
+  scope?: BackupScopeInfo | null;
   tables: Record<string, { columns: string[]; rows: Record<string, unknown>[] }>;
   auth_users?: Record<string, unknown>[];
   counts: Record<string, number>;
@@ -174,6 +229,8 @@ const MESSAGES: Record<string, string> = {
   no_tables: 'اختر جدولاً واحدًا على الأقل',
   job_not_found: 'انتهت جلسة الاسترجاع — أعد المحاولة',
   job_closed: 'انتهت جلسة الاسترجاع — أعد المحاولة',
+  bad_scope: 'النطاق المختار غير صحيح — الكنيسة أو الخدمة أو الفصل غير موجود أو لا يتبع بعضه',
+  scoped_replace: 'هذه نسخة لنطاق محدد (كنيسة / خدمة / فصل) — لا يمكن استرجاعها بوضع «استبدال» لأنه يحذف كل ما خارج النطاق؛ استخدم «دمج»',
   not_configured: 'الخادم غير مُهيّأ (SUPABASE_SERVICE_ROLE_KEY)',
   network: 'تعذر الاتصال بالخادم',
 };
@@ -203,8 +260,10 @@ export function backupErrorMessage(e: unknown): string {
 }
 
 // ---------- catalogue ----------
-export async function fetchBackupTables(supabase: SupabaseClient): Promise<BackupTableInfo[]> {
-  const { data, error } = await supabase.rpc('backup_tables');
+/** Every public table with its row count — in the scope when one is given. */
+export async function fetchBackupTables(supabase: SupabaseClient, scope?: BackupScope | null): Promise<BackupTableInfo[]> {
+  const ids = scopeIds(scope);
+  const { data, error } = await supabase.rpc('backup_tables', ids ? { p_scope: ids } : {});
   if (error) throw new Error(error.message);
   return (data as BackupTableInfo[]) ?? [];
 }
@@ -215,15 +274,21 @@ export interface ExportOptions {
   includeAuth: boolean;
   kind?: 'manual' | 'scheduled';
   appVersion?: string;
+  /** 20261009: one church / service / class — null = everything */
+  scope?: BackupScope | BackupScopeInfo | null;
   onProgress?: (p: BackupProgress) => void;
-  catalogue?: BackupTableInfo[]; // to size the progress bar
+  catalogue?: BackupTableInfo[]; // to size the progress bar (must match the scope)
 }
 
 export async function exportBackup(supabase: SupabaseClient, opts: ExportOptions): Promise<BackupFile> {
-  const cat = opts.catalogue ?? (await fetchBackupTables(supabase));
+  const ids = scopeIds(opts.scope);
+  const cat = opts.catalogue ?? (await fetchBackupTables(supabase, ids));
   const byName = new Map(cat.map((t) => [t.name, t]));
   const totalRows = opts.tables.reduce((s, t) => s + (byName.get(t)?.rows ?? 0), 0) + (opts.includeAuth ? 1 : 0);
   let done = 0;
+
+  // names of the scope travel with the file (restore shows them, history too)
+  const scopeInfo = ids ? await describeScope(supabase, ids) : null;
 
   const file: BackupFile = {
     format: BACKUP_FORMAT,
@@ -231,6 +296,7 @@ export async function exportBackup(supabase: SupabaseClient, opts: ExportOptions
     created_at: new Date().toISOString(),
     app_version: opts.appVersion,
     kind: opts.kind ?? 'manual',
+    scope: scopeInfo,
     tables: {},
     counts: {},
   };
@@ -241,7 +307,9 @@ export async function exportBackup(supabase: SupabaseClient, opts: ExportOptions
     const rows: Record<string, unknown>[] = [];
     let offset = 0;
     for (;;) {
-      const { data, error } = await supabase.rpc('backup_dump_table', { p_table: t, p_offset: offset, p_limit: DUMP_PAGE });
+      const { data, error } = await supabase.rpc('backup_dump_table', {
+        p_table: t, p_offset: offset, p_limit: DUMP_PAGE, ...(ids ? { p_scope: ids } : {}),
+      });
       if (error) throw new Error(error.message);
       const page = (data as Record<string, unknown>[]) ?? [];
       rows.push(...page);
@@ -256,7 +324,7 @@ export async function exportBackup(supabase: SupabaseClient, opts: ExportOptions
 
   if (opts.includeAuth) {
     opts.onProgress?.({ phase: 'auth', done, total: totalRows });
-    const { data, error } = await supabase.rpc('backup_dump_auth_users');
+    const { data, error } = await supabase.rpc('backup_dump_auth_users', ids ? { p_scope: ids } : {});
     if (error) throw new Error(error.message);
     file.auth_users = (data as Record<string, unknown>[]) ?? [];
     file.counts[AUTH_USERS_KEY] = file.auth_users.length;
@@ -266,10 +334,11 @@ export async function exportBackup(supabase: SupabaseClient, opts: ExportOptions
   return file;
 }
 
-export function backupFileName(kind: 'manual' | 'scheduled' = 'manual', date = new Date()): string {
+export function backupFileName(kind: 'manual' | 'scheduled' = 'manual', date = new Date(), scope?: BackupScopeInfo | null): string {
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}_${p(date.getHours())}-${p(date.getMinutes())}`;
-  return `dma-backup_${kind}_${stamp}.json`;
+  const lvl = scopeLevelOf(scope);
+  return `dma-backup_${kind}${lvl ? `_${lvl}` : ''}_${stamp}.json`;
 }
 
 export function serializeBackup(file: BackupFile): string {
@@ -277,7 +346,7 @@ export function serializeBackup(file: BackupFile): string {
 }
 
 /** Browser only — trigger a download of the file. */
-export function downloadBackup(file: BackupFile, name = backupFileName(file.kind)) {
+export function downloadBackup(file: BackupFile, name = backupFileName(file.kind, new Date(), file.scope)) {
   const blob = new Blob([serializeBackup(file)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -308,12 +377,14 @@ export function parseBackup(text: string): BackupFile {
       : Array.from(new Set(v.rows.flatMap((r) => Object.keys(r ?? {}))));
     tables[name] = { columns, rows: v.rows };
   }
+  const scope = f.scope && typeof f.scope === 'object' && !isFullScope(f.scope as BackupScope) ? (f.scope as BackupScopeInfo) : null;
   return {
     format: BACKUP_FORMAT,
     version: f.version ?? 1,
     created_at: f.created_at ?? '',
     app_version: f.app_version,
     kind: f.kind,
+    scope,
     tables,
     auth_users: Array.isArray(f.auth_users) ? f.auth_users : undefined,
     counts: f.counts ?? Object.fromEntries(Object.entries(tables).map(([k, v]) => [k, v.rows.length])),
@@ -353,6 +424,9 @@ export async function restoreBackup(supabase: SupabaseClient, opts: RestoreOptio
   const skipped = opts.tables.filter((t) => !known.has(t));
   if (tables.length === 0 && !opts.restoreAuth) throw new Error('no_tables');
 
+  // a scoped file may only be merged — replace would wipe every other church / service / class
+  if (opts.mode === 'replace' && !isFullScope(opts.file.scope)) throw new Error('scoped_replace');
+
   const columns = Object.fromEntries(tables.map((t) => [t, opts.file.tables[t].columns]));
   const totalRows = tables.reduce((s, t) => s + opts.file.tables[t].rows.length, 0);
   // progress: auth + stage (rows) + apply (rows)
@@ -384,7 +458,7 @@ export async function restoreBackup(supabase: SupabaseClient, opts: RestoreOptio
   if (tables.length > 0) {
     const { data: jid, error: e0 } = await supabase.rpc('backup_restore_begin', {
       p_mode: opts.mode, p_tables: tables,
-      p_meta: { columns, file: { created_at: opts.file.created_at, app_version: opts.file.app_version } },
+      p_meta: { columns, file: { created_at: opts.file.created_at, app_version: opts.file.app_version, scope: scopeIds(opts.file.scope) } },
     });
     if (e0) throw new Error(e0.message);
     const jobId = jid as string;
@@ -474,6 +548,8 @@ export interface BackupRun {
   file_name: string | null;
   storage_path: string | null;
   error: string | null;
+  /** 20261009: null = the whole database */
+  scope: BackupScopeInfo | null;
   created_by: string | null;
   created_at: string;
   finished_at: string | null;
@@ -492,6 +568,8 @@ export interface BackupSchedule {
   hour: number;
   tables: string[] | null;
   include_auth: boolean;
+  /** 20261009: null = the whole database */
+  scope: BackupScopeInfo | null;
   keep_last: number;
   last_run_at: string | null;
   last_status: string | null;
