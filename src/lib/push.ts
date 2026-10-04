@@ -157,8 +157,13 @@ export function kickDispatcher(opts: { force?: boolean } = {}): void {
  * Periodic kicks for a long-lived screen (header bell). Base period +
  * random jitter so 80 phones don't all hit the endpoint at the same
  * second; only while the tab is visible. Returns the stop function.
+ *
+ * 20261010120000: every kick = 2–3 service-role requests (gate · tick ·
+ * queue) logged by the API gateway, on every open device. pg_cron runs
+ * notif_tick() server-side anyway, so the browser kicks are only a
+ * safety net → every ~15–22 min (was 5–7.5).
  */
-export function startDispatcherKicks(baseMs = 5 * 60_000): () => void {
+export function startDispatcherKicks(baseMs = 15 * 60_000): () => void {
   let t: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   const loop = () => {

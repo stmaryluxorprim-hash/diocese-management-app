@@ -6,14 +6,18 @@
 // ActionBadge      : verb-toned pill with icon (سجّل حضور · عدّل بيانات …)
 // ActivityItem     : one timeline row (tap → details drawer)
 // ActivityDetails  : bottom-sheet with the full row: who · what · where ·
-//                    diff table (قبل / بعد) · meta · ids
+//                    diff table (قبل / بعد) · meta
+//                    (20261010120000: NO technical codes — action keys,
+//                    table names, UUIDs and raw column names are gone; the
+//                    sheet speaks Arabic only. The data is still in the
+//                    row for filters / export.)
 // LoadMoreBar      : «تعمّق أكثر» with the 10 / 100 / 1000 picker
 // Toast / Empty
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
-  ArrowRight, History, User, Users, Cpu, X, Clock, MapPin, Table2, Hash, Layers, ChevronDown, Loader2, Copy, Check,
+  ArrowRight, History, User, Users, Cpu, X, Clock, MapPin, Layers, ChevronDown, Loader2,
   Filter, Sparkles, Cross } from 'lucide-react';
 import { useNavLabel } from '@/lib/customization-context';
 import {
@@ -151,24 +155,27 @@ function Row({ icon, label, children }: { icon: ReactNode; label: string; childr
   );
 }
 
+/** Human rendering of one value — identifiers are hidden, not shown as codes. */
 function Val({ v }: { v: unknown }) {
   if (v === null || v === undefined) return <span className="text-slate-300">—</span>;
   if (typeof v === 'boolean') return <>{v ? 'نعم' : 'لا'}</>;
-  if (typeof v === 'object') return <code className="break-all text-[11px]">{JSON.stringify(v)}</code>;
+  if (typeof v === 'object') return <span className="text-slate-400">{Array.isArray(v) ? `${v.length} عنصر` : 'بيانات مركّبة'}</span>;
   const s = String(v);
-  if (/^https?:\/\//.test(s)) return <a href={s} target="_blank" rel="noreferrer" className="text-primary-600 underline break-all">{s.length > 60 ? s.slice(0, 60) + '…' : s}</a>;
+  if (isUuid(s)) return <span className="text-slate-400">معرّف</span>;
+  if (/^https?:\/\//.test(s)) return <a href={s} target="_blank" rel="noreferrer" className="text-primary-600 underline break-all">رابط</a>;
   return <span className="break-words">{s}</span>;
 }
 
-function CopyId({ id }: { id: string }) {
-  const [ok, setOk] = useState(false);
-  return (
-    <button type="button" onClick={() => { navigator.clipboard?.writeText(id).then(() => { setOk(true); setTimeout(() => setOk(false), 1200); }); }}
-      className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 hover:bg-slate-200">
-      {ok ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {id.slice(0, 8)}…
-    </button>
-  );
-}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (s: string) => UUID_RE.test(s);
+/** Columns that only carry identifiers / bookkeeping — never worth a row in the diff table. */
+const HIDDEN_DIFF_COLUMNS = new Set([
+  'id', 'edited_at', 'updated_at', 'edited_by', 'updated_by', 'created_at', 'created_by', 'batch_id', 'token', 'token_hash',
+]);
+/** `_id` columns are references — except the person's code (national_id) and the login name (user_id), which ARE the data. */
+const MEANINGFUL_ID_COLUMNS = new Set(['national_id', 'user_id']);
+export const isTechnicalColumn = (k: string) =>
+  HIDDEN_DIFF_COLUMNS.has(k) || k.endsWith('_hash') || (k.endsWith('_id') && !MEANINGFUL_ID_COLUMNS.has(k));
 
 export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, onFilterBatch, onFilterAction, scopeNames }: {
   row: ActivityRow | null; onClose: () => void;
@@ -185,7 +192,7 @@ export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, o
   if (!row) return null;
   const d = describe(row);
   const keys = Array.from(new Set([...Object.keys(row.old_data ?? {}), ...Object.keys(row.new_data ?? {})]))
-    .filter((k) => !['edited_at', 'updated_at', 'edited_by', 'updated_by'].includes(k))
+    .filter((k) => !isTechnicalColumn(k))
     .sort((a, b) => (row.changed?.includes(a) ? 0 : 1) - (row.changed?.includes(b) ? 0 : 1) || a.localeCompare(b));
   const scope = scopeNames?.(row) ?? null;
   const G = d.group.icon;
@@ -217,7 +224,6 @@ export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, o
           <Row icon={<Sparkles className="h-4 w-4" />} label="العملية">
             <span className="inline-flex flex-wrap items-center gap-1.5">
               <ActionBadge row={row} size="md" />
-              <code className="text-[11px] text-slate-400">{row.action}</code>
               {onFilterAction && <button type="button" onClick={() => onFilterAction(row)} className="badge bg-primary-50 text-primary-700 hover:bg-primary-100"><Filter className="h-3 w-3" /> مثلها</button>}
             </span>
           </Row>
@@ -235,7 +241,6 @@ export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, o
           {(scope || row.church_id) && (
             <Row icon={<MapPin className="h-4 w-4" />} label="النطاق">{scope ?? '—'}</Row>
           )}
-          <Row icon={<Table2 className="h-4 w-4" />} label="الجدول"><code className="text-xs">{row.table_name}</code></Row>
           {row.batch_size > 1 && (
             <Row icon={<Layers className="h-4 w-4" />} label="جماعية">
               <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -244,13 +249,6 @@ export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, o
               </span>
             </Row>
           )}
-          <Row icon={<Hash className="h-4 w-4" />} label="معرّفات">
-            <span className="inline-flex flex-wrap items-center gap-1">
-              <span className="text-[10px] text-slate-400">السجل</span> <CopyId id={row.id} />
-              {row.row_id && <><span className="text-[10px] text-slate-400">الصف</span> <CopyId id={row.row_id} /></>}
-              {row.enrollment_id && <><span className="text-[10px] text-slate-400">التسجيل</span> <CopyId id={row.enrollment_id} /></>}
-            </span>
-          </Row>
         </div>
 
         {keys.length > 0 && (
@@ -272,7 +270,7 @@ export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, o
                     const changed = row.changed?.includes(k);
                     return (
                       <tr key={k} className={changed ? 'bg-amber-50/60' : ''}>
-                        <td className="px-2 py-1.5 font-extrabold text-slate-700">{columnLabel(k)}<div className="font-mono text-[10px] font-normal text-slate-400">{k}</div></td>
+                        <td className="px-2 py-1.5 font-extrabold text-slate-700">{columnLabel(k)}</td>
                         {row.op !== 'INSERT' && <td className="px-2 py-1.5 text-rose-700"><Val v={row.old_data?.[k]} /></td>}
                         {row.op !== 'DELETE' && <td className="px-2 py-1.5 text-emerald-700"><Val v={row.new_data?.[k]} /></td>}
                       </tr>
@@ -284,11 +282,11 @@ export function ActivityDetails({ row, onClose, onFilterActor, onFilterTarget, o
           </div>
         )}
 
-        {row.meta && Object.keys(row.meta).length > 0 && (
+        {row.meta && Object.entries(row.meta).some(([k]) => !isTechnicalColumn(k) && k !== 'ua' && k !== 'user_agent') && (
           <div className="mt-3">
             <p className="mb-1.5 text-xs font-extrabold text-slate-500">تفاصيل إضافية</p>
             <div className="divide-y divide-slate-100 rounded-2xl border border-slate-100 px-3 text-xs">
-              {Object.entries(row.meta).map(([k, v]) => (
+              {Object.entries(row.meta).filter(([k]) => !isTechnicalColumn(k) && k !== 'ua' && k !== 'user_agent').map(([k, v]) => (
                 <div key={k} className="flex gap-2 py-1.5"><span className="w-28 shrink-0 font-bold text-slate-500">{columnLabel(k)}</span><span className="min-w-0 flex-1 font-bold text-slate-800"><Val v={v} /></span></div>
               ))}
             </div>

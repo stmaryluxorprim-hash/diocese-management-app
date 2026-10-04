@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useChild } from '@/lib/child-context';
 import { fetchChildFamily, type ChildFamily } from '@/lib/priest-families';
+import { PORTAL_POLL_MS } from '@/lib/realtime';
 
 export function useChildFamily() {
   const { token } = useChild();
@@ -24,7 +25,7 @@ export function useChildFamily() {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const t = setInterval(() => { if (document.visibilityState === 'visible') run(); }, 60_000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') run(); }, PORTAL_POLL_MS.rare);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); clearInterval(t); };
   }, [token, supabase, tick]);
   const pending = (data?.visits ?? []).filter((v) => v.status === 'pending').length;

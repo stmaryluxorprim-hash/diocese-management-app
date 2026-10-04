@@ -12,6 +12,7 @@ import {
   fetchConfessors, fetchAppointments, type PriestProfile, type Confessor, type Appointment,
 } from '@/lib/priest-portal';
 import { fetchAreasTree, fetchPriestFamilies, fetchVisits, type AreasTree, type PriestFamily, type Visit } from '@/lib/priest-families';
+import { PORTAL_POLL_MS } from '@/lib/realtime';
 
 interface PriestState {
   token: string | null;
@@ -46,7 +47,9 @@ const Ctx = createContext<PriestState>({
   reloadAll: () => {},
 });
 
-function startPoll(fn: () => void, everyMs = 45_000): () => void {
+// 20261010120000: poll periods from PORTAL_POLL_MS (every poll = one API
+// request on the Supabase «Logs Ingest» meter); refresh on focus is instant.
+function startPoll(fn: () => void, everyMs: number = PORTAL_POLL_MS.default): () => void {
   const t = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, everyMs);
   return () => clearInterval(t);
 }
@@ -97,7 +100,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     const onVisible = () => { if (document.visibilityState === 'visible') { priestSessionTouch(supabase, token).catch(() => {}); load(token); } };
     document.addEventListener('visibilitychange', onVisible);
-    const stop = startPoll(() => load(token), 60_000);
+    const stop = startPoll(() => load(token), PORTAL_POLL_MS.default);
     return () => { document.removeEventListener('visibilitychange', onVisible); stop(); };
   }, [token, supabase, load]);
 
@@ -121,7 +124,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, 60_000);
+    const stop = startPoll(run, PORTAL_POLL_MS.default);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
   }, [token, supabase, cTick]);
 
@@ -136,7 +139,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, 30_000);
+    const stop = startPoll(run, PORTAL_POLL_MS.fast);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
   }, [token, supabase, aTick]);
 
@@ -151,7 +154,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, 120_000);
+    const stop = startPoll(run, PORTAL_POLL_MS.rare);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
   }, [token, supabase, arTick]);
 
@@ -166,7 +169,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, 60_000);
+    const stop = startPoll(run, PORTAL_POLL_MS.default);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
   }, [token, supabase, fTick]);
 
@@ -181,7 +184,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, 30_000);
+    const stop = startPoll(run, PORTAL_POLL_MS.fast);
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
   }, [token, supabase, vTick]);
 

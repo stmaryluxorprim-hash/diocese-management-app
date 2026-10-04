@@ -193,8 +193,36 @@ export interface RealtimeTableSpec {
   event?: 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 }
 
-/** Poll period used when a bus table has no live connection. */
-const FALLBACK_POLL_MS = 45_000;
+/**
+ * Poll period used when a bus table has no live connection.
+ *
+ * LOG INGEST (20261010120000): every poll is one PostgREST request = one
+ * API-gateway log line on the Supabase «Logs Ingest» meter. With dozens of
+ * open screens a 45 s fallback poll on 5–10 listeners each produced
+ * thousands of requests an hour whenever the bus was down. The fallback
+ * now polls every 2 minutes; the visibility-change refresh still gives an
+ * instant update whenever the user comes back to the tab.
+ */
+const FALLBACK_POLL_MS = 120_000;
+
+/**
+ * Shared poll periods for the portals (child / priest) that cannot join the
+ * private broadcast topics. One place to tune the API request volume.
+ */
+export const PORTAL_POLL_MS = {
+  /** profile · achievements · store (was 45 s) */
+  default: 120_000,
+  /** chat overview · store requests · appointments / visits (was 30 s) */
+  fast: 60_000,
+  /** notifications inbox (web push is the instant path; was 60 s) */
+  slow: 180_000,
+  /** rarely changing lists: areas tree, confession / family blocks (was 60–120 s) */
+  rare: 300_000,
+  /** an OPEN chat thread (was 10 s) */
+  thread: 20_000,
+  /** a pending signup request waiting for approval (was 15 s) */
+  signup: 30_000,
+} as const;
 
 /**
  * Debounced realtime subscription.
