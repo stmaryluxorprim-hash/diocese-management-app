@@ -19,15 +19,19 @@ import { fetchChildAchievements, type ChildAchievements } from '@/lib/achievemen
 import { fetchChildOccasions, type ChildOccasion } from '@/lib/occasions';
 import { fetchChildNotifications, type InboxItem } from '@/lib/notifications';
 import { fetchChildLibrary, setChildFavorite, type ChildLibrary } from '@/lib/library';
-import { uniqueTopic } from '@/lib/realtime';
+import { uniqueTopic, PORTAL_POLL_MS } from '@/lib/realtime';
 
 /**
  * 0046 — the child portal has no auth session, so it cannot join the private
  * broadcast topics that replaced `postgres_changes` on the hot tables. A
- * light poll while the tab is visible (default 45 s) keeps those screens
- * current; every block still refreshes instantly on focus. Returns stop().
+ * light poll while the tab is visible keeps those screens current; every
+ * block still refreshes instantly on focus. Returns stop().
+ *
+ * 20261010120000: periods come from PORTAL_POLL_MS (2–5 min instead of
+ * 30–60 s) — each poll is an API request logged by the Supabase gateway
+ * and the portals were the biggest source of «Logs Ingest».
  */
-function startChildPoll(fn: () => void, everyMs = 45_000): () => void {
+function startChildPoll(fn: () => void, everyMs: number = PORTAL_POLL_MS.default): () => void {
   const t = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, everyMs);
   return () => clearInterval(t);
 }
@@ -260,7 +264,7 @@ export function ChildProvider({ children }: { children: ReactNode }) {
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
     // 0046: chat_messages is broadcast-only now → poll while visible
-    const poll = startChildPoll(run, 30_000);
+    const poll = startChildPoll(run, PORTAL_POLL_MS.fast);
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVis);
@@ -375,7 +379,7 @@ export function ChildProvider({ children }: { children: ReactNode }) {
     if (hasSw) navigator.serviceWorker.addEventListener('message', onSw);
     // 0046: notification_recipients is broadcast-only → web push (service
     // worker message above) is the instant path; poll as the safety net.
-    const poll = startChildPoll(bump, 60_000);
+    const poll = startChildPoll(bump, PORTAL_POLL_MS.slow);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -453,7 +457,7 @@ export function ChildProvider({ children }: { children: ReactNode }) {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'store_shop_targets' }, bump)
         .subscribe();
     } catch { /* realtime unavailable → polling on focus only */ }
-    const poll = startChildPoll(run, 30_000);
+    const poll = startChildPoll(run, PORTAL_POLL_MS.fast);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);

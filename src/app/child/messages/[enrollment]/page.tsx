@@ -14,7 +14,7 @@ import ChildShell, { useChildMessages } from '@/components/child/ChildShell';
 import { MessagesHeader, MessageBubble, DayDivider, Composer, ImageViewer, EmptyChat, Toast } from '@/components/messages/ChatBits';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
-import { uniqueTopic } from '@/lib/realtime';
+import { uniqueTopic, PORTAL_POLL_MS } from '@/lib/realtime';
 import {
   fetchChildChatMessages, childSendMessage, childMarkRead, chatErrorMessage, groupByDay, type ChatMessage,
 } from '@/lib/chat';
@@ -64,10 +64,11 @@ function ThreadContent() {
 
   // 0046: chat_messages left the postgres_changes publication and the child
   // portal has no session for the private broadcast topics → an open thread
-  // polls every 10 s while visible (cheap RPC, one child) + refresh on focus.
+  // polls while visible (cheap RPC, one child) + refresh on focus.
+  // 20261010120000: 20 s instead of 10 s — every poll is a logged API call.
   useEffect(() => {
     if (!token) return;
-    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 10_000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, PORTAL_POLL_MS.thread);
     const onVis = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {

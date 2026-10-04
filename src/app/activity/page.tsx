@@ -461,7 +461,7 @@ function OpsTab({ summary, onPick, onGroup }: { summary: ActivitySummary; onPick
               {data.actions.sort((a, b) => Number(b.n) - Number(a.n)).map((a) => (
                 <li key={a.action}>
                   <button type="button" onClick={() => onPick(a.action)} className="flex w-full items-center gap-2 px-4 py-2 text-start hover:bg-slate-50">
-                    <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-700">{actionLabel(a.action)}<code className="ms-2 text-[10px] text-slate-300">{a.action}</code></span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-700">{actionLabel(a.action)}</span>
                     <span className="text-[11px] font-bold text-slate-400">{relTime(a.last_at)}</span>
                     <span className="w-14 text-end text-sm font-extrabold tabular-nums text-slate-800">{Number(a.n).toLocaleString('ar-EG')}</span>
                   </button>

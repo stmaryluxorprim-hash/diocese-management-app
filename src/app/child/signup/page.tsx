@@ -28,6 +28,7 @@ import {
   ScanLine, Wand2, Camera, Trash2, UserCheck, Check, AlertTriangle, Clock, CheckCircle2, XCircle, LogIn,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { PORTAL_POLL_MS } from '@/lib/realtime';
 import { kindsLabel, type AccountKind, type InviteCheck } from '@/lib/accounts';
 import InviteGate, { useSignupInvite } from '@/components/InviteGate';
 import ExistingCodeDialog from '@/components/ExistingCodeDialog';
@@ -645,7 +646,7 @@ function PendingScreen({ requestId, onReset }: { requestId: string; onReset: () 
       }
     };
     check();
-    const t = setInterval(check, 15000);
+    const t = setInterval(check, PORTAL_POLL_MS.signup); // 20261010120000: 30 s (was 15 s) — fewer logged API calls
     const onVis = () => { if (document.visibilityState === 'visible') check(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { alive = false; clearInterval(t); document.removeEventListener('visibilitychange', onVis); };

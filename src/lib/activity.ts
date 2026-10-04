@@ -282,6 +282,11 @@ export const COLUMN_LABELS: Record<string, string> = {
   is_active: 'مفعّل', is_default: 'افتراضي', price: 'السعر', stock: 'المخزون', total_points: 'إجمالي النقاط',
   score: 'الدرجة', percent: 'النسبة', passed: 'ناجح', locked: 'مقفول', permissions: 'الصلاحيات', module_key: 'الوحدة',
   key: 'المفتاح', value: 'القيمة', starts_at: 'يبدأ', ends_at: 'ينتهي', event_date: 'التاريخ', recurrence: 'التكرار',
+  remember: 'تذكرني', legacy: 'دخول قديم', rows: 'عدد الصفوف', count: 'العدد', file: 'الملف', mode: 'الوضع', reason: 'السبب',
+  shop_id: 'المتجر', family_id: 'العائلة', priest_id: 'الكاهن', occasion_id: 'الفعالية', exam_id: 'الامتحان', achievement_id: 'الإنجاز',
+  notification_id: 'الإشعار', template_id: 'القالب', item_id: 'الصنف', order_id: 'الفاتورة', request_id: 'الطلب', group_id: 'المجموعة',
+  subject_id: 'المادة', book_id: 'الكتاب', lecture_id: 'المحاضرة', automation_id: 'الإشعار التلقائي', schedule_id: 'الجدول',
+  grading_system_id: 'نظام التقدير', online_class_id: 'الفصل الأونلاين', area_id: 'المنطقة', street_id: 'الشارع', building_id: 'العمارة',
   weekdays: 'الأيام', start_time: 'من', end_time: 'إلى', points_mode: 'وضع النقاط', audience: 'الجمهور',
   sort_order: 'الترتيب', feedback_id: 'نتيجة الافتقاد', contacted_on: 'تاريخ المتابعة', attended_on: 'يوم الحضور',
   recorded_by: 'سجّله', created_by: 'أنشأه', approved_by: 'اعتمده', decision_note: 'ملاحظة القرار', note: 'ملاحظة',
@@ -318,7 +323,20 @@ export interface Described {
   icon: LucideIcon;
 }
 
-const str = (v: unknown): string => (v === null || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Human value for the chips — never a UUID or a JSON blob (20261010120000: no codes in the module). */
+const str = (v: unknown): string => {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? 'نعم' : 'لا';
+  if (typeof v === 'object') return Array.isArray(v) ? `${v.length} عنصر` : '…';
+  const s = String(v);
+  if (UUID_RE.test(s)) return '…';
+  if (/^https?:\/\//.test(s)) return 'رابط';
+  return s.length > 60 ? s.slice(0, 60) + '…' : s;
+};
+/** Columns whose change is noise or an identifier — skipped in the chips (the UI diff table applies the same rule). */
+const CHIP_SKIP = new Set(['edited_at', 'updated_at', 'edited_by', 'updated_by', 'created_at', 'created_by', 'id', 'batch_id']);
+const isRefColumn = (c: string) => CHIP_SKIP.has(c) || c.endsWith('_hash') || (c.endsWith('_id') && c !== 'national_id' && c !== 'user_id');
 
 export function describe(row: ActivityRow): Described {
   const group = groupOf(row.action);
@@ -332,10 +350,13 @@ export function describe(row: ActivityRow): Described {
   const nd = row.new_data ?? {};
   const od = row.old_data ?? {};
   if (row.op === 'UPDATE' && row.changed?.length) {
-    row.changed
-      .filter((c) => !['edited_at', 'updated_at', 'edited_by', 'updated_by'].includes(c))
-      .slice(0, 6)
-      .forEach((c) => details.push(`${columnLabel(c)}: ${str(od[c])} → ${str(nd[c])}`));
+    const shown = row.changed.filter((c) => !isRefColumn(c));
+    shown.slice(0, 6).forEach((c) => details.push(`${columnLabel(c)}: ${str(od[c])} → ${str(nd[c])}`));
+    // only references changed (moved to another class …) → name the fields without the ids
+    if (!shown.length) {
+      const refs = row.changed.filter((c) => c.endsWith('_id') && !CHIP_SKIP.has(c));
+      if (refs.length) details.push(refs.map(columnLabel).join(' · '));
+    }
   } else if (row.op === 'INSERT') {
     if (base === 'points' && nd.delta !== undefined) details.push(`${Number(nd.delta) > 0 ? '+' : ''}${nd.delta} نقطة`);
     if (base === 'attendance' && nd.points_delta !== undefined) details.push(`+${nd.points_delta} نقطة`);
@@ -343,7 +364,10 @@ export function describe(row: ActivityRow): Described {
     if ((base === 'store_order' || base === 'store_request') && nd.total_points !== undefined) details.push(`${nd.total_points} نقطة · ${nd.items_count ?? ''} صنف`);
     if (base === 'servant' && nd.role) details.push(ROLE_LABELS[String(nd.role)] ?? String(nd.role));
   } else if (row.op === 'EVENT' && row.meta) {
-    Object.entries(row.meta).slice(0, 4).forEach(([k, v]) => { if (k !== 'user_agent') details.push(`${columnLabel(k)}: ${str(v)}`); });
+    Object.entries(row.meta)
+      .filter(([k]) => k !== 'user_agent' && k !== 'ua' && !isRefColumn(k))
+      .slice(0, 4)
+      .forEach(([k, v]) => details.push(`${columnLabel(k)}: ${str(v)}`));
   }
   if (row.batch_size > 1) details.unshift(`ضمن عملية جماعية (${row.batch_size})`);
 
@@ -435,6 +459,15 @@ export async function logChildActivity(supabase: SupabaseClient, token: string, 
 }
 
 // ---------- export ----------
+/** «الاسم: جون · الهاتف: 0100…» — the readable form of a row snapshot (no ids, no JSON). */
+function humanData(d: Record<string, unknown> | null): string {
+  if (!d) return '';
+  return Object.entries(d)
+    .filter(([k]) => !isRefColumn(k))
+    .map(([k, v]) => `${columnLabel(k)}: ${str(v)}`)
+    .join(' · ');
+}
+
 export async function exportRowsToExcel(rows: ActivityRow[], fileName = 'activity_log') {
   const XLSX = await import('xlsx');
   const data = rows.map((r) => {
@@ -445,13 +478,12 @@ export async function exportRowsToExcel(rows: ActivityRow[], fileName = 'activit
       'نوع الفاعل': ACTOR_KIND_LABELS[r.actor_kind],
       'الدور': ROLE_LABELS[r.actor_role ?? ''] ?? r.actor_role ?? '',
       'العملية': actionLabel(r.action),
-      'المفتاح': r.action,
-      'الجدول': r.table_name,
+      'القسم': d.group.label,
       'النوع': OP_LABELS[r.op],
       'الهدف': r.target_name ?? '',
       'التفاصيل': d.details.join(' | '),
-      'قبل': r.old_data ? JSON.stringify(r.old_data) : '',
-      'بعد': r.new_data ? JSON.stringify(r.new_data) : '',
+      'قبل': humanData(r.old_data),
+      'بعد': humanData(r.new_data),
       'عملية جماعية': r.batch_size > 1 ? r.batch_size : '',
     };
   });
