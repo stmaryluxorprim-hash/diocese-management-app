@@ -23,10 +23,11 @@ import {
   childEventStatus, CHILD_STATUS_LABELS, type ChildEventStatus,
 } from '@/lib/time';
 import {
-  CallFeedbackBadge, CallFeedbackModal, CallFeedbackIcon, PersonAvatar, useCallFeedbackStates,
+  CallFeedbackBadge, CallFeedbackPickerModal, CallFeedbackHistoryModal, CallFeedbackIcon, OtherFeedbackIcon,
+  PersonAvatar, useCallFeedbackStates, useAfterCallPrompt, startCall,
 } from '@/components/CallFeedback';
 import {
-  matchesCallFilter, feedbackStyle, CALL_STATE_LABELS, type CallFeedbackFilter,
+  matchesCallFilter, feedbackStyle, CALL_STATE_LABELS, OTHER_FEEDBACK_COLOR, type CallFeedbackFilter,
 } from '@/lib/call-feedback';
 import { useAppDate } from '@/lib/app-date-context';
 import { useModules } from '@/lib/modules-context';
@@ -528,10 +529,34 @@ export default function ChildrenPage() {
   // Log modals opened from the badges (سجل الحضور / سجل النقاط)
   const [logTarget, setLogTarget] = useState<{ kind: 'attendance' | 'points'; e: EnrollmentWithPerson } | null>(null);
 
-  // ---------- Call feedback (0023) — badge state per child for the selected
-  // event's follow-up cycle at the working date-time; modal target ----------
+  // ---------- Call feedback (0023 + 20261012120000) — badge state per child
+  // for the selected event's follow-up cycle at the working date-time.
+  // TWO dialogs: the PICKER (opens automatically when the servant returns
+  // from the phone app after pressing the call button — or from the
+  // history) and the HISTORY (opens from the badge). ----------
   const callFb = useCallFeedbackStates(supabase, enrollments, selectedEvent, feedbacks, nowDate, realNow);
-  const [callTarget, setCallTarget] = useState<EnrollmentWithPerson | null>(null);
+  const [callDialog, setCallDialog] = useState<{ kind: 'picker' | 'history'; e: EnrollmentWithPerson } | null>(null);
+  const enrollmentsRef = useRef(enrollments);
+  enrollmentsRef.current = enrollments;
+  const eventIdRef = useRef(eventId);
+  eventIdRef.current = eventId;
+  const { arm: armAfterCall, check: checkAfterCall } = useAfterCallPrompt((enrollmentId, evId) => {
+    // Back from the dialer → open the picker for the child just called.
+    // Another event selected meanwhile → drop the prompt; rows not loaded
+    // yet (PWA restarted by the OS) → keep it pending until they are.
+    if (!eventIdRef.current) return false; // event not restored yet
+    if (evId !== eventIdRef.current) return true;
+    const e = enrollmentsRef.current.find((x) => x.id === enrollmentId);
+    if (!e) return enrollmentsRef.current.length > 0;
+    setCallDialog({ kind: 'picker', e });
+    return true;
+  });
+  useEffect(() => { if (enrollments.length && eventId) checkAfterCall(); }, [enrollments, eventId, checkAfterCall]);
+  const dial = (e: EnrollmentWithPerson) => {
+    if (!selectedEvent) return;
+    setCallDialog(null);
+    startCall(supabase, e, selectedEvent, profile?.id, armAfterCall, now);
+  };
   // Feedbacks offered in the filter: those covering the current scope selectors + event
   const visibleFeedbacks = useMemo(
     () =>
@@ -755,10 +780,11 @@ export default function ChildrenPage() {
     } else if (job === 'call') {
       // A call is a FOLLOW-UP for the selected event (e.g. calling the
       // absent children of today's mass) — logged in contact_log
-      if (!eventId) { alert('اختر المناسبة أولاً — الاتصال متابعة لمناسبة'); return; }
+      if (!eventId || !selectedEvent) { alert('اختر المناسبة أولاً — الاتصال متابعة لمناسبة'); return; }
       if (!e.person.phone) return;
-      logContact(e, 'call', null);
-      window.location.href = `tel:${e.person.phone}`;
+      // Dial → when the servant comes back to the app the feedback PICKER
+      // opens automatically for this child (useAfterCallPrompt)
+      dial(e);
     } else if (job === 'message') {
       if (!eventId) { alert('اختر المناسبة أولاً — الرسالة متابعة لمناسبة'); return; }
       if (messageChannel === 'internal') {
@@ -1671,6 +1697,21 @@ export default function ChildrenPage() {
                     </button>
                   );
                 })}
+                {/* «أخرى» (!) — hand-written causes */}
+                <button
+                  id="call-filter-other"
+                  type="button"
+                  aria-pressed={callFilter === 'other'}
+                  disabled={!selectedEvent}
+                  onClick={() => setCallFilter('other')}
+                  style={callFilter === 'other' ? feedbackStyle(OTHER_FEEDBACK_COLOR) : undefined}
+                  className={`flex h-9 items-center justify-center gap-1 rounded-xl px-3 text-xs font-bold transition disabled:opacity-40 ${
+                    callFilter === 'other' ? 'shadow ring-2 ring-black/10' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <OtherFeedbackIcon />
+                  {CALL_STATE_LABELS.other}
+                </button>
               </div>
             </div>
             {activeFilterCount > 0 && (
@@ -1944,7 +1985,7 @@ export default function ChildrenPage() {
                               <CallFeedbackBadge
                                 id={`call-badge-${child.id}`}
                                 state={cs}
-                                onClick={() => setCallTarget(child)}
+                                onClick={() => setCallDialog({ kind: 'history', e: child })}
                               />
                             );
                           })()}
@@ -2036,17 +2077,33 @@ export default function ChildrenPage() {
         />
       )}
 
-      {/* Call feedback modal (from the call-feedback badge) */}
-      {callTarget && selectedEvent && callFb.cycle && (
-        <CallFeedbackModal
-          enrollment={callTarget}
+      {/* Call feedback — PICKER (auto after a call) */}
+      {callDialog?.kind === 'picker' && selectedEvent && callFb.cycle && (
+        <CallFeedbackPickerModal
+          enrollment={callDialog.e}
           event={selectedEvent}
           cycle={callFb.cycle}
           feedbacks={feedbacks}
-          current={callFb.stateOf(callTarget) ?? { kind: 'not_called_yet' }}
+          current={callFb.stateOf(callDialog.e) ?? { kind: 'not_called_yet' }}
           now={now}
-          onRecorded={(day, fbId) => callFb.setRecorded(callTarget.id, day, fbId)}
-          onClose={() => setCallTarget(null)}
+          onRecorded={(day, rec) => callFb.setRecorded(callDialog.e.id, day, rec)}
+          onClose={() => setCallDialog(null)}
+          onOpenHistory={() => setCallDialog({ kind: 'history', e: callDialog.e })}
+        />
+      )}
+      {/* Call feedback — HISTORY (from the badge) */}
+      {callDialog?.kind === 'history' && selectedEvent && callFb.cycle && (
+        <CallFeedbackHistoryModal
+          enrollment={callDialog.e}
+          event={selectedEvent}
+          cycle={callFb.cycle}
+          feedbacks={feedbacks}
+          current={callFb.stateOf(callDialog.e) ?? { kind: 'not_called_yet' }}
+          now={now}
+          onRecorded={(day, rec) => callFb.setRecorded(callDialog.e.id, day, rec)}
+          onClose={() => setCallDialog(null)}
+          onCall={() => dial(callDialog.e)}
+          onPick={() => setCallDialog({ kind: 'picker', e: callDialog.e })}
         />
       )}
 

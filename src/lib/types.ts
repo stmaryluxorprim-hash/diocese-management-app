@@ -455,6 +455,7 @@ export interface ContactLog {
   contacted_on: string; // 'YYYY-MM-DD' Africa/Cairo
   feedback_id: string | null; // outcome of the call (migration 0023; null = plain call / message)
   occurrence_on: string | null; // 'YYYY-MM-DD' — the event occurrence this follow-up refers to (0023)
+  note: string | null; // «أخرى»: the cause written by hand when no predefined feedback fits (20261012120000)
   recorded_by: string | null;
   created_at: string;
 }
