@@ -13,6 +13,7 @@ import {
   Home, Users, CalendarClock, PhoneCall, SlidersHorizontal, Menu, X, LogOut, CalendarDays, Clock, User, Loader2, Cross, UsersRound, MapPinned, Footprints, type LucideIcon,
 } from 'lucide-react';
 import { BRANDING, dioceseLogo } from '@/lib/branding';
+import RefreshButton from '@/components/RefreshButton';
 import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 import { usePriest } from '@/lib/priest-context';
 import { formatCairoDate, formatCairoTime } from '@/lib/time';
@@ -60,6 +61,7 @@ function PriestHeader({ onMenu }: { onMenu: () => void }) {
             {profile ? `${profile.priest.title ? `${profile.priest.title} ` : ''}${profile.person.name}` : 'بوابة الكاهن'}
           </p>
         </div>
+        <RefreshButton id="priest-refresh-btn" />
         <button id="priest-menu-btn" aria-label="فتح القائمة" onClick={onMenu} className="-ml-2 rounded-full p-2 transition hover:bg-white/15"><Menu className="h-6 w-6" /></button>
       </div>
     </header>

@@ -26,6 +26,7 @@ import { syncPushRegistration, kickDispatcher } from '@/lib/push';
 import { useChildConfession } from '@/components/child/ConfessionBits';
 import { useChildFamily } from '@/components/child/FamilyBits';
 import { Loader2 } from 'lucide-react';
+import RefreshButton from '@/components/RefreshButton';
 import { SwitchAccountButton } from '@/components/SwitchAccountModal';
 
 export const CHILD_NAV: { href: string; label: string; icon: LucideIcon; id: string }[] = [
@@ -210,6 +211,7 @@ function ChildHeader({ onMenu }: { onMenu: () => void }) {
             )}
           </Link>
         )}
+        <RefreshButton id="child-refresh-btn" />
         <Link
           id="child-notifications-bell"
           href="/child/notifications"
