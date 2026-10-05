@@ -144,7 +144,14 @@ export interface CallFeedbackStates {
   stateOf: (e: EnrollmentWithPerson) => CallFeedbackState | null;
   /** optimistic patch after recording / deleting a feedback */
   setRecorded: (enrollmentId: string, occurrenceOn: string, rec: RecordedFeedback | null) => void;
+  /** full reload — every enrollment on screen (used on mount / scope change) */
   reload: () => Promise<void>;
+  /**
+   * 20261013120000: reload ONLY these enrollments (the ids carried by the
+   * realtime broadcast). One tiny request instead of N×100-id batches on
+   * every device for every call another servant makes.
+   */
+  reloadFor: (enrollmentIds: string[]) => Promise<void>;
 }
 
 export function useCallFeedbackStates(
@@ -167,18 +174,17 @@ export function useCallFeedbackStates(
   const idsKey = rows.map((e) => e.id).join(',');
   const targetDay = cycle?.target ?? '';
 
-  const load = useCallback(async () => {
-    if (!selectedEvent || !idsKey || !targetDay) { setRecordedMap({}); return; }
-    const ids = idsKey.split(',');
-    type Row = { enrollment_id: string; occurrence_on: string | null; feedback_id: string | null; note: string | null; created_at: string };
+  type Row = { enrollment_id: string; occurrence_on: string | null; feedback_id: string | null; note: string | null; created_at: string };
+  /** The feedback rows of `ids` for the selected event + occurrence (batches of 100). */
+  const fetchRows = useCallback(async (eventId: string, day: string, ids: string[]): Promise<Row[]> => {
     const all: Row[] = [];
     for (let i = 0; i < ids.length; i += 100) {
       // Feedback rows = predefined feedback OR an «أخرى» note (both carry occurrence_on)
       let { data, error } = await supabase
         .from('contact_log')
         .select('enrollment_id, occurrence_on, feedback_id, note, created_at')
-        .eq('event_id', selectedEvent.id)
-        .eq('occurrence_on', targetDay)
+        .eq('event_id', eventId)
+        .eq('occurrence_on', day)
         .or('feedback_id.not.is.null,note.not.is.null')
         .in('enrollment_id', ids.slice(i, i + 100));
       if (error) {
@@ -186,16 +192,42 @@ export function useCallFeedbackStates(
         const old = await supabase
           .from('contact_log')
           .select('enrollment_id, occurrence_on, feedback_id, created_at')
-          .eq('event_id', selectedEvent.id)
-          .eq('occurrence_on', targetDay)
+          .eq('event_id', eventId)
+          .eq('occurrence_on', day)
           .not('feedback_id', 'is', null)
           .in('enrollment_id', ids.slice(i, i + 100));
         data = ((old.data ?? []) as Omit<Row, 'note'>[]).map((r) => ({ ...r, note: null }));
       }
       all.push(...((data ?? []) as Row[]));
     }
-    setRecordedMap(indexFeedbackRows(all));
-  }, [supabase, selectedEvent, idsKey, targetDay]);
+    return all;
+  }, [supabase]);
+
+  const load = useCallback(async () => {
+    if (!selectedEvent || !idsKey || !targetDay) { setRecordedMap({}); return; }
+    setRecordedMap(indexFeedbackRows(await fetchRows(selectedEvent.id, targetDay, idsKey.split(','))));
+  }, [selectedEvent, idsKey, targetDay, fetchRows]);
+
+  // Partial reload: only the enrollments named by a realtime message. The
+  // rows not on this screen are ignored; the ones on screen are replaced
+  // (a deleted feedback disappears too because we overwrite the day).
+  const reloadFor = useCallback(async (enrollmentIds: string[]) => {
+    if (!selectedEvent || !idsKey || !targetDay) return;
+    const onScreen = new Set(idsKey.split(','));
+    const ids = Array.from(new Set(enrollmentIds.filter((id) => onScreen.has(id))));
+    if (!ids.length) return;
+    const fresh = indexFeedbackRows(await fetchRows(selectedEvent.id, targetDay, ids));
+    setRecordedMap((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        const cur = { ...(prev[id] ?? {}) };
+        const rec = fresh[id]?.[targetDay];
+        if (rec) cur[targetDay] = rec; else delete cur[targetDay];
+        next[id] = cur;
+      }
+      return next;
+    });
+  }, [selectedEvent, idsKey, targetDay, fetchRows]);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,7 +255,7 @@ export function useCallFeedbackStates(
     });
   }, []);
 
-  return { cycle, stateOf, setRecorded, reload: load };
+  return { cycle, stateOf, setRecorded, reload: load, reloadFor };
 }
 
 // ---------- After-call prompt ----------
