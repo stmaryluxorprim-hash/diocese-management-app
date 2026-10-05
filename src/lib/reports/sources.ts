@@ -300,7 +300,7 @@ const pointsSource: ReportSource = {
 // ===================================================================
 // 4. الافتقاد (مكالمات · رسائل)
 // ===================================================================
-interface ConRaw { id: string; enrollment_id: string; event_id: string | null; kind: 'call' | 'whatsapp' | 'sms' | 'internal'; message: string | null; contacted_on: string; feedback_id: string | null; occurrence_on: string | null; created_at: string }
+interface ConRaw { id: string; enrollment_id: string; event_id: string | null; kind: 'call' | 'whatsapp' | 'sms' | 'internal'; message: string | null; contacted_on: string; feedback_id: string | null; note?: string | null; occurrence_on: string | null; created_at: string }
 
 const contactsSource: ReportSource = {
   key: 'contacts',
@@ -323,22 +323,35 @@ const contactsSource: ReportSource = {
     const byId = new Map(enrolls.map((e) => [e.id, e]));
     const ids = enrolls.map((e) => e.id);
     const out: ReportRow[] = [];
+    // `note` (20261012120000) — fall back to the old column list on a DB without it
+    let withNote = true;
     for (let i = 0; i < ids.length && out.length < limit; i += 200) {
       const chunk = ids.slice(i, i + 200);
-      const rows = await pageAll<ConRaw>((from, to) => {
-        let q = supabase.from('contact_log').select('id, enrollment_id, event_id, kind, message, contacted_on, feedback_id, occurrence_on, created_at').in('enrollment_id', chunk);
+      const build = (from: number, to: number) => {
+        const cols = `id, enrollment_id, event_id, kind, message, contacted_on, feedback_id${withNote ? ', note' : ''}, occurrence_on, created_at`;
+        let q = supabase.from('contact_log').select(cols).in('enrollment_id', chunk);
         if (f.from) q = q.gte('contacted_on', f.from);
         if (f.to) q = q.lte('contacted_on', f.to);
         if (f.event) q = q.eq('event_id', f.event);
         if (f.contactKind) q = q.eq('kind', f.contactKind);
         return q.order('contacted_on', { ascending: false }).order('id').range(from, to);
-      }, limit - out.length);
+      };
+      let rows: ConRaw[];
+      try {
+        rows = await pageAll<ConRaw>(build, limit - out.length);
+      } catch (err) {
+        if (!withNote || !/note/i.test((err as { message?: string })?.message ?? '')) throw err;
+        withNote = false;
+        rows = await pageAll<ConRaw>(build, limit - out.length);
+      }
       for (const c of rows) {
         const e = byId.get(c.enrollment_id); if (!e) continue;
         out.push({
           ...flattenEnrollment(e, lk), _id: c.id,
           contacted_on: c.contacted_on, kind: CONTACT_KIND_LABELS[c.kind] ?? c.kind,
-          feedback: nameOf(lk.feedbacks, c.feedback_id), event: nameOf(lk.events, c.event_id),
+          // «أخرى» (20261012120000): no predefined feedback → the hand-written cause
+          feedback: c.feedback_id ? nameOf(lk.feedbacks, c.feedback_id) : (c.note?.trim() ? `أخرى: ${c.note.trim()}` : ''),
+          event: nameOf(lk.events, c.event_id),
           occurrence_on: c.occurrence_on, message: c.message ?? '',
         });
       }

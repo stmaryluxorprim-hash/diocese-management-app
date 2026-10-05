@@ -15,7 +15,10 @@ import {
   type EnrollmentWithPerson, type Person, type ClassRoom, type Church, type Service,
   type AppEvent, type Cause, type CallFeedback,
 } from '@/lib/types';
-import { CallFeedbackBadge, CallFeedbackModal, PersonAvatar, useCallFeedbackStates } from '@/components/CallFeedback';
+import {
+  CallFeedbackBadge, CallFeedbackPickerModal, CallFeedbackHistoryModal, PersonAvatar,
+  useCallFeedbackStates, useAfterCallPrompt, startCall,
+} from '@/components/CallFeedback';
 import {
   eventAvailability, describeEventSchedule, cairoToday, formatCairoTime,
   childEventStatus, CHILD_STATUS_LABELS, type ChildEventStatus,
@@ -151,7 +154,9 @@ export default function ScannerPage() {
   const [manualTarget, setManualTarget] = useState<EnrollmentWithPerson | null>(null);
   const [dataTarget, setDataTarget] = useState<EnrollmentWithPerson | null>(null);
   const [logTarget, setLogTarget] = useState<{ kind: 'attendance' | 'points'; e: EnrollmentWithPerson } | null>(null);
-  const [callTarget, setCallTarget] = useState<EnrollmentWithPerson | null>(null);
+  // Call feedback: the HISTORY opens from the badge, the PICKER opens
+  // automatically after a call started from the history (20261012120000)
+  const [callDialog, setCallDialog] = useState<{ kind: 'picker' | 'history'; e: EnrollmentWithPerson } | null>(null);
 
   // ---------- Load lookups (cached 60s) ----------
   const loadLookups = useCallback(async (force = false) => {
@@ -361,6 +366,25 @@ export default function ScannerPage() {
 
   // Call-feedback badge state (0023) for the rows on screen
   const callFb = useCallFeedbackStates(supabase, visibleRows, selectedEvent, feedbacks, nowDate, realNow);
+  // Back from the phone app after «اتصال» in the history → open the picker
+  const visibleRowsRef = useRef(visibleRows);
+  visibleRowsRef.current = visibleRows;
+  const selectedEventRef = useRef(selectedEvent);
+  selectedEventRef.current = selectedEvent;
+  const { arm: armAfterCall, check: checkAfterCall } = useAfterCallPrompt((enrollmentId, evId) => {
+    if (!selectedEventRef.current) return false; // lookups not restored yet
+    if (evId !== selectedEventRef.current.id) return true;
+    const e = visibleRowsRef.current.find((x) => x.id === enrollmentId);
+    if (!e) return visibleRowsRef.current.length > 0;
+    setCallDialog({ kind: 'picker', e });
+    return true;
+  });
+  useEffect(() => { if (visibleRows.length && selectedEvent) checkAfterCall(); }, [visibleRows, selectedEvent, checkAfterCall]);
+  const dial = (e: EnrollmentWithPerson) => {
+    if (!selectedEvent) return;
+    setCallDialog(null);
+    startCall(supabase, e, selectedEvent, profile?.id, armAfterCall, now);
+  };
 
   // Status of a person in the selected event at the working date-time
   // (present / not registered / absent). null when no event is selected
@@ -628,7 +652,7 @@ export default function ScannerPage() {
   // change while the camera is running). While a modal is open the camera
   // keeps running but scans are ignored, so a second QR in frame can never
   // hijack the open modal.
-  const modalOpen = !!manualTarget || !!dataTarget || !!picker || !!logTarget || !!callTarget || numpadFor !== null || !!familyPick;
+  const modalOpen = !!manualTarget || !!dataTarget || !!picker || !!logTarget || !!callDialog || numpadFor !== null || !!familyPick;
   const handleQrRef = useRef<(v: string) => Promise<void>>(handleQr);
   handleQrRef.current = modalOpen ? async () => {} : handleQr;
 
@@ -850,7 +874,7 @@ export default function ScannerPage() {
         {(() => {
           const cs = callFb.stateOf(e);
           if (!cs) return null;
-          return <CallFeedbackBadge id={`call-badge-${e.id}`} state={cs} onClick={() => setCallTarget(e)} />;
+          return <CallFeedbackBadge id={`call-badge-${e.id}`} state={cs} onClick={() => setCallDialog({ kind: 'history', e })} />;
         })()}
         <button
           id={`att-badge-${e.id}`}
@@ -1345,16 +1369,31 @@ export default function ScannerPage() {
       {logTarget?.kind === 'points' && (
         <PointsLogModal enrollment={logTarget.e} causes={causes} events={events} onClose={() => setLogTarget(null)} />
       )}
-      {callTarget && selectedEvent && callFb.cycle && (
-        <CallFeedbackModal
-          enrollment={callTarget}
+      {callDialog?.kind === 'picker' && selectedEvent && callFb.cycle && (
+        <CallFeedbackPickerModal
+          enrollment={callDialog.e}
           event={selectedEvent}
           cycle={callFb.cycle}
           feedbacks={feedbacks}
-          current={callFb.stateOf(callTarget) ?? { kind: 'not_called_yet' }}
+          current={callFb.stateOf(callDialog.e) ?? { kind: 'not_called_yet' }}
           now={now}
-          onRecorded={(day, fbId) => callFb.setRecorded(callTarget.id, day, fbId)}
-          onClose={() => setCallTarget(null)}
+          onRecorded={(day, rec) => callFb.setRecorded(callDialog.e.id, day, rec)}
+          onClose={() => setCallDialog(null)}
+          onOpenHistory={() => setCallDialog({ kind: 'history', e: callDialog.e })}
+        />
+      )}
+      {callDialog?.kind === 'history' && selectedEvent && callFb.cycle && (
+        <CallFeedbackHistoryModal
+          enrollment={callDialog.e}
+          event={selectedEvent}
+          cycle={callFb.cycle}
+          feedbacks={feedbacks}
+          current={callFb.stateOf(callDialog.e) ?? { kind: 'not_called_yet' }}
+          now={now}
+          onRecorded={(day, rec) => callFb.setRecorded(callDialog.e.id, day, rec)}
+          onClose={() => setCallDialog(null)}
+          onCall={() => dial(callDialog.e)}
+          onPick={() => setCallDialog({ kind: 'picker', e: callDialog.e })}
         />
       )}
 

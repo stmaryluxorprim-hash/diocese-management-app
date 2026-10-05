@@ -19,26 +19,43 @@
 //
 // The badge on a child's card shows:
 //   feedback        → the latest feedback recorded for the occurrence
+//   other           → «أخرى» (!) — the servant wrote the cause himself
+//                     (20261012120000: contact_log.note, feedback_id null)
 //   not_called_yet  → «لم يُفتقد بعد» — no feedback and the cycle is open
 //                     (or hasn't started yet — working date in the future)
 //   wasnt_called    → «لم يُفتقد» — no feedback and the cycle is CLOSED in
 //                     real time (e.g. the working date is frozen before the
 //                     last occurrence): the child was never followed up.
+//
+// TWO DIALOGS (split on purpose):
+//   • the PICKER opens AUTOMATICALLY when the servant returns to the app
+//     after pressing the call button (useAfterCallPrompt) — choose the
+//     outcome, or «أخرى» and write the cause;
+//   • the HISTORY opens from the badge — the call + feedback log of the
+//     child for the event («أخرى» rows show what was written).
 
 import type { CSSProperties } from 'react';
 import type { AppEvent, CallFeedback } from './types';
 import { cairoToday, currentOccurrence, previousOccurrenceDate } from './time';
 
-export type CallFeedbackStateKind = 'not_called_yet' | 'wasnt_called' | 'feedback';
+export type CallFeedbackStateKind = 'not_called_yet' | 'wasnt_called' | 'feedback' | 'other';
 
 export type CallFeedbackState =
   | { kind: 'not_called_yet' }
   | { kind: 'wasnt_called' }
-  | { kind: 'feedback'; feedback: CallFeedback };
+  | { kind: 'feedback'; feedback: CallFeedback }
+  /** «أخرى» — a manually written cause (no predefined feedback) */
+  | { kind: 'other'; note: string };
+
+/** The fixed «أخرى» choice offered after every predefined feedback */
+export const OTHER_FEEDBACK_LABEL = 'أخرى';
+export const OTHER_FEEDBACK_COLOR = '#f97316'; // orange — matches the «!» icon
+export const OTHER_NOTE_MAX = 500;
 
 export const CALL_STATE_LABELS: Record<Exclude<CallFeedbackStateKind, 'feedback'>, string> = {
   not_called_yet: 'لم يُفتقد بعد',
   wasnt_called: 'لم يُفتقد',
+  other: OTHER_FEEDBACK_LABEL,
 };
 /** Compact labels for the card badge — 4 badges share one row on a phone, so
  *  «لم يُفتقد بعد» would be clipped; the full label stays in the tooltip,
@@ -46,7 +63,12 @@ export const CALL_STATE_LABELS: Record<Exclude<CallFeedbackStateKind, 'feedback'
 export const CALL_STATE_SHORT_LABELS: Record<Exclude<CallFeedbackStateKind, 'feedback'>, string> = {
   not_called_yet: 'بالانتظار',
   wasnt_called: 'لم يُفتقد',
+  other: OTHER_FEEDBACK_LABEL,
 };
+
+/** Human label of a state (the feedback name, «أخرى», or the pending labels) */
+export const callStateLabel = (s: CallFeedbackState): string =>
+  s.kind === 'feedback' ? s.feedback.name : CALL_STATE_LABELS[s.kind];
 
 /** Lifecycle of the occurrence's follow-up cycle, judged by the REAL clock. */
 export type FollowUpStatus =
@@ -99,8 +121,18 @@ export function followUpCycle(ev: AppEvent, working: Date = new Date(), real: Da
   return { target, realTarget, status, beforeCreation };
 }
 
-/** Feedbacks recorded for one enrollment: occurrence day → feedback id (latest) */
-export type EnrollmentFeedbackDays = Record<string, string>;
+/** What was recorded for one occurrence: a predefined feedback id, or an «أخرى» note */
+export interface RecordedFeedback {
+  feedbackId: string | null;
+  note: string | null;
+}
+
+/** Feedbacks recorded for one enrollment: occurrence day → latest record */
+export type EnrollmentFeedbackDays = Record<string, RecordedFeedback>;
+
+/** Is this contact_log row a FEEDBACK row (vs. the plain dial logged by the call button)? */
+export const isFeedbackRow = (r: { occurrence_on: string | null; feedback_id: string | null; note?: string | null }) =>
+  !!r.occurrence_on && (!!r.feedback_id || !!(r.note && r.note.trim()));
 
 /** Resolve the badge state of one child from the recorded feedbacks. */
 export function callFeedbackState(
@@ -108,11 +140,13 @@ export function callFeedbackState(
   recorded: EnrollmentFeedbackDays | undefined,
   feedbacksById: Map<string, CallFeedback>
 ): CallFeedbackState {
-  const currentId = recorded?.[cycle.target];
-  if (currentId) {
-    const fb = feedbacksById.get(currentId);
+  const cur = recorded?.[cycle.target];
+  if (cur?.feedbackId) {
+    const fb = feedbacksById.get(cur.feedbackId);
     if (fb) return { kind: 'feedback', feedback: fb };
     // feedback deleted from settings → fall through as if not recorded
+  } else if (cur?.note) {
+    return { kind: 'other', note: cur.note };
   }
   // No feedback: the REAL clock decides — a closed cycle means the child was
   // never followed up for that occurrence; open / future = still pending.
@@ -125,22 +159,25 @@ export const canRecordFeedback = (cycle: FollowUpCycle) => cycle.status === 'ope
 
 /** Build the per-enrollment map from contact_log rows (newest first wins). */
 export function indexFeedbackRows(
-  rows: { enrollment_id: string; occurrence_on: string | null; feedback_id: string | null; created_at: string }[]
+  rows: { enrollment_id: string; occurrence_on: string | null; feedback_id: string | null; note?: string | null; created_at: string }[]
 ): Record<string, EnrollmentFeedbackDays> {
   const out: Record<string, EnrollmentFeedbackDays> = {};
   const seenAt: Record<string, string> = {};
   for (const r of rows) {
-    if (!r.feedback_id || !r.occurrence_on) continue;
+    if (!isFeedbackRow(r) || !r.occurrence_on) continue;
     const key = `${r.enrollment_id}|${r.occurrence_on}`;
     if (seenAt[key] && seenAt[key] >= r.created_at) continue;
     seenAt[key] = r.created_at;
-    (out[r.enrollment_id] ??= {})[r.occurrence_on] = r.feedback_id;
+    (out[r.enrollment_id] ??= {})[r.occurrence_on] = {
+      feedbackId: r.feedback_id ?? null,
+      note: r.feedback_id ? null : (r.note?.trim() || null),
+    };
   }
   return out;
 }
 
 /** Key used by the feedback filter chips: 'all' | state kind | 'fb:<id>' */
-export type CallFeedbackFilter = 'all' | 'not_called_yet' | 'wasnt_called' | `fb:${string}`;
+export type CallFeedbackFilter = 'all' | 'not_called_yet' | 'wasnt_called' | 'other' | `fb:${string}`;
 
 export function matchesCallFilter(state: CallFeedbackState | null, filter: CallFeedbackFilter): boolean {
   if (filter === 'all') return true;

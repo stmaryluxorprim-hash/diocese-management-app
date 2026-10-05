@@ -297,6 +297,7 @@ Second round on the Supabase **Logs Ingest** meter (the first — 20261010120000
 - **Backup a church / service / class** — see § Backup & Restore → *Scope*. Four choices in the backup modal and in the scheduled backups; the catalogue row counts follow the scope; the file name, the history and the schedule list show the scope («فصل: كنيسة أ ← مدارس الأحد ← فصل ٣»). A scoped file is **merge-only** on restore (`scoped_replace`).
 
 ## Currently Completed Features
+- ✅ **نتيجة المكالمة تلقائيًا بعد الاتصال · «أخرى» (!) بسبب مكتوب · سجل الافتقاد منفصل (20261012120000)**: pressing the **call button** dials and, when the servant **comes back to the app** from the phone app, the **feedback PICKER opens automatically** for the child he just called (`useAfterCallPrompt` — visibility / focus / pageshow; the pending call survives a PWA restart via sessionStorage, 2 h TTL; desktop without a dialer → opens after 2.5 s). The picker offers the predefined feedbacks **plus a fixed «أخرى» choice with a «!» icon** → the servant **writes the cause himself** (`contact_log.note`, `feedback_id` null, 1–500 chars). The card badge shows **«أخرى» (!)** in orange; tapping any feedback badge now opens the **HISTORY** dialog (سجل الافتقاد) — a different dialog from the picker: every dial + every recorded outcome of the child for the event, an «أخرى» row **shows the written text**, who recorded it and when, with **اتصال** (dial → picker on return) · **تسجيل / تغيير النتيجة** (opens the picker) · delete. New **«أخرى» filter chip** on the children page; the الافتقاد report shows `أخرى: <text>`. Children page + scanner. See § Call feedback.
 - ✅ **بلا استطلاع في الخلفية · شارة «غير متصل» · صور مخزّنة سنة (20261011120000)**: portal timers removed (refresh on focus + «تحديث» button; live screens only keep a visible-only poll), staff app shows an amber «غير متصل» chip instead of polling when the realtime bus is down, dispatcher kicks are one-shot, photo uploads carry `Cache-Control: max-age=31536000` (+ one-off SQL for existing files). See § No background polling.
 - ✅ **خفض سجلات Supabase (Logs Ingest) · سجل النشاط بلا أكواد (20261010120000)**: the trigger safety nets on the hot tables and `rt_send()` no longer `raise notice/warning` (one server-log line per scan), `notif_tick` runs every 5 min instead of every minute, the migration sets quiet Postgres log GUCs (`log_min_messages = error`, slow-query threshold 5 s, lock-wait / temp-file logging off) at database + role level, `supabase/scripts/supabase_log_settings.sh` applies the CLI-only ones (connections, cron, checkpoints); the app polls far less (`PORTAL_POLL_MS`, realtime fallback 2 min, dispatcher kicks 15 min, lookup cache 10 min). The log module shows Arabic only — no action keys, table names, UUIDs or raw column names. See § Supabase «Logs Ingest» down.
 - ✅ **إصلاح إضافة العائلة من تطبيق الخدام (20261008120000)**: the `families_fill_church` trigger aggregated `id` from a `setof uuid` RPC → `column "id" does not exist` on every family insert by the owner / church manager; fixed (`array_agg(c) … as c`). `FamilyFormModal` shows the real database error for unknown failures. See § Fix: «+ عائلة».
@@ -464,6 +465,7 @@ Second round on the Supabase **Logs Ingest** meter (the first — 20261010120000
    ⚠️ `0021_child_portal.sql` is **required** by بوابة المخدوم (`/child/*`) and `/settings/data-requests`. Creates `data_change_requests`, the `child_portal_*` RPCs (SECURITY DEFINER, granted to `anon`, keyed by the scanned national id), `review_data_change_request` / `pending_data_requests_count` (authenticated) and a storage policy letting the portal upload into `photos/child-requests/`. Idempotent; run after 0020.
    ⚠️ `0022_event_bound_operations.sql` is **required** by the current children page & scanner (points inserts send `event_id`; calls / messages insert into `contact_log`). Adds `points_log.event_id`, the `contact_log` table (RLS + realtime), scope-check triggers and an `event_name` column on `child_portal_points`. Idempotent; run after 0021.
    ⚠️ `0023_call_feedbacks.sql` is **required** for the call-feedback badge / modal / filter and `/settings/call-feedbacks`. Adds the `call_feedbacks` table (scope church/service/class/event, `color`, `icon`, `sort_order`, RLS, realtime) and `contact_log.feedback_id` + `contact_log.occurrence_on`. Idempotent; run after 0022. Without it the badge stays on «لم يُفتقد بعد» and the modal shows a migration hint.
+   ⚠️ `20261012120000_call_feedback_other_note.sql` is **required** for the «أخرى» (!) feedback (a hand-written cause) in the after-call picker. Adds `contact_log.note` (check 1–500 chars) and replaces the badge index with `idx_contact_log_followup_lookup` (`feedback_id is not null or note is not null`). Without it the picker still works for predefined feedbacks and saving «أخرى» shows a migration hint. Idempotent; run after 0023. Test: `supabase/tests/call_feedback_other_note_test.sql`.
    ⚠️ `0024_owner_module_access.sql` is **required** by وحدة المالك (`/owner/*`) and by the module sections of the side menu / settings. Adds `module_access` (owner-written grants: module → church/service/class, null = all), `module_visible(key)`, re-creates the card-module policies so `card_templates` / `card_print_requests` require `module_visible('cards')`, and **seeds one global grant for `cards`** so nothing disappears for existing users. Idempotent; run after 0023. Without it non-owners see no modules.
    ⚠️ `0025_shepherd_groups.sql` is **required** by وحدة الأشابين (`/shepherds`) and the «مجموعتي» button on the children page. Adds `shepherd_groups` (servant ↔ enrollment, **unique per enrollment**, scope filled by trigger), RLS gated by `module_visible('shepherds')`, the `shepherd_claims` / `shepherd_group_summary` RPCs and realtime. **No grant is seeded** — the owner enables the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0024.
    ⚠️ `0026_points_store.sql` is **required** by وحدة إستبدال النقاط (`/store/*`) and by the store rows in the child portal points page. Adds `store_items`, `store_orders`, `store_order_items` (RLS gated by `module_visible('store')`), the `store_checkout` / `store_cancel_order` / `store_lookup_item` RPCs, replaces `child_portal_points` (new `source = 'store'` + `order_id` columns) and adds `child_portal_store_orders`. **No grant is seeded** — enable the module per scope in وحدة المالك → صلاحيات الوحدات. Idempotent; run after 0025.
@@ -1403,13 +1405,46 @@ family_visits  family_id · priest_id · requested_by (priest | family) · reque
   («لم يُفتقد بعد», no feedback, open or future). `canRecordFeedback` gates
   the modal buttons + undo.
 - Frontend: `src/components/CallFeedback.tsx` (`CallFeedbackBadge`,
-  `CallFeedbackModal`, `useCallFeedbackStates(supabase, rows, event, feedbacks, working, real)` — chunked fetch of on-screen
+  `CallFeedbackPickerModal`, `CallFeedbackHistoryModal`, `useAfterCallPrompt`, `startCall`,
+  `useCallFeedbackStates(supabase, rows, event, feedbacks, working, real)` — chunked fetch of on-screen
   enrollments for the `target` occurrence only), `src/lib/call-feedback.ts`
-  (icons, color presets, `feedbackStyle`, `matchesCallFilter`),
+  (icons, color presets, `feedbackStyle`, `matchesCallFilter`, `isFeedbackRow`, `RecordedFeedback`),
   `src/lib/types.ts` (`CallFeedback`, `feedbackApplies`), `src/lib/time.ts`
   (`previousOccurrenceDate`), `cachedLookup('call_feedbacks')`, children page
-  (badge + filter chips + realtime), scanner (badge + modal),
+  (badge + filter chips + realtime), scanner (badge + dialogs),
   `/settings/call-feedbacks` + hub link after إدارة أسباب النقاط.
+
+### After-call picker · «أخرى» (!) · history — 20261012120000
+**Two dialogs, split on purpose.**
+- **Picker (نتيجة المكالمة)** — «ماذا كانت نتيجة المكالمة؟». Opens **automatically when the
+  servant returns to the app after pressing the call button**: `startCall()` arms
+  `useAfterCallPrompt` (sessionStorage `pending_call_feedback` = enrollment + event +
+  time, 2 h TTL), logs the plain dial (`contact_log` kind `call`, no `occurrence_on`),
+  then opens `tel:`. On `visibilitychange` / `focus` / `pageshow` (ignoring the first
+  700 ms, when the dialer is still opening) the hook fires once → the page opens the
+  picker for that child, provided the same event is still selected and the child is
+  on screen. Desktop browsers without a phone app never lose focus → the picker opens
+  after 2.5 s. The picker lists the scoped feedbacks + a **fixed «أخرى» (!) button**
+  (dashed, orange `#f97316`) → textarea (1–500 chars) → «حفظ النتيجة». «لاحقًا» closes
+  without recording. Also reachable from the history (تسجيل / تغيير النتيجة).
+- **History (سجل الافتقاد)** — opens from the **badge**. Header = child + event +
+  occurrence + current badge; an «أخرى» state shows the written cause in a card.
+  Actions (while the cycle is open): **اتصال** (dial → picker on return) · **تسجيل /
+  تغيير النتيجة** · 🗑 delete the current occurrence's feedback. Log = every
+  `kind = 'call'` row of the child for the event, newest first: plain dials
+  (اتصال, sky icon) and outcomes (feedback color + icon, or «أخرى» (!) **with the
+  text**), occurrence day · time · who recorded; the row that drives the badge is
+  marked «الحالية». Counters «N نتيجة · M اتصال».
+- **Storage** — `contact_log.note text` (check 1–500 chars after trim). A row is a
+  **feedback row** when `occurrence_on` is set and (`feedback_id` not null **or** `note`
+  not null) — `isFeedbackRow()`; the partial index `idx_contact_log_followup_lookup`
+  replaces `idx_contact_log_feedback_lookup` with that predicate. `indexFeedbackRows`
+  → `RecordedFeedback {feedbackId, note}` per occurrence; `callFeedbackState` returns
+  `{kind:'other', note}`; filter key `'other'`. Reports (الافتقاد source) show
+  `أخرى: <text>` in نتيجة المكالمة. The frontend falls back to the old column list
+  when the DB has not run the migration (badge query, history, report); saving
+  «أخرى» then shows a migration hint. Test:
+  `supabase/tests/call_feedback_other_note_test.sql`.
 
 ## Modules & the Owner module — migration 0024 (الوحدات · وحدة المالك)
 The app = a fixed **core** (the 5 main pages: الرئيسية · المخدومين · الماسح ·
