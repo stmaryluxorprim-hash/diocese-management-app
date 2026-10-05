@@ -19,6 +19,7 @@ import SideMenu from '@/components/SideMenu';
 import AppDateButton from '@/components/AppDateButton';
 import MessagesBell from '@/components/messages/MessagesBell';
 import NotificationsBell from '@/components/notifications/NotificationsBell';
+import LiveStatusChip from '@/components/LiveStatusChip';
 import { useCustomization } from '@/lib/customization-context';
 import { resolveIcon, HEADER_WIDGET_BY_KEY } from '@/lib/navigation';
 
@@ -56,6 +57,9 @@ export default function AppHeader() {
               {service?.name ?? (profile ? ROLE_LABELS[profile.role] : '')}
             </p>
           </div>
+
+          {/* «غير متصل» — the realtime bus is down, screens may be stale (tap = refresh) */}
+          <LiveStatusChip />
 
           {/* Owner-arranged header icons */}
           <div id="header-icons" className="flex items-center gap-0.5">

@@ -18,7 +18,6 @@ import { EmptyState } from '@/components/child/ChildBits';
 import { ShopPicture, ItemPicture, RequestSheet } from '@/components/child/StoreBits';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
-import { PORTAL_POLL_MS } from '@/lib/realtime';
 import {
   fetchChildShopItems, sendChildStoreRequest, cancelChildStoreRequest, childErrorMessage,
   type ChildShopItem, type ChildStoreRequest,
@@ -65,8 +64,7 @@ function ShopContent() {
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVis);
-    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, PORTAL_POLL_MS.default);
-    return () => { document.removeEventListener('visibilitychange', onVis); clearInterval(t); };
+    return () => { document.removeEventListener('visibilitychange', onVis); };
   }, [load]);
 
   // ---- cart ----

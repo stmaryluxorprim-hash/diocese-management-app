@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 
 /**
@@ -161,6 +161,8 @@ export function configureRealtimeBus(
   const wantSet = new Set(want);
   Array.from(bus.channels.keys()).forEach((t) => { if (!wantSet.has(t)) closeTopic(t); });
   bus.topics = want;
+  // let the «غير متصل» chip re-evaluate (it ignores the bus until someone wants it)
+  bus.connListeners.forEach((fn) => { try { fn(bus.connected); } catch { /* ignore */ } });
   if (want.length === 0) return;
   // Make sure the socket carries the session JWT BEFORE joining private
   // topics (RLS on realtime.messages needs auth.uid()).
@@ -194,35 +196,84 @@ export interface RealtimeTableSpec {
 }
 
 /**
- * Poll period used when a bus table has no live connection.
+ * ===================================================================
+ * NO BACKGROUND POLLING (20261011120000)
+ * ===================================================================
+ * Every poll is one PostgREST request = one API-gateway line on the
+ * Supabase «Logs Ingest» meter (which cannot be switched off). The free
+ * plan is ~1 GB a month ≈ 20–30 k requests a day; a few dozen portal tabs
+ * left open used to burn that on their own. So:
  *
- * LOG INGEST (20261010120000): every poll is one PostgREST request = one
- * API-gateway log line on the Supabase «Logs Ingest» meter. With dozens of
- * open screens a 45 s fallback poll on 5–10 listeners each produced
- * thousands of requests an hour whenever the bus was down. The fallback
- * now polls every 2 minutes; the visibility-change refresh still gives an
- * instant update whenever the user comes back to the tab.
+ *   • The staff app has NO fallback poll any more. When the broadcast bus
+ *     is down the screens simply keep what they have, the header shows an
+ *     «غير متصل» chip (useBusState) and everything refetches the moment
+ *     the bus reconnects or the tab regains focus.
+ *   • The child / priest portals (no auth session → no bus) refresh ONLY on
+ *     focus (useFocusRefresh) — never on a timer. Web push remains the
+ *     instant path for notifications.
+ *   • The only timers left are for screens where something is LIVE right
+ *     now and the user is looking at it: the open online-class room and
+ *     an open chat thread (useLivePoll — see LIVE_POLL_MS). They stop as
+ *     soon as the screen is hidden or the live thing ends.
  */
-const FALLBACK_POLL_MS = 120_000;
+export const LIVE_POLL_MS = {
+  /** an OPEN chat thread the child is reading right now */
+  thread: 20_000,
+  /** the online-class room while the class is live */
+  liveRoom: 15_000,
+  /** a pending signup request the applicant is staring at */
+  signup: 45_000,
+} as const;
 
 /**
- * Shared poll periods for the portals (child / priest) that cannot join the
- * private broadcast topics. One place to tune the API request volume.
+ * Refresh-on-focus helper for the portals: runs `fn` when the tab becomes
+ * visible again (and, optionally, once on mount). No timer. Returns stop().
+ * The pages keep their own «reload» buttons / pull-to-refresh for the
+ * «I am looking at it and want the latest» case.
  */
-export const PORTAL_POLL_MS = {
-  /** profile · achievements · store (was 45 s) */
-  default: 120_000,
-  /** chat overview · store requests · appointments / visits (was 30 s) */
-  fast: 60_000,
-  /** notifications inbox (web push is the instant path; was 60 s) */
-  slow: 180_000,
-  /** rarely changing lists: areas tree, confession / family blocks (was 60–120 s) */
-  rare: 300_000,
-  /** an OPEN chat thread (was 10 s) */
-  thread: 20_000,
-  /** a pending signup request waiting for approval (was 15 s) */
-  signup: 30_000,
-} as const;
+export function startFocusRefresh(fn: () => void): () => void {
+  const onVis = () => { if (document.visibilityState === 'visible') fn(); };
+  document.addEventListener('visibilitychange', onVis);
+  window.addEventListener('focus', onVis);
+  return () => {
+    document.removeEventListener('visibilitychange', onVis);
+    window.removeEventListener('focus', onVis);
+  };
+}
+
+/**
+ * Poll ONLY while `active` is true and the tab is visible — for the few
+ * screens that show something live. Pauses while hidden, refreshes once on
+ * return. Returns stop().
+ */
+export function startLivePoll(fn: () => void, everyMs: number, active: () => boolean = () => true): () => void {
+  let t: ReturnType<typeof setInterval> | null = null;
+  const start = () => { if (t === null) t = setInterval(() => { if (active() && document.visibilityState === 'visible') fn(); }, everyMs); };
+  const stop = () => { if (t !== null) { clearInterval(t); t = null; } };
+  const onVis = () => {
+    if (document.visibilityState === 'visible') { if (active()) fn(); start(); } else stop();
+  };
+  document.addEventListener('visibilitychange', onVis);
+  if (document.visibilityState === 'visible') start();
+  return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+}
+
+/**
+ * React view of the bus — drives the «غير متصل» chip in the header.
+ * `wanted` = the signed-in user needs a bus at all (owner / approved
+ * servant); `connected` = at least one topic is joined.
+ */
+export function useBusState(): { connected: boolean; wanted: boolean } {
+  const [st, setSt] = useState(() => ({ connected: bus.connected, wanted: bus.topics.length > 0 }));
+  useEffect(() => {
+    const update = () => setSt({ connected: bus.connected, wanted: bus.topics.length > 0 });
+    update();
+    return onBusConnection(update);
+  }, []);
+  return st;
+}
+
+
 
 /**
  * Debounced realtime subscription.
@@ -234,7 +285,8 @@ export const PORTAL_POLL_MS = {
  *   • HOT tables (BUS_TABLES) listen on the shared broadcast bus — no
  *     per-subscriber RLS work on the server; the others keep classic
  *     `postgres_changes` with optional server-side `filter`,
- *   • if the bus is down the hot tables fall back to a slow poll.
+ *   • if the bus is down there is NO poll (20261011120000) — the screen
+ *     refetches when the bus comes back and on every hidden→visible.
  */
 export function useDebouncedRealtime(
   supabase: SupabaseClient,
@@ -293,12 +345,6 @@ export function useDebouncedRealtime(
 
     // ---- hot tables → shared bus ----
     const unsubs: (() => void)[] = [];
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-    const startPoll = () => {
-      if (pollTimer) return;
-      pollTimer = setInterval(() => { if (document.visibilityState === 'visible') schedule(); }, FALLBACK_POLL_MS);
-    };
-    const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
     if (busSpecs.length > 0) {
       busSpecs.forEach((t) => {
         unsubs.push(onBusTable(t.table, (m) => {
@@ -306,11 +352,9 @@ export function useDebouncedRealtime(
           schedule();
         }));
       });
-      // fallback: poll while the bus is not connected; refresh when it (re)connects
-      if (!busConnected()) startPoll();
-      unsubs.push(onBusConnection((ok) => {
-        if (ok) { stopPoll(); schedule(); } else startPoll();
-      }));
+      // bus (re)connected → one refetch to catch what happened meanwhile.
+      // No poll while it is down (the header chip tells the user).
+      unsubs.push(onBusConnection((ok) => { if (ok) schedule(); }));
       // a hidden→visible transition always refreshes bus-backed screens
       // (cheap, and covers messages missed while the socket was asleep)
       const onVisBus = () => { if (document.visibilityState === 'visible') schedule(); };
@@ -335,7 +379,6 @@ export function useDebouncedRealtime(
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
-      stopPoll();
       unsubs.forEach((u) => u());
       document.removeEventListener('visibilitychange', onVisible);
       if (channel) supabase.removeChannel(channel);

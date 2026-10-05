@@ -19,22 +19,19 @@ import { fetchChildAchievements, type ChildAchievements } from '@/lib/achievemen
 import { fetchChildOccasions, type ChildOccasion } from '@/lib/occasions';
 import { fetchChildNotifications, type InboxItem } from '@/lib/notifications';
 import { fetchChildLibrary, setChildFavorite, type ChildLibrary } from '@/lib/library';
-import { uniqueTopic, PORTAL_POLL_MS } from '@/lib/realtime';
+import { uniqueTopic } from '@/lib/realtime';
 
 /**
  * 0046 — the child portal has no auth session, so it cannot join the private
- * broadcast topics that replaced `postgres_changes` on the hot tables. A
- * light poll while the tab is visible keeps those screens current; every
- * block still refreshes instantly on focus. Returns stop().
+ * broadcast topics that replaced `postgres_changes` on the hot tables.
  *
- * 20261010120000: periods come from PORTAL_POLL_MS (2–5 min instead of
- * 30–60 s) — each poll is an API request logged by the Supabase gateway
- * and the portals were the biggest source of «Logs Ingest».
+ * 20261011120000 — NO background polling any more. Every poll was one API
+ * request on the Supabase «Logs Ingest» meter (free plan ≈ 1 GB / month) and
+ * portal tabs left open were the single biggest consumer. Every block below
+ * refreshes on hidden→visible (and the pages have their own reload buttons);
+ * web push stays the instant path for notifications. The only timers in the
+ * portal are inside a LIVE screen (open chat thread / live class room).
  */
-function startChildPoll(fn: () => void, everyMs: number = PORTAL_POLL_MS.default): () => void {
-  const t = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, everyMs);
-  return () => clearInterval(t);
-}
 
 interface ChildState {
   token: string | null;
@@ -217,18 +214,13 @@ export function ChildProvider({ children }: { children: ReactNode }) {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => load(token), 1200);
     };
-    // 0046: enrollments / persons left the postgres_changes publication (per
-    // subscriber RLS work was saturating the DB on scan days). The portal
-    // has no auth session so it cannot join the private broadcast topics →
-    // a light poll while visible + refresh on focus keeps it current.
-    const poll = startChildPoll(schedule);
+
     // also refresh when the tab becomes visible again
     const onVis = () => { if (document.visibilityState === 'visible') schedule(); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVis);
-      poll();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, profile?.person.id, supabase, load]);
@@ -263,12 +255,10 @@ export function ChildProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    // 0046: chat_messages is broadcast-only now → poll while visible
-    const poll = startChildPoll(run, PORTAL_POLL_MS.fast);
+
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVis);
-      poll();
     };
   }, [token, supabase, msgTick]);
 
@@ -317,12 +307,10 @@ export function ChildProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    // 0046: user_achievements / attendance_log are broadcast-only → poll
-    const poll = startChildPoll(run);
+
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVis);
-      poll();
     };
   }, [token, supabase, achTick]);
 
@@ -377,15 +365,12 @@ export function ChildProvider({ children }: { children: ReactNode }) {
     const onSw = (e: MessageEvent) => { if (e.data?.type === 'push') bump(); };
     const hasSw = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
     if (hasSw) navigator.serviceWorker.addEventListener('message', onSw);
-    // 0046: notification_recipients is broadcast-only → web push (service
-    // worker message above) is the instant path; poll as the safety net.
-    const poll = startChildPoll(bump, PORTAL_POLL_MS.slow);
+
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVis);
       if (hasSw) navigator.serviceWorker.removeEventListener('message', onSw);
-      poll();
     };
   }, [token, supabase, notifTick]);
 
@@ -457,13 +442,12 @@ export function ChildProvider({ children }: { children: ReactNode }) {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'store_shop_targets' }, bump)
         .subscribe();
     } catch { /* realtime unavailable → polling on focus only */ }
-    const poll = startChildPoll(run, PORTAL_POLL_MS.fast);
+
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVis);
       supabase.removeChannel(channel);
-      poll();
     };
   }, [token, supabase, shopTick]);
 

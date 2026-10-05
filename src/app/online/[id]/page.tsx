@@ -24,7 +24,7 @@ import LiveChat from '@/components/online/LiveChat';
 import { useStoreLookups } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
-import { useDebouncedRealtime } from '@/lib/realtime';
+import { useDebouncedRealtime, LIVE_POLL_MS } from '@/lib/realtime';
 import {
   fetchOnlineClass, fetchLiveStats, fetchLiveQuestions, fetchLiveAnswers, fetchChecks, fetchCheckResponses, fetchRoomMessages,
   startClass, endClass, reopenClass, sendCheck, updateOnlineClass, deleteOnlineClass, sendServantMessage, deleteRoomMessage,
@@ -112,7 +112,7 @@ export default function OnlineClassRoomPage() {
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(loadStats, 15000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadStats(); }, LIVE_POLL_MS.liveRoom); // live room only, visible only
     return () => clearInterval(t);
   }, [live, loadStats]);
 

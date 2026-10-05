@@ -12,7 +12,6 @@ import {
   fetchConfessors, fetchAppointments, type PriestProfile, type Confessor, type Appointment,
 } from '@/lib/priest-portal';
 import { fetchAreasTree, fetchPriestFamilies, fetchVisits, type AreasTree, type PriestFamily, type Visit } from '@/lib/priest-families';
-import { PORTAL_POLL_MS } from '@/lib/realtime';
 
 interface PriestState {
   token: string | null;
@@ -47,12 +46,9 @@ const Ctx = createContext<PriestState>({
   reloadAll: () => {},
 });
 
-// 20261010120000: poll periods from PORTAL_POLL_MS (every poll = one API
-// request on the Supabase «Logs Ingest» meter); refresh on focus is instant.
-function startPoll(fn: () => void, everyMs: number = PORTAL_POLL_MS.default): () => void {
-  const t = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, everyMs);
-  return () => clearInterval(t);
-}
+// 20261011120000: NO background polling — every poll was a logged API
+// request on the Supabase «Logs Ingest» meter. Each block refreshes on
+// hidden→visible; the pages keep their reload buttons.
 
 export function PriestProvider({ children }: { children: ReactNode }) {
   const supabase = useMemo(() => createClient(), []);
@@ -100,8 +96,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     const onVisible = () => { if (document.visibilityState === 'visible') { priestSessionTouch(supabase, token).catch(() => {}); load(token); } };
     document.addEventListener('visibilitychange', onVisible);
-    const stop = startPoll(() => load(token), PORTAL_POLL_MS.default);
-    return () => { document.removeEventListener('visibilitychange', onVisible); stop(); };
+    return () => { document.removeEventListener('visibilitychange', onVisible); };
   }, [token, supabase, load]);
 
   const refresh = useCallback(async () => { if (token) await load(token); }, [token, load]);
@@ -124,8 +119,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, PORTAL_POLL_MS.default);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
   }, [token, supabase, cTick]);
 
   // ---- appointments (pending + upcoming)
@@ -139,8 +133,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, PORTAL_POLL_MS.fast);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
   }, [token, supabase, aTick]);
 
   // ---- areas tree (church → areas → streets → buildings)
@@ -154,8 +147,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, PORTAL_POLL_MS.rare);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
   }, [token, supabase, arTick]);
 
   // ---- families (with their members · last visit · next visit)
@@ -169,8 +161,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, PORTAL_POLL_MS.default);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
   }, [token, supabase, fTick]);
 
   // ---- visits (pending requests + upcoming)
@@ -184,8 +175,7 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     run();
     const onVis = () => { if (document.visibilityState === 'visible') run(); };
     document.addEventListener('visibilitychange', onVis);
-    const stop = startPoll(run, PORTAL_POLL_MS.fast);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); stop(); };
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
   }, [token, supabase, vTick]);
 
   const reloadAll = useCallback(() => { refresh(); reloadConfessors(); reloadAppointments(); reloadAreas(); reloadFamilies(); reloadVisits(); },

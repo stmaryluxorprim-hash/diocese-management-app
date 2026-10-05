@@ -26,7 +26,7 @@ import LiveChat from '@/components/online/LiveChat';
 import ChildQuestionCard from '@/components/online/ChildQuestionCard';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
-import { uniqueTopic } from '@/lib/realtime';
+import { uniqueTopic, LIVE_POLL_MS } from '@/lib/realtime';
 import {
   fetchChildOnlineClass, joinChildOnlineClass, heartbeatChildOnlineClass, leaveChildOnlineClass,
   respondChildCheck, answerChildLiveQuestion, fetchChildRoomMessages, sendChildRoomMessage, childErrorMessage,
@@ -35,7 +35,9 @@ import {
 import { fmtPercent, type RoomMessage } from '@/lib/online-classes';
 
 const HEARTBEAT_MS = 30_000;
-const POLL_MS = 10_000;
+// 20261011120000: the heartbeat (30 s) is what the attendance rule counts —
+// it stays. The data poll runs only while the class is LIVE and the tab is
+// visible (LIVE_POLL_MS.liveRoom); 2 RPCs per tick.
 
 export default function ChildOnlineRoomPage() {
   return (
@@ -194,7 +196,7 @@ function Room() {
   }, []);
   useEffect(() => {
     if (cls?.status !== 'live') return;
-    const t = window.setInterval(() => { load(); loadMessages(); }, POLL_MS);
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') { load(); loadMessages(); } }, LIVE_POLL_MS.liveRoom);
     return () => window.clearInterval(t);
   }, [cls?.status, load, loadMessages]);
 

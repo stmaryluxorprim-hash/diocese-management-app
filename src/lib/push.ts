@@ -154,29 +154,26 @@ export function kickDispatcher(opts: { force?: boolean } = {}): void {
 }
 
 /**
- * Periodic kicks for a long-lived screen (header bell). Base period +
- * random jitter so 80 phones don't all hit the endpoint at the same
- * second; only while the tab is visible. Returns the stop function.
+ * Dispatcher kicks from a long-lived screen (header bell).
  *
- * 20261010120000: every kick = 2–3 service-role requests (gate · tick ·
- * queue) logged by the API gateway, on every open device. pg_cron runs
- * notif_tick() server-side anyway, so the browser kicks are only a
- * safety net → every ~15–22 min (was 5–7.5).
+ * 20261011120000: NO periodic loop any more. Every kick = 2–3 service-role
+ * requests (gate · tick · queue) logged by the API gateway, on every open
+ * device, all day. pg_cron runs `notif_tick()` every 5 min server-side and
+ * every send / approval already calls kickDispatcher({force}) directly, so
+ * the browser only kicks ONCE when the app opens (spread over 0–20 s) and
+ * once more when the tab comes back after being hidden ≥ 10 min — enough to
+ * flush a queue left over from a cold start, nothing more. Returns stop().
  */
-export function startDispatcherKicks(baseMs = 15 * 60_000): () => void {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  let stopped = false;
-  const loop = () => {
-    if (stopped) return;
-    const delay = baseMs + Math.floor(Math.random() * baseMs * 0.5);
-    t = setTimeout(() => {
-      if (document.visibilityState === 'visible') kickDispatcher();
-      loop();
-    }, delay);
+export function startDispatcherKicks(): () => void {
+  let t: ReturnType<typeof setTimeout> | null = setTimeout(() => { t = null; kickDispatcher(); }, Math.floor(Math.random() * 20_000));
+  let hiddenAt = 0;
+  const onVis = () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt >= 10 * 60_000) kickDispatcher();
+    hiddenAt = 0;
   };
-  // first kick shortly after start, randomly spread over 0–20 s
-  t = setTimeout(() => { kickDispatcher(); loop(); }, Math.floor(Math.random() * 20_000));
-  return () => { stopped = true; if (t) clearTimeout(t); };
+  document.addEventListener('visibilitychange', onVis);
+  return () => { if (t) clearTimeout(t); document.removeEventListener('visibilitychange', onVis); };
 }
 
 export const PUSH_REASON_LABELS: Record<string, string> = {
