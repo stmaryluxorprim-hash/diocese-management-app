@@ -20,6 +20,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { useDebouncedRealtime } from '@/lib/realtime';
+import { useBootstrapConfig } from '@/lib/bootstrap';
 import { useModules } from '@/lib/modules-context';
 import {
   DEFAULT_NAVIGATION, NAVIGATION_SETTING_KEY, NAMES_SETTING_KEY, normalizeNavigation, normalizeNames,
@@ -120,31 +121,41 @@ export function CustomizationProvider({ children }: { children: ReactNode }) {
     setCodes(DEFAULT_CODES); setCodesCustomized(false);
   };
 
+  const applyRows = (rows: { key: string; value: unknown }[]) => {
+    const byKey = new Map(rows.map((r) => [r.key, r.value]));
+    const nav = byKey.get(NAVIGATION_SETTING_KEY);
+    setNavigation(nav ? normalizeNavigation(nav) : DEFAULT_NAVIGATION);
+    setCustomized(!!nav);
+    const wid = byKey.get(WIDGETS_SETTING_KEY);
+    setWidgetsConfig(wid ? normalizeWidgets(wid) : DEFAULT_WIDGETS);
+    setWidgetsCustomized(!!wid);
+    setNames(normalizeNames(byKey.get(NAMES_SETTING_KEY)));
+    const cod = byKey.get(CODES_SETTING_KEY);
+    setCodes(cod ? normalizeCodes(cod) : DEFAULT_CODES);
+    setCodesCustomized(!!cod);
+  };
+
   const reload = useCallback(async () => {
     if (!approved) { applyDefaults(); setLoading(false); return; }
     const { data, error } = await supabase
       .from('app_settings')
       .select('key, value')
       .in('key', SETTING_KEYS);
-    if (error || !data) {
-      applyDefaults(); // migration missing → defaults
-    } else {
-      const byKey = new Map((data as { key: string; value: unknown }[]).map((r) => [r.key, r.value]));
-      const nav = byKey.get(NAVIGATION_SETTING_KEY);
-      setNavigation(nav ? normalizeNavigation(nav) : DEFAULT_NAVIGATION);
-      setCustomized(!!nav);
-      const wid = byKey.get(WIDGETS_SETTING_KEY);
-      setWidgetsConfig(wid ? normalizeWidgets(wid) : DEFAULT_WIDGETS);
-      setWidgetsCustomized(!!wid);
-      setNames(normalizeNames(byKey.get(NAMES_SETTING_KEY)));
-      const cod = byKey.get(CODES_SETTING_KEY);
-      setCodes(cod ? normalizeCodes(cod) : DEFAULT_CODES);
-      setCodesCustomized(!!cod);
-    }
+    if (error || !data) applyDefaults(); // migration missing → defaults
+    else applyRows(data as { key: string; value: unknown }[]);
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, approved]);
 
-  useEffect(() => { reload(); }, [reload]);
+  // 20261015120000: the four settings arrive with app_bootstrap() — no own
+  // request on open; `reload()` is the realtime / fallback path only.
+  const { config: boot, version: bootVersion } = useBootstrapConfig();
+  useEffect(() => {
+    if (!approved) { applyDefaults(); setLoading(false); return; }
+    if (boot) { applyRows(boot.app_settings); setLoading(false); return; }
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approved, bootVersion, reload]);
 
   useDebouncedRealtime(
     supabase, 'app-settings', [{ table: 'app_settings' }], reload,

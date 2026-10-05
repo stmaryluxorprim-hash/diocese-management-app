@@ -185,9 +185,13 @@ do $$ begin
 end $$;
 
 do $$ begin
-  -- 0046: servant_enrollments moved to broadcast (zzz_rt_* triggers)
-  if (select count(*) from pg_publication_tables where pubname = 'supabase_realtime' and tablename in ('permission_profiles', 'permissions')) <> 2 then
-    raise exception 'realtime publication incomplete';
+  -- 0046: servant_enrollments moved to broadcast (zzz_rt_* triggers);
+  -- 20261015120000: permission_profiles / permissions too (global config → every church topic)
+  if (select count(*) from pg_publication_tables where pubname = 'supabase_realtime' and tablename in ('permission_profiles', 'permissions')) <> 0 then
+    raise exception 'permission tables should have left the realtime publication';
+  end if;
+  if (select count(*) from pg_trigger where tgname = 'zzz_rt_upd' and tgrelid in ('public.permission_profiles'::regclass, 'public.permissions'::regclass)) <> 2 then
+    raise exception 'permission tables broadcast triggers missing';
   end if;
   if not exists (select 1 from pg_trigger where tgname = 'zzz_rt_upd' and tgrelid = 'public.servant_enrollments'::regclass) then
     raise exception 'servant_enrollments broadcast trigger missing';

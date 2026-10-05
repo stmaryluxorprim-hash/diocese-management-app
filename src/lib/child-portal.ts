@@ -399,6 +399,50 @@ export async function childLogout(supabase: SupabaseClient, token: string): Prom
 }
 
 /** Validates + refreshes the session (extends a «remember me» session). */
+// ---------- ONE request opens the portal (20261015120000) ----------
+// `child_portal_bootstrap(token)` = child_session_touch + profile + every
+// module block. A block the server could not produce (module not granted /
+// migration missing) is null. Returns null when the RPC itself does not
+// exist yet so the caller can fall back to the separate fetches.
+export interface ChildBootstrap {
+  session: { person_id: string; expires_at: string; remember: boolean };
+  profile: ChildProfile;
+  exams: ChildExam[] | null;
+  conversations: import('@/lib/chat').ChildChatOverview[] | null;
+  online_classes: ChildOnlineClass[] | null;
+  achievements: import('@/lib/achievements').ChildAchievements | null;
+  occasions: import('@/lib/occasions').ChildOccasion[] | null;
+  notifications: import('@/lib/notifications').InboxItem[] | null;
+  library: import('@/lib/library').ChildLibrary | null;
+  shops: ChildShop[] | null;
+  store_requests: ChildStoreRequest[] | null;
+}
+
+export async function fetchChildBootstrap(supabase: SupabaseClient, token: string): Promise<ChildBootstrap | null> {
+  const { data, error } = await supabase.rpc('child_portal_bootstrap', { p_token: token, p_notif_limit: 80 });
+  if (error) {
+    // 42883 = function does not exist → migration not applied → fallback.
+    // Any other error (session_expired …) must surface exactly as before.
+    if (error.code === '42883' || /child_portal_bootstrap/.test(error.message ?? '') && /does not exist|not find/i.test(error.message ?? '')) return null;
+    throw error;
+  }
+  const d = (data ?? {}) as Partial<ChildBootstrap>;
+  if (!d.profile) throw new Error('invalid_code');
+  return {
+    session: d.session!,
+    profile: d.profile,
+    exams: d.exams ?? null,
+    conversations: d.conversations ?? null,
+    online_classes: d.online_classes ?? null,
+    achievements: d.achievements ?? null,
+    occasions: d.occasions ?? null,
+    notifications: d.notifications ?? null,
+    library: d.library ?? null,
+    shops: d.shops ?? null,
+    store_requests: d.store_requests ?? null,
+  };
+}
+
 export async function childSessionTouch(
   supabase: SupabaseClient,
   token: string

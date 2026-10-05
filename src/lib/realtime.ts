@@ -56,6 +56,10 @@ export const BUS_TABLES: ReadonlySet<string> = new Set([
   'notification_recipients', 'chat_messages', 'chat_read_state', 'store_orders',
   'card_print_requests', 'user_achievements', 'servant_enrollments', 'servant_scopes',
   'activity_log',
+  // 20261015120000: global config tables — one statement-level trigger
+  // notifies every church topic (+ scope:all); saves 4 postgres_changes
+  // joins per page load on every staff device
+  'app_settings', 'module_access', 'permission_profiles', 'permissions',
 ]);
 
 export interface BusMessage {
