@@ -12,6 +12,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { useDebouncedRealtime } from '@/lib/realtime';
+import { useBootstrapConfig } from '@/lib/bootstrap';
 import { hasKey, resolvePermissionKeys, activityItemCan, type ActivityItem, type ActivityAction } from '@/lib/permissions';
 import type { PermissionGrant, PermissionProfile } from '@/lib/types';
 
@@ -67,7 +68,20 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, [supabase, approved]);
 
-  useEffect(() => { reload(); }, [reload]);
+  // 20261015120000: both tables arrive with app_bootstrap() — no own
+  // requests on open; `reload()` is the realtime / fallback path only.
+  const { config: boot, version: bootVersion } = useBootstrapConfig();
+  useEffect(() => {
+    if (!approved) { setProfiles([]); setGrants([]); setLoading(false); return; }
+    if (boot) {
+      setProfiles(boot.permission_profiles as PermissionProfile[]);
+      setGrants(boot.permissions as PermissionGrant[]);
+      setLoading(false);
+      return;
+    }
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approved, bootVersion, reload]);
 
   useDebouncedRealtime(
     supabase, 'permissions-ctx',

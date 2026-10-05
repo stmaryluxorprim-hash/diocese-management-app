@@ -12,6 +12,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { useDebouncedRealtime } from '@/lib/realtime';
+import { useBootstrapConfig } from '@/lib/bootstrap';
 import { MODULES, visibleModuleKeys, type AppModule, type ModuleAccess, type ModuleKey } from '@/lib/modules';
 
 interface ModulesState {
@@ -48,7 +49,15 @@ export function ModulesProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, [supabase, approved]);
 
-  useEffect(() => { reload(); }, [reload]);
+  // 20261015120000: the rows arrive with app_bootstrap() — no own request on
+  // open. `reload()` (own query) is the realtime / fallback path only.
+  const { config: boot, version: bootVersion } = useBootstrapConfig();
+  useEffect(() => {
+    if (!approved) { setGrants([]); setLoading(false); return; }
+    if (boot) { setGrants(boot.module_access as ModuleAccess[]); setLoading(false); return; }
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approved, bootVersion, reload]);
 
   useDebouncedRealtime(
     supabase, 'module-access', [{ table: 'module_access' }], reload,
