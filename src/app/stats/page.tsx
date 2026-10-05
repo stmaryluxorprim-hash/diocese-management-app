@@ -224,7 +224,10 @@ export default function StatsPage() {
       { table: 'enrollments', filter: scopeFilter(profile, scopes) },
     ],
     loadAll,
-    { enabled: approved, delayMs: 2000 }
+    // 20261014120000: loadAll is ~8 aggregate RPCs; during a scan burst it
+    // re-ran once per scan on every open stats page. At most once per minute
+    // now — the manual «تحديث» button is instant as before.
+    { enabled: approved, delayMs: 2000, minIntervalMs: 60_000 }
   );
 
   const manualRefresh = () => { setRefreshing(true); loadAll(); };

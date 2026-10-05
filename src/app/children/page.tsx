@@ -35,10 +35,10 @@ import NumPadModal from '@/components/NumPadModal';
 import { ViewPersonModal } from '@/components/PersonDataModals';
 import { AttendanceLogModal, PointsLogModal } from '@/components/LogModals';
 import AwardModal from '@/components/achievements/AwardModal';
-import { useDebouncedRealtime, scopeFilter } from '@/lib/realtime';
+import { useDebouncedRealtime, useBusIds } from '@/lib/realtime';
 import { sendMessage as sendChatMessage, chatErrorMessage } from '@/lib/chat';
 import {
-  fetchEnrollmentsPage, fetchMyGroupIds, fetchMyGroupEnrollments, cachedLookup, ALL, PAGE_SIZE, type EnrollmentKind,
+  fetchEnrollmentsPage, fetchEnrollmentsByIds, fetchMyGroupIds, fetchMyGroupEnrollments, cachedLookup, ALL, PAGE_SIZE, type EnrollmentKind,
 } from '@/lib/queries';
 import { useNavLabel } from '@/lib/customization-context';
 import { pickScopedDefault, effectiveScope } from '@/lib/defaults';
@@ -105,7 +105,7 @@ function WhatsAppIcon({ className }: { className?: string }) {
 
 export default function ChildrenPage() {
   const pageName = useNavLabel('children');
-  const { profile, scopes } = useAuth();
+  const { profile } = useAuth();
   const supabase = createClient();
   const router = useRouter();
   const [enrollments, setEnrollments] = useState<EnrollmentWithPerson[]>([]);
@@ -351,14 +351,28 @@ export default function ChildrenPage() {
   // the tab is hidden. 0046: enrollments / persons arrive on the shared
   // broadcast bus (one message per statement for the whole church) and
   // reload ONLY the list; the lookup tables have their own subscription.
-  const rtFilter = scopeFilter(profile, scopes);
+  // 20261013120000: `enrollments` messages carry the affected ids (a scan =
+  // one enrollment's counters) → patch those rows in place with ONE small
+  // request instead of re-downloading every loaded page on every device.
+  // Rows not on screen are ignored (a NEW enrollment in scope arrives through
+  // the full reload: INSERT / DELETE / bulk messages / persons changes).
+  const enrollmentsRef = useRef(enrollments); enrollmentsRef.current = enrollments;
+  useBusIds('enrollments', async (ids, op) => {
+    if (!ids.length || op !== 'UPDATE') { await loadList(); return; }
+    const onScreen = new Set(enrollmentsRef.current.map((e) => e.id));
+    const mine = ids.filter((id) => onScreen.has(id));
+    if (!mine.length) return;
+    try {
+      const fresh = await fetchEnrollmentsByIds(supabase, mine);
+      if (!fresh.length) { await loadList(); return; } // moved out of scope / deleted meanwhile
+      const byId = new Map(fresh.map((e) => [e.id, e]));
+      setEnrollments((prev) => prev.map((e) => byId.get(e.id) ?? e));
+    } catch { await loadList(); }
+  }, { enabled: profile?.status === 'approved', delayMs: 1500, onVisible: () => { void loadList(); } });
   useDebouncedRealtime(
     supabase,
     'persons-list',
-    [
-      { table: 'enrollments', filter: rtFilter },
-      { table: 'persons' },
-    ],
+    [{ table: 'persons' }],
     loadList,
     { enabled: profile?.status === 'approved', delayMs: 1500 }
   );
@@ -536,8 +550,6 @@ export default function ChildrenPage() {
   // history) and the HISTORY (opens from the badge). ----------
   const callFb = useCallFeedbackStates(supabase, enrollments, selectedEvent, feedbacks, nowDate, realNow);
   const [callDialog, setCallDialog] = useState<{ kind: 'picker' | 'history'; e: EnrollmentWithPerson } | null>(null);
-  const enrollmentsRef = useRef(enrollments);
-  enrollmentsRef.current = enrollments;
   const eventIdRef = useRef(eventId);
   eventIdRef.current = eventId;
   const { arm: armAfterCall, check: checkAfterCall } = useAfterCallPrompt((enrollmentId, evId) => {
@@ -571,13 +583,15 @@ export default function ChildrenPage() {
         .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ar')),
     [feedbacks, churchFilter, serviceFilter, classFilter, eventId]
   );
-  // Realtime: feedbacks recorded by other servants → refresh badge states
-  useDebouncedRealtime(
-    supabase,
-    'call-feedback-log',
-    [{ table: 'contact_log' }],
-    callFb.reload,
-    { enabled: profile?.status === 'approved' && !!selectedEvent }
+  // Realtime: feedbacks recorded by other servants → refresh badge states.
+  // 20261013120000: patch ONLY the enrollments named in the message (one
+  // tiny request) instead of re-reading every child on the list on every
+  // device for every call — that fan-out was the «Logs Ingest» spike on
+  // follow-up evenings. A message without ids (bulk) → full reload.
+  useBusIds(
+    'contact_log',
+    (ids) => (ids.length ? callFb.reloadFor(ids) : callFb.reload()),
+    { enabled: profile?.status === 'approved' && !!selectedEvent, onVisible: () => { void callFb.reload(); } }
   );
   // keep the filter valid when the offered feedbacks change
   useEffect(() => {

@@ -293,9 +293,22 @@ export function useDebouncedRealtime(
   channelName: string,
   tables: RealtimeTableSpec[],
   reload: () => Promise<unknown> | void,
-  opts: { enabled?: boolean; delayMs?: number } = {}
+  opts: {
+    enabled?: boolean;
+    delayMs?: number;
+    /**
+     * 20261014120000: rate limit for AGGREGATE reloads (stats RPCs, counts)
+     * that cannot be patched from the message ids. During a scan burst the
+     * trailing debounce alone fires once per quiet gap — i.e. once per scan
+     * when scans are 3–10 s apart — on every open device. With a
+     * minIntervalMs the reload runs at most once per interval; the last
+     * message of the burst is still honoured (trailing run) so the screen
+     * ends up exact.
+     */
+    minIntervalMs?: number;
+  } = {}
 ) {
-  const { enabled = true, delayMs = 1200 } = opts;
+  const { enabled = true, delayMs = 1200, minIntervalMs = 0 } = opts;
   const reloadRef = useRef(reload);
   reloadRef.current = reload;
 
@@ -310,10 +323,12 @@ export function useDebouncedRealtime(
     let pending = false;
     let disposed = false;
 
+    let lastRunAt = 0;
     const run = async () => {
       if (disposed) return;
       if (inFlight) { pending = true; return; }
       inFlight = true;
+      lastRunAt = Date.now();
       try {
         await reloadRef.current();
       } finally {
@@ -328,7 +343,9 @@ export function useDebouncedRealtime(
     const schedule = () => {
       if (document.visibilityState === 'hidden') { pending = true; return; }
       if (timer) clearTimeout(timer);
-      timer = setTimeout(run, delayMs);
+      // not before delayMs (debounce) and not before the rate-limit window closes
+      const wait = Math.max(delayMs, minIntervalMs > 0 ? lastRunAt + minIntervalMs - Date.now() : 0);
+      timer = setTimeout(run, wait);
     };
 
     const onVisible = () => {
@@ -385,6 +402,75 @@ export function useDebouncedRealtime(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, channelName, specKey, enabled, delayMs]);
+}
+
+/**
+ * ===================================================================
+ * useBusIds — react to WHICH rows changed, not just THAT something changed
+ * ===================================================================
+ * 20261013120000. Every bus message carries the first 50 affected
+ * enrollment / row ids (`BusMessage.ids`). `useDebouncedRealtime` ignores
+ * them and lets the screen refetch EVERYTHING, which is right for small
+ * lists but was the amplifier behind the «Logs Ingest» spike on follow-up
+ * evenings: one servant records a call feedback → every open device
+ * re-reads the feedback rows of all 300 children (3 batched requests) plus
+ * the home widget's 3 queries → ~240 logged API requests per phone call.
+ *
+ * This hook collects the ids of every message that arrives within the
+ * debounce window and calls `onIds(ids, op)` once — the screen patches
+ * only those rows (one tiny request, or none at all). Messages WITHOUT ids
+ * (n > 50, or a table that does not carry them) call `onIds([], op)` so
+ * the caller can fall back to a full reload. Paused while hidden; a
+ * hidden→visible transition hands the collected ids over (or, when nothing
+ * is pending, triggers `onVisible` so the caller can do its usual refresh).
+ */
+export function useBusIds(
+  table: string,
+  /** `n` = total affected rows of the collected messages (ids are capped at 50 per message, n is not) */
+  onIds: (ids: string[], op: string, n: number) => Promise<unknown> | void,
+  opts: { enabled?: boolean; delayMs?: number; onVisible?: () => void } = {},
+) {
+  const { enabled = true, delayMs = 800 } = opts;
+  const cbRef = useRef(onIds); cbRef.current = onIds;
+  const visRef = useRef(opts.onVisible); visRef.current = opts.onVisible;
+
+  useEffect(() => {
+    if (!enabled) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let pendingIds = new Set<string>();
+    let pendingOp = '';
+    let pendingAll = false; // a message without ids arrived → the caller must reload everything
+    let pendingN = 0;
+    let hasPending = false;
+
+    const flush = () => {
+      timer = null;
+      if (!hasPending) return;
+      const ids = pendingAll ? [] : Array.from(pendingIds);
+      const op = pendingOp; const n = pendingN;
+      pendingIds = new Set(); pendingOp = ''; pendingAll = false; pendingN = 0; hasPending = false;
+      try { void cbRef.current(ids, op, n); } catch { /* ignore */ }
+    };
+    const schedule = () => {
+      if (document.visibilityState === 'hidden') return; // flushed on return
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, delayMs);
+    };
+    const off = onBusTable(table, (m) => {
+      hasPending = true;
+      // mixed ops in one window → treat as the heavier one (not a pure INSERT)
+      pendingOp = pendingOp && pendingOp !== m.op ? 'MIXED' : m.op;
+      pendingN += m.n ?? (m.ids?.length ?? 1);
+      if (m.ids && m.ids.length) m.ids.forEach((id) => pendingIds.add(id)); else pendingAll = true;
+      schedule();
+    });
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (hasPending) schedule(); else visRef.current?.();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { off(); if (timer) clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); };
+  }, [table, enabled, delayMs]);
 }
 
 /**
