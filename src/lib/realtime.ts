@@ -25,13 +25,23 @@ import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
  * The browser opens ONE channel per topic (2–4 per device, whatever the
  * number of screens/widgets) and fans each message out to every listener
  * that registered for that table. `useDebouncedRealtime` keeps its API,
- * so the 84 call sites in the app did not change: the hook decides per
- * table whether to listen on the bus or on classic `postgres_changes`.
+ * so the 85 call sites in the app did not change.
  *
- * SAFETY NET. If the bus is not connected (migration not applied yet,
- * realtime down, token trouble) every bus listener falls back to a slow
- * poll (45 s while visible) and a refresh when the tab becomes visible —
- * the screen stays correct, only less instant.
+ * 20261016120000 — EVERYTHING rides the bus. Until now 60 "cold" tables
+ * stayed on classic `postgres_changes`; 58 hook sites each opened a
+ * channel that the Realtime server polls continuously
+ * (`realtime.list_changes`: 3 M calls / month in pg_stat_statements —
+ * the single largest consumer) and re-created it on every navigation
+ * (`realtime.subscription`: 81 k inserts). The migration gives every
+ * table a statement-level bus trigger and empties the publication, so
+ * the hook now listens on the bus for ANY table and never opens a
+ * `postgres_changes` channel. Server-side `filter`s are not needed: a bus
+ * message only says "table X changed (ids…)" and each screen reloads its
+ * own, already-scoped query. Per device: 2–4 channels, total, forever.
+ *
+ * SAFETY NET. If the bus is not connected (realtime down, token trouble)
+ * there is no poll (see below) — the header shows «غير متصل» and every
+ * screen refetches when the bus returns or the tab regains focus.
  */
 
 // ---------- Topics ----------
@@ -50,17 +60,27 @@ export function uniqueTopic(base: string): string {
   return `${base}-${Date.now().toString(36)}-${topicSeq}`;
 }
 
-/** Tables whose changes travel on the broadcast bus (mirror of 0046 §2). */
+/**
+ * Tables whose bus messages carry row ids (`BusMessage.ids`) — the
+ * per-enrollment log tables (0046 §2) and every church-scoped table
+ * (20261016120000, `rt_trg_scoped_nullable`). Informational: since
+ * 20261016120000 EVERY public table is on the bus, so the hook no longer
+ * consults this set to decide between bus and `postgres_changes`.
+ */
 export const BUS_TABLES: ReadonlySet<string> = new Set([
   'attendance_log', 'points_log', 'contact_log', 'enrollments', 'persons',
   'notification_recipients', 'chat_messages', 'chat_read_state', 'store_orders',
   'card_print_requests', 'user_achievements', 'servant_enrollments', 'servant_scopes',
   'activity_log',
-  // 20261015120000: global config tables — one statement-level trigger
-  // notifies every church topic (+ scope:all); saves 4 postgres_changes
-  // joins per page load on every staff device
   'app_settings', 'module_access', 'permission_profiles', 'permissions',
 ]);
+
+/**
+ * 20261016120000: the `supabase_realtime` publication is empty — nothing
+ * is delivered through `postgres_changes` any more. Kept as a switch so a
+ * table can be moved back if ever needed (add it here).
+ */
+const PG_CHANGES_TABLES: ReadonlySet<string> = new Set([]);
 
 export interface BusMessage {
   /** table */
@@ -194,7 +214,13 @@ export function busConnected(): boolean { return bus.connected; }
 // ---------- The hook ----------
 export interface RealtimeTableSpec {
   table: string;
-  /** PostgREST-style filter, e.g. `church_id=eq.<uuid>` (postgres_changes only; ignored on the bus) */
+  /**
+   * PostgREST-style filter, e.g. `church_id=eq.<uuid>`. Only meaningful for
+   * `postgres_changes` (none since 20261016120000) — the bus ignores it.
+   * Kept in the type so the 20 call sites that pass one still compile; it
+   * is stripped from `specKey` so a filter that changes when the profile
+   * finishes loading does NOT tear the listener down and re-register it.
+   */
   filter?: string;
   event?: 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 }
@@ -315,9 +341,12 @@ export function useDebouncedRealtime(
   const { enabled = true, delayMs = 1200, minIntervalMs = 0 } = opts;
   const reloadRef = useRef(reload);
   reloadRef.current = reload;
+  const tablesRef = useRef(tables); tablesRef.current = tables;
 
-  // Stable key for the table spec so effect deps don't churn on re-render
-  const specKey = JSON.stringify(tables);
+  // Stable key for the table spec so effect deps don't churn on re-render.
+  // `filter` is irrelevant on the bus → excluded, so a filter derived from
+  // the (late-arriving) profile does not re-run the effect.
+  const specKey = JSON.stringify(tables.map((t) => ({ table: t.table, event: t.event ?? '*' })));
 
   useEffect(() => {
     if (!enabled) return;
@@ -361,8 +390,8 @@ export function useDebouncedRealtime(
     document.addEventListener('visibilitychange', onVisible);
 
     const specs = JSON.parse(specKey) as RealtimeTableSpec[];
-    const busSpecs = specs.filter((t) => BUS_TABLES.has(t.table));
-    const pgSpecs = specs.filter((t) => !BUS_TABLES.has(t.table));
+    const busSpecs = specs.filter((t) => !PG_CHANGES_TABLES.has(t.table));
+    const pgSpecs = specs.filter((t) => PG_CHANGES_TABLES.has(t.table));
 
     // ---- hot tables → shared bus ----
     const unsubs: (() => void)[] = [];
@@ -388,9 +417,10 @@ export function useDebouncedRealtime(
     if (pgSpecs.length > 0) {
       channel = supabase.channel(uniqueTopic(channelName));
       pgSpecs.forEach((t) => {
+        const filter = tablesRef.current.find((x) => x.table === t.table)?.filter;
         channel = channel!.on(
           'postgres_changes',
-          { event: t.event ?? '*', schema: 'public', table: t.table, ...(t.filter ? { filter: t.filter } : {}) },
+          { event: t.event ?? '*', schema: 'public', table: t.table, ...(filter ? { filter } : {}) },
           schedule
         );
       });

@@ -389,7 +389,8 @@ reset role;
 -- ---------- 11. realtime publication ----------
 do $$ declare t text; begin
   foreach t in array array['occasions', 'occasion_registrations', 'occasion_checklist_items', 'occasion_checklist_marks', 'occasion_notifications'] loop
-    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
+    -- 20261016: broadcast bus trigger instead of the publication
+    if not exists (select 1 from pg_trigger where tgname = 'zzz_rt_ins' and tgrelid = ('public.' || t)::regclass) then
       raise exception 'realtime missing for %', t;
     end if;
   end loop;

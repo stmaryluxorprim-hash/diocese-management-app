@@ -16,7 +16,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { useAppDate } from '@/lib/app-date-context';
 import { useCustomization } from '@/lib/customization-context';
-import { useDebouncedRealtime, useBusIds, scopeFilter } from '@/lib/realtime';
+import { useDebouncedRealtime, useBusIds } from '@/lib/realtime';
 import type { AppEvent } from '@/lib/types';
 import { cairoToday, currentOccurrence, previousOccurrenceDate, WEEKDAY_SHORT } from '@/lib/time';
 import { cachedLookup } from '@/lib/queries';
@@ -24,26 +24,67 @@ import { fetchAttendanceTimeline, fetchLeaderboard, shiftDay, type LeaderRow } f
 import { WidgetCard, WidgetEmpty, WidgetSkeleton, Avatar, fmtNum, fmtYmdLong } from './WidgetBits';
 import type { WidgetProps } from './CoreWidgets';
 
-/** Attendance per day for the last `n` days ending today (RLS-scoped). */
+/**
+ * Attendance per day for the last 14 days — ONE shared fetch for every
+ * widget that needs it (trend = 14 bars, streak = last 7).
+ *
+ * 20261016120000: the trend and streak widgets each called the
+ * `stats_attendance_timeline` RPC (6 767 calls / 1.28 s avg in production)
+ * on mount and on every attendance burst → two identical aggregate RPCs
+ * per dashboard open on every device. Now the 14-day result lives in a
+ * module-level store: the first widget to mount loads it, every other one
+ * subscribes; a bus burst reloads it once (60 s rate limit) for all.
+ */
+const DAILY_N = 14;
+type DailyState = { today: string; vals: number[] | null };
+let dailyState: DailyState = { today: '', vals: null };
+let dailyInflight: Promise<void> | null = null;
+let dailyLoadedAt = 0;
+const DAILY_MIN_RELOAD_MS = 30_000; // two widgets × one burst → still ONE RPC
+const dailyListeners = new Set<() => void>();
+function dailyNotify() { dailyListeners.forEach((fn) => { try { fn(); } catch { /* ignore */ } }); }
+async function loadDaily(supabase: ReturnType<typeof createClient>, today: string, force = false): Promise<void> {
+  if (dailyInflight) return dailyInflight;
+  const fresh = dailyState.today === today && dailyState.vals;
+  if (!force && fresh) return;
+  if (force && fresh && Date.now() - dailyLoadedAt < DAILY_MIN_RELOAD_MS) return;
+  const days = Array.from({ length: DAILY_N }, (_, i) => shiftDay(today, i - (DAILY_N - 1)));
+  dailyInflight = (async () => {
+    try {
+      const rows = await fetchAttendanceTimeline(supabase, { from: days[0], to: today, bucket: 'day' }, {});
+      const map = new Map<string, number>();
+      rows.forEach((r) => map.set(r.bucket, (map.get(r.bucket) ?? 0) + r.attendance));
+      dailyState = { today, vals: days.map((d) => map.get(d) ?? 0) };
+    } catch {
+      dailyState = { today, vals: days.map(() => 0) };
+    } finally {
+      dailyInflight = null;
+      dailyLoadedAt = Date.now();
+      dailyNotify();
+    }
+  })();
+  return dailyInflight;
+}
+
+/** The last `n` (≤ 14) days ending today, from the shared store. */
 function useDailyAttendance(n: number) {
   const { now } = useAppDate();
   const [supabase] = useState(() => createClient());
   const today = cairoToday(now());
   const days = useMemo(() => Array.from({ length: n }, (_, i) => shiftDay(today, i - (n - 1))), [today, n]);
-  const [vals, setVals] = useState<number[] | null>(null);
+  const [, bump] = useState(0);
 
-  const load = useCallback(async () => {
-    try {
-      const rows = await fetchAttendanceTimeline(supabase, { from: days[0], to: today, bucket: 'day' }, {});
-      const map = new Map<string, number>();
-      rows.forEach((r) => map.set(r.bucket, (map.get(r.bucket) ?? 0) + r.attendance));
-      setVals(days.map((d) => map.get(d) ?? 0));
-    } catch { setVals(days.map(() => 0)); }
-  }, [supabase, days, today]);
-  useEffect(() => { load(); }, [load]);
-  // 20261014120000: a 14-day aggregate RPC once per scan on every device → at
-  // most once per minute during a burst (the bar for today moves by one).
-  useDebouncedRealtime(supabase, `w-daily-${n}`, [{ table: 'attendance_log' }], load, { delayMs: 3000, minIntervalMs: 60_000 });
+  useEffect(() => {
+    const fn = () => bump((x) => x + 1);
+    dailyListeners.add(fn);
+    void loadDaily(supabase, today);
+    return () => { dailyListeners.delete(fn); };
+  }, [supabase, today]);
+  const reload = useCallback(() => loadDaily(supabase, today, true), [supabase, today]);
+  // a scan burst → one reload shared by the widgets, at most once a minute
+  useDebouncedRealtime(supabase, 'w-daily', [{ table: 'attendance_log' }], reload, { delayMs: 3000, minIntervalMs: 60_000 });
+
+  const vals = dailyState.today === today && dailyState.vals ? dailyState.vals.slice(DAILY_N - n) : null;
   return { days, vals };
 }
 
@@ -126,7 +167,7 @@ export function WeeklyStreakWidget({ title, size }: WidgetProps) {
 const MEDALS = ['🥇', '🥈', '🥉'];
 
 export function LeaderboardWidget({ title, size }: WidgetProps) {
-  const { profile, scopes } = useAuth();
+  const { profile } = useAuth();
   const [supabase] = useState(() => createClient());
   const [rows, setRows] = useState<LeaderRow[] | null>(null);
   const limit = size === 'half' ? 5 : 6;
@@ -137,7 +178,7 @@ export function LeaderboardWidget({ title, size }: WidgetProps) {
   useEffect(() => { load(); }, [load]);
   // 20261014120000: every scan bumps an enrollment's points → the top-6 RPC
   // re-ran once per scan on every device. At most once per minute now.
-  useDebouncedRealtime(supabase, 'w-leader', [{ table: 'enrollments', filter: scopeFilter(profile, scopes) }], load, { delayMs: 2500, minIntervalMs: 60_000 });
+  useDebouncedRealtime(supabase, 'w-leader', [{ table: 'enrollments' }], load, { enabled: !!profile, delayMs: 2500, minIntervalMs: 60_000 });
 
   return (
     <WidgetCard id="w-leaderboard" icon={Trophy} title={title} tone="amber" href="/stats" flush>
@@ -280,7 +321,7 @@ export function PendingApprovalsWidget({ title, size }: WidgetProps) {
     setN({ servants: count ?? 0, requests: typeof data === 'number' ? data : 0 });
   }, [supabase]);
   useEffect(() => { if (profile) load(); }, [load, profile]);
-  useDebouncedRealtime(supabase, 'w-approvals', [{ table: 'servant_enrollments' }, { table: 'data_change_requests' }], load, { delayMs: 1500 });
+  useDebouncedRealtime(supabase, 'w-approvals', [{ table: 'servant_enrollments' }, { table: 'data_change_requests' }], load, { delayMs: 1500, minIntervalMs: 30_000 });
 
   const total = (n?.servants ?? 0) + (n?.requests ?? 0);
   return (

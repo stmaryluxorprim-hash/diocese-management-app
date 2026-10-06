@@ -52,7 +52,7 @@ export function OccasionsWidget({ title, size }: WidgetProps) {
     } catch { setRows([]); }
   }, [supabase, max]);
   useEffect(() => { load(); }, [load]);
-  useDebouncedRealtime(supabase, 'w-occasions', [{ table: 'occasions' }, { table: 'occasion_registrations' }], load, { delayMs: 2000 });
+  useDebouncedRealtime(supabase, 'w-occasions', [{ table: 'occasions' }, { table: 'occasion_registrations' }], load, { delayMs: 2000, minIntervalMs: 30_000 });
 
   return (
     <WidgetCard id="w-occasions" icon={Tent} title={title ?? label('occasions')} tone="cyan" href="/occasions" flush>
@@ -114,7 +114,7 @@ export function OnlineLiveWidget({ title, size }: WidgetProps) {
     } catch { setRows([]); }
   }, [supabase, size]);
   useEffect(() => { load(); }, [load]);
-  useDebouncedRealtime(supabase, 'w-online', [{ table: 'online_classes' }, { table: 'online_class_participants' }], load, { delayMs: 2000 });
+  useDebouncedRealtime(supabase, 'w-online', [{ table: 'online_classes' }, { table: 'online_class_participants' }], load, { delayMs: 2000, minIntervalMs: 30_000 });
 
   const isLive = rows?.some((c) => c.status === 'live');
   return (
@@ -172,7 +172,7 @@ export function ExamsOpenWidget({ title, size }: WidgetProps) {
     } catch { setRows([]); }
   }, [supabase, max]);
   useEffect(() => { load(); }, [load]);
-  useDebouncedRealtime(supabase, 'w-exams', [{ table: 'exams' }, { table: 'exam_attempts' }], load, { delayMs: 2500 });
+  useDebouncedRealtime(supabase, 'w-exams', [{ table: 'exams' }, { table: 'exam_attempts' }], load, { delayMs: 2500, minIntervalMs: 30_000 });
 
   return (
     <WidgetCard id="w-exams-open" icon={GraduationCap} title={title ?? label('exams')} tone="violet" href="/exams" flush
@@ -328,7 +328,7 @@ export function StoreRecentWidget({ title, size }: WidgetProps) {
     } catch { setState({ count: 0, points: 0, rows: [] }); }
   }, [supabase, now, max]);
   useEffect(() => { load(); }, [load]);
-  useDebouncedRealtime(supabase, 'w-store', [{ table: 'store_orders' }], load, { delayMs: 1500 });
+  useDebouncedRealtime(supabase, 'w-store', [{ table: 'store_orders' }], load, { delayMs: 1500, minIntervalMs: 30_000 });
 
   return (
     <WidgetCard id="w-store-recent" icon={ShoppingBag} title={title ?? label('store')} subtitle="فواتير اليوم" tone="orange" href="/store" flush
@@ -382,7 +382,7 @@ export function AchievementsFeedWidget({ title, size }: WidgetProps) {
     } catch { setRows([]); }
   }, [supabase, max]);
   useEffect(() => { if (profile) load(); }, [load, profile]);
-  useDebouncedRealtime(supabase, 'w-awards', [{ table: 'user_achievements' }], load, { delayMs: 1500 });
+  useDebouncedRealtime(supabase, 'w-awards', [{ table: 'user_achievements' }], load, { delayMs: 1500, minIntervalMs: 30_000 });
 
   return (
     <WidgetCard id="w-achievements-feed" icon={Award} title={title ?? label('achievements')} tone="amber" href="/achievements" flush>

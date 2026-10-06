@@ -293,9 +293,10 @@ reset role;
 
 -- ---------- 9. realtime ----------
 do $$ begin
-  if (select count(*) from pg_publication_tables where pubname = 'supabase_realtime'
-        and tablename in ('birthday_greetings', 'birthday_card_templates', 'birthday_settings')) <> 3 then
-    raise exception 'realtime publication missing';
+  -- 20261016: broadcast bus triggers instead of the publication
+  if (select count(*) from pg_trigger where tgname = 'zzz_rt_ins'
+        and tgrelid in ('public.birthday_greetings'::regclass, 'public.birthday_card_templates'::regclass, 'public.birthday_settings'::regclass)) <> 3 then
+    raise exception 'birthday broadcast triggers missing';
   end if;
 end $$;
 

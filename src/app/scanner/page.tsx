@@ -29,7 +29,7 @@ import { ViewPersonModal, ModalFrame } from '@/components/PersonDataModals';
 import { AttendanceLogModal, PointsLogModal } from '@/components/LogModals';
 import { fetchEnrollmentsPage, cachedLookup, ALL } from '@/lib/queries';
 import { pickScopedDefault, effectiveScope } from '@/lib/defaults';
-import { onBusTable } from '@/lib/realtime';
+import { onBusTable, useBusIds } from '@/lib/realtime';
 import { useNavLabel } from '@/lib/customization-context';
 import { nativeDetector, decodeVideoFrame } from '@/lib/qr-decode';
 import { useModuleVisible } from '@/lib/modules-context';
@@ -339,19 +339,23 @@ export default function ScannerPage() {
   const [attendedDays, setAttendedDays] = useState<Record<string, Set<string>>>({});
   const [eventCounts, setEventCounts] = useState<Record<string, number>>({});
   const visibleIdsKey = visibleRows.map((e) => e.id).join(',');
+  const fetchEventAttendance = useCallback(async (eventIdArg: string, ids: string[]) => {
+    const { data } = await supabase
+      .from('attendance_log')
+      .select('enrollment_id, attended_on')
+      .eq('event_id', eventIdArg)
+      .in('enrollment_id', ids);
+    return (data ?? []) as { enrollment_id: string; attended_on: string }[];
+  }, [supabase]);
   useEffect(() => {
     if (!selectedEvent || !visibleIdsKey) { setAttendedDays({}); setEventCounts({}); return; }
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
-        .from('attendance_log')
-        .select('enrollment_id, attended_on')
-        .eq('event_id', selectedEvent.id)
-        .in('enrollment_id', visibleIdsKey.split(','));
+      const rows = await fetchEventAttendance(selectedEvent.id, visibleIdsKey.split(','));
       if (cancelled) return;
       const days: Record<string, Set<string>> = {};
       const counts: Record<string, number> = {};
-      ((data ?? []) as { enrollment_id: string; attended_on: string }[]).forEach((r) => {
+      rows.forEach((r) => {
         counts[r.enrollment_id] = (counts[r.enrollment_id] ?? 0) + 1;
         (days[r.enrollment_id] ??= new Set()).add(r.attended_on);
       });
@@ -359,7 +363,31 @@ export default function ScannerPage() {
       setEventCounts(counts);
     })();
     return () => { cancelled = true; };
-  }, [selectedEvent, supabase, visibleIdsKey]);
+  }, [selectedEvent, visibleIdsKey, fetchEventAttendance]);
+  // 20261016120000: another device scanned one of the rows on screen →
+  // re-read only those (the message carries the enrollment ids).
+  const selEvRef = useRef<string | null>(null); selEvRef.current = selectedEvent?.id ?? null;
+  const visIdsRef = useRef(''); visIdsRef.current = visibleIdsKey;
+  useBusIds('attendance_log', async (ids) => {
+    const evId = selEvRef.current;
+    if (!evId || !visIdsRef.current) return;
+    const onScreen = new Set(visIdsRef.current.split(','));
+    const want = ids.length ? ids.filter((id) => onScreen.has(id)) : Array.from(onScreen);
+    if (!want.length) return;
+    const rows = await fetchEventAttendance(evId, want);
+    setAttendedDays((prev) => {
+      const next = { ...prev };
+      want.forEach((id) => { delete next[id]; });
+      rows.forEach((r) => { (next[r.enrollment_id] ??= new Set()).add(r.attended_on); });
+      return next;
+    });
+    setEventCounts((prev) => {
+      const next = { ...prev };
+      want.forEach((id) => { next[id] = 0; });
+      rows.forEach((r) => { next[r.enrollment_id] = (next[r.enrollment_id] ?? 0) + 1; });
+      return next;
+    });
+  }, { enabled: !!selectedEvent, delayMs: 1500 });
 
   const attendanceShown = (e: EnrollmentWithPerson): number =>
     selectedEvent ? (eventCounts[e.id] ?? 0) : e.attendance_count;

@@ -97,24 +97,31 @@ export default function OnlineClassRoomPage() {
   const loadMessages = useCallback(async () => { try { setMessages(await fetchRoomMessages(supabase, id)); } catch { /* ignore */ } }, [supabase, id]);
 
   useEffect(() => { if (approved) { loadClass(); loadStats(); loadQuestions(); loadChecks(); loadMessages(); } }, [approved, loadClass, loadStats, loadQuestions, loadChecks, loadMessages]);
-
-  useDebouncedRealtime(supabase, `oc-${id}`, [{ table: 'online_classes', filter: `id=eq.${id}` }], loadClass, { enabled: approved, delayMs: 500 });
-  useDebouncedRealtime(supabase, `oc-stats-${id}`,
-    [{ table: 'online_class_participants', filter: `class_id=eq.${id}` }, { table: 'online_class_check_responses', filter: `class_id=eq.${id}` }, { table: 'online_class_checks', filter: `class_id=eq.${id}` }],
-    async () => { await Promise.all([loadStats(), loadChecks()]); }, { enabled: approved, delayMs: 800 });
-  useDebouncedRealtime(supabase, `oc-q-${id}`,
-    [{ table: 'online_class_questions', filter: `class_id=eq.${id}` }, { table: 'online_class_answers', filter: `class_id=eq.${id}` }],
-    loadQuestions, { enabled: approved, delayMs: 600 });
-  useDebouncedRealtime(supabase, `oc-msg-${id}`, [{ table: 'online_class_messages', filter: `class_id=eq.${id}` }], loadMessages, { enabled: approved, delayMs: 400 });
-
-  // clock + periodic stats while live (presence % depends on the clock)
   const live = cls?.status === 'live';
+
+  // 20261016120000: these tables ride the broadcast bus (no server-side
+  // filter) — a message means "some online class changed", so the handlers
+  // are rate-limited: the heartbeat of every child in every live room is an
+  // UPDATE on online_class_participants every 30 s. The stats poll below
+  // (15 s while live & visible) already keeps presence % moving, so the
+  // participants/checks listener only needs to catch up once a minute.
+  useDebouncedRealtime(supabase, `oc-${id}`, [{ table: 'online_classes' }], loadClass, { enabled: approved, delayMs: 500, minIntervalMs: 5_000 });
+  useDebouncedRealtime(supabase, `oc-stats-${id}`,
+    [{ table: 'online_class_participants' }, { table: 'online_class_check_responses' }, { table: 'online_class_checks' }],
+    async () => { await Promise.all([loadStats(), loadChecks()]); }, { enabled: approved && !live, delayMs: 800, minIntervalMs: 60_000 });
+  useDebouncedRealtime(supabase, `oc-q-${id}`,
+    [{ table: 'online_class_questions' }, { table: 'online_class_answers' }],
+    loadQuestions, { enabled: approved, delayMs: 600, minIntervalMs: 10_000 });
+  useDebouncedRealtime(supabase, `oc-msg-${id}`, [{ table: 'online_class_messages' }], loadMessages, { enabled: approved, delayMs: 400, minIntervalMs: 3_000 });
+
+  // clock + periodic stats while live (presence % depends on the clock);
+  // while live this poll is the ONLY refresh path for stats/checks
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(() => { if (document.visibilityState === 'visible') loadStats(); }, LIVE_POLL_MS.liveRoom); // live room only, visible only
+    const t = setInterval(() => { if (document.visibilityState === 'visible') { loadStats(); loadChecks(); } }, LIVE_POLL_MS.liveRoom); // live room only, visible only
     return () => clearInterval(t);
-  }, [live, loadStats]);
+  }, [live, loadStats, loadChecks]);
 
   // ---------- actions ----------
   const doStart = async () => {

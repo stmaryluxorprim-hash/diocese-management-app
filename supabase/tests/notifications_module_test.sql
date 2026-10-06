@@ -337,9 +337,10 @@ end $$;
 -- ---------- 11. realtime publication ----------
 do $$ begin
   -- 0046: notification_recipients moved to broadcast (zzz_rt_* triggers)
-  if (select count(*) from pg_publication_tables where pubname = 'supabase_realtime'
-        and tablename in ('notifications', 'notification_automations')) <> 2 then
-    raise exception 'realtime publication';
+  -- 20261016: broadcast bus triggers instead of the publication
+  if (select count(*) from pg_trigger where tgname = 'zzz_rt_ins'
+        and tgrelid in ('public.notifications'::regclass, 'public.notification_automations'::regclass)) <> 2 then
+    raise exception 'notifications broadcast triggers missing';
   end if;
   if not exists (select 1 from pg_trigger where tgname = 'zzz_rt_ins' and tgrelid = 'public.notification_recipients'::regclass) then
     raise exception 'notification_recipients broadcast trigger missing';
