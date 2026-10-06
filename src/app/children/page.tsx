@@ -472,23 +472,29 @@ export default function ChildrenPage() {
   // attendance_count across all events.
   const [attendedDays, setAttendedDays] = useState<Record<string, Set<string>>>({});
   const [eventCounts, setEventCounts] = useState<Record<string, number>>({});
+  // 20261016120000: keyed on the SET of ids on screen, not on the array
+  // identity — every in-place patch (a scan anywhere, via useBusIds) used to
+  // re-run this effect and re-download the whole event history of the list
+  // on every open device (14 k calls / 553 ms avg in production).
+  const screenIdsKey = useMemo(() => enrollments.map((e) => e.id).sort().join(','), [enrollments]);
+  const fetchEventAttendance = useCallback(async (eventIdArg: string, ids: string[]) => {
+    const rows: { enrollment_id: string; attended_on: string }[] = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await supabase
+        .from('attendance_log')
+        .select('enrollment_id, attended_on')
+        .eq('event_id', eventIdArg)
+        .in('enrollment_id', ids.slice(i, i + 100));
+      rows.push(...((data ?? []) as { enrollment_id: string; attended_on: string }[]));
+    }
+    return rows;
+  }, [supabase]);
   useEffect(() => {
-    if (!selectedEvent) { setAttendedDays({}); setEventCounts({}); return; }
+    if (!selectedEvent || !screenIdsKey) { setAttendedDays({}); setEventCounts({}); return; }
     let cancelled = false;
     (async () => {
-      // Only the enrollments ON SCREEN — not the event's whole history for
-      // the entire diocese. Chunked so the request URL stays small.
-      const ids = enrollments.map((e) => e.id);
-      const rows: { enrollment_id: string; attended_on: string }[] = [];
-      for (let i = 0; i < ids.length; i += 100) {
-        const { data } = await supabase
-          .from('attendance_log')
-          .select('enrollment_id, attended_on')
-          .eq('event_id', selectedEvent.id)
-          .in('enrollment_id', ids.slice(i, i + 100));
-        if (cancelled) return;
-        rows.push(...((data ?? []) as { enrollment_id: string; attended_on: string }[]));
-      }
+      const rows = await fetchEventAttendance(selectedEvent.id, screenIdsKey.split(','));
+      if (cancelled) return;
       const days: Record<string, Set<string>> = {};
       const counts: Record<string, number> = {};
       rows.forEach((r) => {
@@ -499,7 +505,31 @@ export default function ChildrenPage() {
       setEventCounts(counts);
     })();
     return () => { cancelled = true; };
-  }, [selectedEvent, supabase, enrollments]);
+  }, [selectedEvent, screenIdsKey, fetchEventAttendance]);
+  // Another device scanned → re-read ONLY the named enrollments (one tiny
+  // request); a bulk message (no ids) → whole list once.
+  const selectedEventIdRef = useRef<string | null>(null); selectedEventIdRef.current = selectedEvent?.id ?? null;
+  const screenIdsRef = useRef<string>(''); screenIdsRef.current = screenIdsKey;
+  useBusIds('attendance_log', async (ids) => {
+    const evId = selectedEventIdRef.current;
+    if (!evId || !screenIdsRef.current) return;
+    const onScreen = new Set(screenIdsRef.current.split(','));
+    const want = ids.length ? ids.filter((id) => onScreen.has(id)) : Array.from(onScreen);
+    if (!want.length) return;
+    const rows = await fetchEventAttendance(evId, want);
+    setAttendedDays((prev) => {
+      const next = { ...prev };
+      want.forEach((id) => { delete next[id]; });
+      rows.forEach((r) => { (next[r.enrollment_id] ??= new Set()).add(r.attended_on); });
+      return next;
+    });
+    setEventCounts((prev) => {
+      const next = { ...prev };
+      want.forEach((id) => { next[id] = 0; });
+      rows.forEach((r) => { next[r.enrollment_id] = (next[r.enrollment_id] ?? 0) + 1; });
+      return next;
+    });
+  }, { enabled: profile?.status === 'approved' && !!selectedEvent, delayMs: 1500 });
 
   // Attendance number shown on a person's badge
   const attendanceShown = (e: EnrollmentWithPerson): number =>

@@ -335,9 +335,10 @@ reset role;
 
 -- ---------- 11. realtime publication ----------
 do $$ begin
-  if (select count(*) from pg_publication_tables where pubname = 'supabase_realtime'
-        and tablename in ('exams', 'exam_questions', 'exam_attempts')) <> 3 then
-    raise exception 'realtime publication incomplete';
+  -- 20261016: broadcast bus triggers instead of the publication
+  if (select count(*) from pg_trigger where tgname = 'zzz_rt_ins'
+        and tgrelid in ('public.exams'::regclass, 'public.exam_questions'::regclass, 'public.exam_attempts'::regclass)) <> 3 then
+    raise exception 'exam broadcast triggers missing';
   end if;
 end $$;
 

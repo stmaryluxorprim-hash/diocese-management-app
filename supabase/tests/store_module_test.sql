@@ -186,8 +186,9 @@ reset role;
 -- realtime publication
 do $$ begin
   -- 0046: store_orders moved to broadcast (zzz_rt_* triggers)
-  if (select count(*) from pg_publication_tables where pubname='supabase_realtime' and tablename in ('store_items')) <> 1 then
-    raise exception 'realtime publication missing'; end if;
+  -- 20261016: broadcast bus trigger instead of the publication
+  if not exists (select 1 from pg_trigger where tgname = 'zzz_rt_ins' and tgrelid = 'public.store_items'::regclass) then
+    raise exception 'store_items broadcast trigger missing'; end if;
   if not exists (select 1 from pg_trigger where tgname = 'zzz_rt_ins' and tgrelid = 'public.store_orders'::regclass) then
     raise exception 'store_orders broadcast trigger missing'; end if;
 end $$;

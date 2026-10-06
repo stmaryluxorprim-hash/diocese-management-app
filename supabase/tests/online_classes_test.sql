@@ -482,10 +482,12 @@ reset role;
 
 -- ---------- 17. realtime publication ----------
 do $$ begin
-  if (select count(*) from pg_publication_tables where pubname = 'supabase_realtime'
-        and tablename in ('online_classes', 'online_class_participants', 'online_class_checks', 'online_class_check_responses',
-                          'online_class_questions', 'online_class_answers', 'online_class_messages')) <> 7 then
-    raise exception 'realtime publication incomplete';
+  -- 20261016: broadcast bus triggers instead of the publication
+  if (select count(*) from pg_trigger where tgname = 'zzz_rt_ins'
+        and tgrelid in ('public.online_classes'::regclass, 'public.online_class_participants'::regclass, 'public.online_class_checks'::regclass,
+                        'public.online_class_check_responses'::regclass, 'public.online_class_questions'::regclass,
+                        'public.online_class_answers'::regclass, 'public.online_class_messages'::regclass)) <> 7 then
+    raise exception 'online broadcast triggers missing';
   end if;
 end $$;
 

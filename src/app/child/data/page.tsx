@@ -62,7 +62,7 @@ export default function ChildDataPage() {
 }
 
 function DataContent() {
-  const { token, profile, refresh } = useChild();
+  const { token, profile } = useChild();
   const supabase = useMemo(() => createClient(), []);
 
   const { rows: requests, reload: reloadRequests } = usePortalList<DataChangeRequest>(
@@ -70,20 +70,11 @@ function DataContent() {
     `req-${token}`
   );
 
-  // Realtime on the child's requests → reload list + profile on decision
-  useEffect(() => {
-    if (!profile) return;
-    const ch = supabase
-      .channel(`child-req-${profile.person.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'data_change_requests', filter: `person_id=eq.${profile.person.id}` },
-        () => { reloadRequests(); refresh(); }
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [supabase, profile?.person.id, reloadRequests, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // 20261016120000: no `postgres_changes` any more (publication emptied;
+  // the child has no auth session for the private bus). `usePortalList`
+  // already reloads the requests when the tab regains focus, the profile
+  // refreshes on focus in ChildProvider, and a decision also arrives as a
+  // push notification — so the list is fresh whenever the child looks.
   // QR
   const [qr, setQr] = useState('');
   useEffect(() => {
