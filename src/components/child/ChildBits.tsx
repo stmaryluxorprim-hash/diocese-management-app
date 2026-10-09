@@ -7,6 +7,7 @@ import Image from 'next/image';
 import { User, ListChecks } from 'lucide-react';
 import InfoTip from '@/components/InfoTip';
 import { APP_TZ } from '@/lib/time';
+import { onAppResume } from '@/lib/realtime';
 import type { ChildPerson } from '@/lib/child-portal';
 
 export const fmtDateTime = (iso: string) =>
@@ -100,9 +101,7 @@ export function usePortalList<T>(load: (() => Promise<T[]>) | null, key: string)
   }, [key]);
   useEffect(() => {
     reload();
-    const onVis = () => { if (document.visibilityState === 'visible') reload(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
+    return onAppResume(reload); // 20261017120000: real resume only, not every glance
   }, [reload]);
   return { rows, error, reload };
 }

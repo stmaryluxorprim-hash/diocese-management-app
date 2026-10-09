@@ -42,6 +42,28 @@ import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
  * SAFETY NET. If the bus is not connected (realtime down, token trouble)
  * there is no poll (see below) — the header shows «غير متصل» and every
  * screen refetches when the bus returns or the tab regains focus.
+ *
+ * 20261017120000 — THE WAKE-UP STORM (fifth Logs Ingest round).
+ * After the four earlier rounds the meter still climbed in a shape that
+ * matched no user activity: the lines came in bursts, per device, every
+ * time a phone was picked up. Cause: every listener (10–20 on the home
+ * screen, 6–8 on the children page) refetched on EVERY hidden→visible
+ * transition, unconditionally — a 2-second glance at WhatsApp and back
+ * = 10–20 logged API requests, on every phone, dozens of times a day. On
+ * top of that the bus went through CLOSED → rejoin on every socket drop
+ * (phones kill the socket when the screen locks), and each rejoin fired
+ * `onBusConnection(true)` → every listener refetched AGAIN. Two bursts
+ * per pick-up, ~30 requests, × 80 phones × 30–50 pick-ups a day ≈ the
+ * whole monthly quota, with nobody doing anything in the app.
+ *
+ * Now there is ONE resume gate (`onAppResume`): a hidden→visible is a
+ * «resume» only when the tab was hidden ≥ RESUME_STALE_MS (2 min) or the
+ * bus was down while hidden — short glances refresh nothing (the bus
+ * delivered every change meanwhile; a message that arrived while hidden
+ * is still applied on return as before). The bus reconnect refetch runs
+ * only when the bus was actually DOWN (not on the first join) and at most
+ * once per resume, and a channel that closes with the socket is left to
+ * phoenix's own rejoin instead of being torn down and re-created.
  */
 
 // ---------- Topics ----------
@@ -115,9 +137,65 @@ const bus: BusState = {
   connListeners: new Set(),
 };
 
+// ---------- Resume gate (20261017120000) ----------
+/**
+ * A hidden→visible transition is a «resume» worth refetching for only when
+ * the tab was hidden at least this long (the bus delivered every change
+ * meanwhile for shorter gaps; the socket survives a short background on
+ * every platform) or the bus dropped while hidden.
+ */
+export const RESUME_STALE_MS = 2 * 60_000;
+
+type ResumeListener = () => void;
+const resumeListeners = new Set<ResumeListener>();
+let hiddenAt = 0;              // when the tab went hidden (0 = visible)
+let busDroppedWhileHidden = false;
+let lastResumeAt = 0;
+let resumeWired = false;
+
+function fireResume() {
+  lastResumeAt = Date.now();
+  busDroppedWhileHidden = false;
+  resumeListeners.forEach((fn) => { try { fn(); } catch { /* ignore */ } });
+}
+
+function wireResume() {
+  if (resumeWired || typeof document === 'undefined') return;
+  resumeWired = true;
+  document.addEventListener('visibilitychange', (ev) => {
+    // RefreshButton dispatches a synthetic event (`isTrusted === false`) for
+    // the few raw listeners left; it calls `triggerAppResume()` itself, so
+    // the gate ignores synthetic events (no double refresh).
+    if (ev && ev.isTrusted === false) return;
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    const away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    if (away >= RESUME_STALE_MS || busDroppedWhileHidden) fireResume();
+  });
+}
+
+/**
+ * Subscribe to «the app resumed and may have missed something»: fired on
+ * hidden→visible after ≥ RESUME_STALE_MS hidden, after a bus drop while
+ * hidden, and on every manual «تحديث» (RefreshButton). NOT fired for a
+ * short glance away. Returns the unsubscribe fn.
+ */
+export function onAppResume(fn: ResumeListener): () => void {
+  wireResume();
+  resumeListeners.add(fn);
+  return () => { resumeListeners.delete(fn); };
+}
+
+/** Programmatic resume (the «تحديث» button) — refreshes every mounted listener. */
+export function triggerAppResume(): void { fireResume(); }
+
+/** True when the tab is hidden (used by the listeners to defer work). */
+const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
 function setConnected(ok: boolean) {
   if (bus.connected === ok) return;
   bus.connected = ok;
+  if (!ok && isHidden()) busDroppedWhileHidden = true;
   bus.connListeners.forEach((fn) => { try { fn(ok); } catch { /* ignore */ } });
 }
 
@@ -136,15 +214,20 @@ function openTopic(supabase: SupabaseClient, topic: string, attempt = 0) {
   });
   bus.channels.set(topic, ch);
   ch.subscribe((status) => {
-    if (status === 'SUBSCRIBED') { setConnected(true); return; }
+    if (status === 'SUBSCRIBED') { attempt = 0; setConnected(true); return; }
     if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
       // any other topic still up? keep "connected"
       const anyUp = Array.from(bus.channels.values()).some((c) => c !== ch && c.state === 'joined');
       if (!anyUp) setConnected(false);
-      // A private topic is refused when the socket had no JWT yet (race at
-      // login) or the migration isn't applied (topic policy missing). Retry
-      // with back-off a few times, then leave the pollers in charge.
-      if (status !== 'CLOSED' && attempt < 4 && bus.channels.get(topic) === ch) {
+      // 20261017120000: a socket drop (screen lock, network switch) reports
+      // CHANNEL_ERROR / CLOSED on every channel; phoenix rejoins them by
+      // itself when the socket is back (the SUBSCRIBED above fires again).
+      // Tearing the channel down and re-creating it here doubled the joins
+      // and the RLS checks on every pick-up. Only a REFUSED join (private
+      // topic without JWT yet — race at login — or the policy missing)
+      // needs our own retry, and only while the socket itself is up.
+      const socketUp = supabase.realtime.isConnected();
+      if (status !== 'CLOSED' && socketUp && attempt < 4 && bus.channels.get(topic) === ch) {
         bus.channels.delete(topic);
         supabase.removeChannel(ch).catch(() => {});
         const delay = 2_000 * Math.pow(2, attempt) + Math.random() * 1_000;
@@ -176,6 +259,7 @@ export function configureRealtimeBus(
   me: { uid: string; role: string; churchIds: string[] } | null,
 ) {
   bus.supabase = supabase;
+  wireResume(); // the gate must be tracking hidden/visible before the first drop
   const want: string[] = [];
   if (me) {
     want.push(`user:${me.uid}`);
@@ -262,13 +346,23 @@ export const LIVE_POLL_MS = {
  * «I am looking at it and want the latest» case.
  */
 export function startFocusRefresh(fn: () => void): () => void {
-  const onVis = () => { if (document.visibilityState === 'visible') fn(); };
-  document.addEventListener('visibilitychange', onVis);
-  window.addEventListener('focus', onVis);
-  return () => {
-    document.removeEventListener('visibilitychange', onVis);
-    window.removeEventListener('focus', onVis);
-  };
+  // 20261017120000: through the resume gate — a short glance away refetches
+  // nothing; ≥ 2 min hidden, a bus drop while hidden or «تحديث» do.
+  return onAppResume(fn);
+}
+
+/**
+ * React form of `onAppResume` for the portals' data blocks (they have no
+ * bus, so «resume» is their only live path besides push). `fn` is read
+ * through a ref, so the effect never re-registers when the callback
+ * identity changes.
+ */
+export function useAppResume(fn: () => void, enabled = true): void {
+  const ref = useRef(fn); ref.current = fn;
+  useEffect(() => {
+    if (!enabled) return;
+    return onAppResume(() => { ref.current(); });
+  }, [enabled]);
 }
 
 /**
@@ -278,10 +372,18 @@ export function startFocusRefresh(fn: () => void): () => void {
  */
 export function startLivePoll(fn: () => void, everyMs: number, active: () => boolean = () => true): () => void {
   let t: ReturnType<typeof setInterval> | null = null;
-  const start = () => { if (t === null) t = setInterval(() => { if (active() && document.visibilityState === 'visible') fn(); }, everyMs); };
+  // the caller has just loaded the screen → the first poll is due in `everyMs`
+  let lastRun = Date.now();
+  const run = () => { lastRun = Date.now(); fn(); };
+  const start = () => { if (t === null) t = setInterval(() => { if (active() && document.visibilityState === 'visible') run(); }, everyMs); };
   const stop = () => { if (t !== null) { clearInterval(t); t = null; } };
   const onVis = () => {
-    if (document.visibilityState === 'visible') { if (active()) fn(); start(); } else stop();
+    if (document.visibilityState === 'visible') {
+      // 20261017120000: on return run at once only if a poll is actually due
+      // (hidden longer than the interval) — a 3 s glance away costs nothing.
+      if (active() && Date.now() - lastRun >= everyMs) run();
+      start();
+    } else stop();
   };
   document.addEventListener('visibilitychange', onVis);
   if (document.visibilityState === 'visible') start();
@@ -381,6 +483,8 @@ export function useDebouncedRealtime(
       timer = setTimeout(run, wait);
     };
 
+    // a message that arrived while hidden → ONE reload on return (as before:
+    // the bus did its job, we only deferred the fetch)
     const onVisible = () => {
       if (document.visibilityState === 'visible' && pending) {
         pending = false;
@@ -402,14 +506,21 @@ export function useDebouncedRealtime(
           schedule();
         }));
       });
-      // bus (re)connected → one refetch to catch what happened meanwhile.
-      // No poll while it is down (the header chip tells the user).
-      unsubs.push(onBusConnection((ok) => { if (ok) schedule(); }));
-      // a hidden→visible transition always refreshes bus-backed screens
-      // (cheap, and covers messages missed while the socket was asleep)
-      const onVisBus = () => { if (document.visibilityState === 'visible') schedule(); };
-      document.addEventListener('visibilitychange', onVisBus);
-      unsubs.push(() => document.removeEventListener('visibilitychange', onVisBus));
+      // 20261017120000: the bus coming BACK after being down → one refetch
+      // to catch what happened meanwhile — but not on the very first join
+      // (the screen is loading its data right now anyway) and not again
+      // within the same resume (the resume listener below already did it).
+      let wasDown = !busConnected();
+      unsubs.push(onBusConnection((ok) => {
+        if (!ok) { wasDown = true; return; }
+        if (!wasDown) return;
+        wasDown = false;
+        if (Date.now() - lastResumeAt < 5_000) return;
+        schedule();
+      }));
+      // a REAL resume (hidden ≥ 2 min · bus dropped while hidden · «تحديث»)
+      // refreshes bus-backed screens; a short glance away does not.
+      unsubs.push(onAppResume(() => schedule()));
     }
 
     // ---- cold tables → classic postgres_changes ----
@@ -498,12 +609,17 @@ export function useBusIds(
       if (m.ids && m.ids.length) m.ids.forEach((id) => pendingIds.add(id)); else pendingAll = true;
       schedule();
     });
+    // ids collected while hidden → hand them over on return (cheap, exact).
     const onVis = () => {
       if (document.visibilityState !== 'visible') return;
-      if (hasPending) schedule(); else visRef.current?.();
+      if (hasPending) schedule();
     };
     document.addEventListener('visibilitychange', onVis);
-    return () => { off(); if (timer) clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); };
+    // 20261017120000: the caller's full refresh (`onVisible`) runs only on a
+    // REAL resume (≥ 2 min hidden · bus dropped · «تحديث») — not on every
+    // glance away — and not when pending ids already cover the gap.
+    const offResume = onAppResume(() => { if (!hasPending) visRef.current?.(); });
+    return () => { off(); offResume(); if (timer) clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); };
   }, [table, enabled, delayMs]);
 }
 

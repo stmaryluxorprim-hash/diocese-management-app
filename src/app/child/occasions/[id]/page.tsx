@@ -15,6 +15,7 @@ import {
 import ChildShell from '@/components/child/ChildShell';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
+import { onAppResume } from '@/lib/realtime';
 import {
   OccasionCover, KindBadge, OccasionStatusBadge, OccasionInfoList, TicketCard, RegStatusBadge, whenLabel, useQrDataUrl,
 } from '@/components/occasions/OccasionBits';
@@ -49,11 +50,7 @@ function Content() {
 
   // initial + whenever the shared list changes (realtime bump) + on focus
   useEffect(() => { load(); }, [load, occasions]);
-  useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, [load]);
+  useEffect(() => onAppResume(load), [load]); // 20261017120000: real resume only
 
   const say = (ok: boolean, text: string) => { setFlash({ ok, text }); setTimeout(() => setFlash(null), 3000); };
 

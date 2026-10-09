@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useChild } from '@/lib/child-context';
+import { onAppResume } from '@/lib/realtime';
 import { fetchChildConfession, type ChildConfession } from '@/lib/priest-portal';
 
 export function useChildConfession() {
@@ -23,9 +24,8 @@ export function useChildConfession() {
       .then((r) => { if (!cancelled) setData(r); })
       .catch(() => { if (!cancelled) setData({ priests: [], appointments: [], server_today: '' }); });
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run); // 20261017120000: real resume only, not every glance
+    return () => { cancelled = true; off(); };
   }, [token, supabase, tick]);
   const pending = (data?.appointments ?? []).filter((a) => a.status === 'pending').length;
   const upcoming = (data?.appointments ?? []).filter((a) => a.status === 'approved' && a.on >= (data?.server_today ?? '')).length;

@@ -203,6 +203,106 @@ limit 20
 
 ---
 
+## Wake-up bursts (20261017120000) — is the volume *activity* or *pick-ups*?
+
+The fifth round found the meter climbing with no matching user activity: every
+hidden→visible transition of a phone made 10–20 listeners refetch, and every
+socket drop (screen lock) made the bus channels rejoin and refetch again. The
+signature in the logs is a **burst of 10–30 requests from ONE client within
+~3 seconds**, repeated many times a day, outside scan evenings. These queries
+show it directly.
+
+### H. Bursts per client-second (classic)
+
+The classic explorer has no stable per-device id; the user agent is close enough
+(one phone model + browser build per servant, in practice):
+
+```sql
+select
+  timestamp_trunc(timestamp, second) as sec,
+  h.user_agent,
+  count(*) as n
+from edge_logs
+cross join unnest(metadata) as m
+cross join unnest(m.request) as request
+cross join unnest(request.headers) as h
+group by sec, h.user_agent
+having n >= 8
+order by n desc
+limit 50
+```
+
+Rows with `n ≥ 8` in a single second = one device firing all its listeners at
+once. Before the fix: hundreds of such rows a day. After: only when a tab
+returns after ≥ 2 minutes hidden or «تحديث» is tapped.
+
+### I. Share of requests that arrive in bursts (classic)
+
+```sql
+with per_sec as (
+  select timestamp_trunc(timestamp, second) as sec, h.user_agent, count(*) as n
+  from edge_logs
+  cross join unnest(metadata) as m
+  cross join unnest(m.request) as request
+  cross join unnest(request.headers) as h
+  group by sec, h.user_agent
+)
+select
+  countif(n >= 8) as burst_seconds,
+  sum(if(n >= 8, n, 0)) as burst_requests,
+  sum(n) as all_requests,
+  round(100 * sum(if(n >= 8, n, 0)) / sum(n), 1) as burst_pct
+from per_sec
+```
+
+`burst_pct` above ~30 % means the ingest is dominated by wake-ups, not by what
+people do in the app.
+
+### J. Realtime joins per hour (classic) — channel churn
+
+```sql
+select
+  timestamp_trunc(timestamp, hour) as hour,
+  count(*) as n
+from realtime_logs
+where event_message like '%phx_join%' or event_message like '%JOIN%'
+group by hour
+order by hour
+```
+
+Expect 2–4 joins per device per app open. A steady hourly stream far above
+`devices × opens` = channels being torn down and re-created on every socket
+drop (fixed in `src/lib/realtime.ts` — `openTopic` leaves phoenix to rejoin).
+
+### K. Bytes per source (new dialect) — what the meter actually counts
+
+```sql
+select source, count() as lines, sum(length(body)) as approx_bytes
+from logs
+group by source
+order by approx_bytes desc
+```
+
+### L. Bursts per client-second (new dialect)
+
+```sql
+select
+  toStartOfSecond(timestamp) as sec,
+  log_attributes['request.user_agent'] as ua,
+  count() as n
+from logs
+where source = 'edge_logs'
+group by sec, ua
+having n >= 8
+order by n desc
+limit 50
+```
+
+(If `request.user_agent` is not a key in your project, discover the keys with the
+"Discover attribute keys" query above — the header name varies by region.)
+
+---
+
 ## Reading the results
 
 * `edge_logs` will dominate; each line is roughly 1–2 KB whatever the request did.
