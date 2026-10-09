@@ -8,6 +8,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode,
 } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { onAppResume } from '@/lib/realtime';
 import {
   clearChildToken, fetchChildProfile, getChildToken, setChildToken,
   childLogin, childLogout, fetchChildBootstrap,
@@ -201,11 +202,11 @@ export function ChildProvider({ children }: { children: ReactNode }) {
 
   // tab back → one bootstrap call (session touch + every block). No timers:
   // the portal never polls in the background (20261011120000).
+  // 20261017120000: through the resume gate — only after ≥ 2 min hidden or
+  // on «تحديث»; a glance at another app and back costs nothing.
   useEffect(() => {
     if (!token) return;
-    const onVisible = () => { if (document.visibilityState === 'visible') void loadAll(token); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    return onAppResume(() => { void loadAll(token); });
   }, [token, loadAll]);
 
   // service worker «push arrived» → refresh the inbox only

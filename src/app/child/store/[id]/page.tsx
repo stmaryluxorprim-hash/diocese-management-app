@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/child/ChildBits';
 import { ShopPicture, ItemPicture, RequestSheet } from '@/components/child/StoreBits';
 import { useChild } from '@/lib/child-context';
 import { createClient } from '@/lib/supabase/client';
+import { onAppResume } from '@/lib/realtime';
 import {
   fetchChildShopItems, sendChildStoreRequest, cancelChildStoreRequest, childErrorMessage,
   type ChildShopItem, type ChildStoreRequest,
@@ -61,11 +62,7 @@ function ShopContent() {
     catch (e) { setItems([]); setError(childErrorMessage(e)); }
   }, [supabase, token, id]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible') load(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { document.removeEventListener('visibilitychange', onVis); };
-  }, [load]);
+  useEffect(() => onAppResume(load), [load]); // 20261017120000: real resume only
 
   // ---- cart ----
   const [lines, setLines] = useState<Line[]>([]);

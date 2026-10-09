@@ -7,6 +7,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { onAppResume } from '@/lib/realtime';
 import {
   clearPriestToken, fetchPriestProfile, getPriestToken, priestLogout, priestSessionTouch, priestErrorMessage,
   fetchConfessors, fetchAppointments, type PriestProfile, type Confessor, type Appointment,
@@ -92,11 +93,12 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     })();
   }, [load, supabase, dropSession]);
 
+  // 20261017120000: every block below refreshes through the resume gate
+  // (≥ 2 min hidden · «تحديث») — not on every glance away. Six blocks ×
+  // every pick-up used to be the priest portal's whole API footprint.
   useEffect(() => {
     if (!token) return;
-    const onVisible = () => { if (document.visibilityState === 'visible') { priestSessionTouch(supabase, token).catch(() => {}); load(token); } };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => { document.removeEventListener('visibilitychange', onVisible); };
+    return onAppResume(() => { priestSessionTouch(supabase, token).catch(() => {}); load(token); });
   }, [token, supabase, load]);
 
   const refresh = useCallback(async () => { if (token) await load(token); }, [token, load]);
@@ -117,9 +119,8 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const run = () => fetchConfessors(supabase, token).then((r) => { if (!cancelled) setConfessors(r); }).catch(() => {});
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run);
+    return () => { cancelled = true; off(); };
   }, [token, supabase, cTick]);
 
   // ---- appointments (pending + upcoming)
@@ -131,9 +132,8 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const run = () => fetchAppointments(supabase, token).then((r) => { if (!cancelled) setAppointments(r); }).catch(() => {});
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run);
+    return () => { cancelled = true; off(); };
   }, [token, supabase, aTick]);
 
   // ---- areas tree (church → areas → streets → buildings)
@@ -145,9 +145,8 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const run = () => fetchAreasTree(supabase, token).then((r) => { if (!cancelled) setAreas(r); }).catch(() => {});
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run);
+    return () => { cancelled = true; off(); };
   }, [token, supabase, arTick]);
 
   // ---- families (with their members · last visit · next visit)
@@ -159,9 +158,8 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const run = () => fetchPriestFamilies(supabase, token).then((r) => { if (!cancelled) setFamilies(r); }).catch(() => {});
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run);
+    return () => { cancelled = true; off(); };
   }, [token, supabase, fTick]);
 
   // ---- visits (pending requests + upcoming)
@@ -173,9 +171,8 @@ export function PriestProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const run = () => fetchVisits(supabase, token).then((r) => { if (!cancelled) setVisits(r); }).catch(() => {});
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run);
+    return () => { cancelled = true; off(); };
   }, [token, supabase, vTick]);
 
   const reloadAll = useCallback(() => { refresh(); reloadConfessors(); reloadAppointments(); reloadAreas(); reloadFamilies(); reloadVisits(); },

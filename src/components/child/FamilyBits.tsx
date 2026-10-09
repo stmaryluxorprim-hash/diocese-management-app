@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useChild } from '@/lib/child-context';
+import { onAppResume } from '@/lib/realtime';
 import { fetchChildFamily, type ChildFamily } from '@/lib/priest-families';
 
 export function useChildFamily() {
@@ -22,9 +23,8 @@ export function useChildFamily() {
       .then((r) => { if (!cancelled) setData(r); })
       .catch(() => { if (!cancelled) setData({ family: null, me: { id: '', name: '' }, priests: [], priests_fallback: true, visits: [], server_today: '' }); });
     run();
-    const onVis = () => { if (document.visibilityState === 'visible') run(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVis); };
+    const off = onAppResume(run); // 20261017120000: real resume only, not every glance
+    return () => { cancelled = true; off(); };
   }, [token, supabase, tick]);
   const pending = (data?.visits ?? []).filter((v) => v.status === 'pending').length;
   const upcoming = (data?.visits ?? []).filter((v) => v.status === 'approved' && v.on >= (data?.server_today ?? '')).length;

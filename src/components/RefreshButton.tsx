@@ -9,8 +9,18 @@
 
 import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { triggerAppResume } from '@/lib/realtime';
 
+/**
+ * 20261017120000: the data blocks listen to the resume gate (`onAppResume`)
+ * instead of the raw visibilitychange event, so a tap here calls the gate
+ * directly (a forced resume — always refreshes). The synthetic events stay
+ * for the handful of screens that still listen to them (live rooms, the
+ * pending-call picker) — the gate ignores synthetic hidden→visible only
+ * when nothing is due, and `triggerAppResume` already covered the rest.
+ */
 export function refreshEverything() {
+  triggerAppResume();
   document.dispatchEvent(new Event('visibilitychange'));
   window.dispatchEvent(new Event('focus'));
 }
