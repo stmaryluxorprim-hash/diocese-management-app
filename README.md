@@ -376,6 +376,7 @@ Second round on the Supabase **Logs Ingest** meter (the first — 20261010120000
 ## Currently Completed Features
 - ✅ **نتيجة المكالمة تلقائيًا بعد الاتصال · «أخرى» (!) بسبب مكتوب · سجل الافتقاد منفصل (20261012120000)**: pressing the **call button** dials and, when the servant **comes back to the app** from the phone app, the **feedback PICKER opens automatically** for the child he just called (`useAfterCallPrompt` — visibility / focus / pageshow; the pending call survives a PWA restart via sessionStorage, 2 h TTL; desktop without a dialer → opens after 2.5 s). The picker offers the predefined feedbacks **plus a fixed «أخرى» choice with a «!» icon** → the servant **writes the cause himself** (`contact_log.note`, `feedback_id` null, 1–500 chars). The card badge shows **«أخرى» (!)** in orange; tapping any feedback badge now opens the **HISTORY** dialog (سجل الافتقاد) — a different dialog from the picker: every dial + every recorded outcome of the child for the event, an «أخرى» row **shows the written text**, who recorded it and when, with **اتصال** (dial → picker on return) · **تسجيل / تغيير النتيجة** (opens the picker) · delete. New **«أخرى» filter chip** on the children page; the الافتقاد report shows `أخرى: <text>`. Children page + scanner. See § Call feedback.
 - ✅ **عاصفة الاستيقاظ — Logs Ingest بلا نشاط (20261017120000)**: every hidden→visible of a phone (a glance at WhatsApp, the lock screen) made 10–20 listeners refetch, and the socket drop behind it re-created every bus channel and made them all refetch **again** — ~30 logged requests per pick-up per device, nobody doing anything. One resume gate (`onAppResume` — ≥ 2 min hidden · bus dropped while hidden · «تحديث») now decides when a return is worth a refresh; the reconnect refetch runs only after a real outage; closed channels are left to phoenix's rejoin; the portal blocks (child · priest) go through the same gate. Measurement queries § H–L in `logs_explorer_queries.md`. See § The wake-up storm.
+- ✅ **الإحصائيات بأربع تبويبات — نظرة عامة · الحضور · النقاط · الافتقاد (20261018120000)**: `/stats?tab=overview|attendance|points|calls`. Shared sticky controls (كنيسة › خدمة › فصل › **مناسبة** + the day picker) and a **window bar** (اليوم · هذا الأسبوع · هذا الشهر · 30 يوم · 3 أشهر · هذه السنة · مخصص, with day/week/month buckets). **الحضور**: rate rings (persons who came at least once · seat occupancy = attendance ÷ expected occurrences × persons · gender), trend line + per-event stacked chart, a **histogram of how many times each person attended** (0 / partial / every occurrence), per-class coverage, weekday **and hour-of-day** profiles, المنتظمون and الأكثر غياباً. **النقاط**: period net, a **sources donut** (attendance · causes + · deductions −), add/deduct trend, per-cause stacked chart + ranking, **current balances** (total · average · max · zero + histogram), per-class net with recipients %, **who granted the points** (per servant: cause points + attendance scans), top earners / top balances / most deducted. **الافتقاد** (calls): KPIs (calls · persons reached · feedbacks · messages · servants), **coverage bars** (absentees called vs not, calls with / without a recorded outcome), trend line, **by servant** (calls · persons · feedbacks · «أخرى» · messages · active days · classes touched, ranked with a stacked bar) **or by class** (% of the class's absentees that were called, feedback %, callers), a **donut of outcomes** in the `call_feedbacks` colors / icons (incl. «أخرى» and «بدون نتيجة»), and the **persons list — من تم افتقاده / من لم يُفتقد / غائب ولم يُفتقد** with last caller, last outcome, search and tap-to-call. Excel exports every table of the active tab. 16 new SECURITY DEFINER RPCs with the caller's `my_scope_sets()` applied explicitly (a class servant asking for the whole church still gets his class only — asserted in `supabase/tests/stats_tabs_test.sql`). See § Statistics Architecture.
 - ✅ **RLS مرة واحدة لكل استعلام · كل الجداول على قناة البث · إحصائيات سريعة (20261016120000)**: `my_scope_sets()` + `scope_visible()` turn the per-row scope look-up of 33 policies into InitPlans (enrollments page 348 → 4.5 ms, timeline 29 s → 39 ms locally); every public table gets a statement-level bus trigger and the `postgres_changes` publication is emptied (`realtime.list_changes` 3 M calls → 0); `stats_attendance_timeline` aggregates before joining events; shared 14-day widget fetch, id-keyed badge effects, rate-limited module widgets. See § RLS once per statement.
 - ✅ **فتح التطبيق بطلب واحد (20261015120000)**: `app_bootstrap()` (security invoker) replaces the 10 requests every staff device made on open; `child_portal_bootstrap(token)` replaces the 10 RPCs of the child portal on open and on every tab focus (+ its 4 anon realtime channels); the four global config tables join the broadcast bus. 10 + 4 joins → 1. See § One request to open the app.
 - ✅ **إصلاح تضخّم الـ realtime — تحديث الصفوف المذكورة فقط (20261013120000 · 20261014120000)**: scan-day aggregates (pulse · counters · event count · daily bars · leaderboard · follow-up · stats page) reload at most once per 20–60 s during a burst (`minIntervalMs`) and ignore counter-only enrollment updates; `useBusIds` reads the enrollment ids carried by every bus message; the children page patches only those feedback badges / rows (1 small request) and the home follow-up widget patches in memory (0 requests) instead of re-reading everything on every device for every call — ~240 logged API requests per phone call → ≤ 1. See § Realtime fan-out fix.
@@ -446,7 +447,7 @@ Second round on the Supabase **Logs Ingest** meter (the first — 20261010120000
 | `/` | الرئيسية — owner-configured widgets grid (0036) |
 | `/children` | المخدومين — list/search/add |
 | `/scanner` | الماسح — scope + job (attendance / points / data) applied on scan; live manual points modal (NumPad, stays open); scan-operations archive |
-| `/stats` | الإحصائيات — scoped KPIs, by-event / by-cause breakdowns, timelines, leaderboard, Excel export |
+| `/stats` | الإحصائيات — four tabs: نظرة عامة (scoped KPIs, selected day by event / cause / class, timelines, leaderboard) · الحضور · النقاط · الافتقاد (period analytics — see § Statistics Architecture); Excel export per tab |
 | `/settings` | الإعدادات hub |
 | `/finance` · `/finance?b=<id>` | الخزينة — my budgets (role · balance) → inside a budget: overview · entries · causes · members (module `finance`) |
 | `/settings/approvals` | approve/reject servant requests (scope defaults from request) |
@@ -543,6 +544,7 @@ Second round on the Supabase **Logs Ingest** meter (the first — 20261010120000
    ⚠️ In `0005` the `alter type ... add value 'suspended'` must run in its own query before the rest of the file
    ⚠️ `0019_performance_rls_indexes_rpc.sql` is **required** by the current frontend (home / scanner call its RPCs). It is safe to re-run (idempotent).
    ⚠️ `0020_statistics_rpcs.sql` is **required** by the الإحصائيات tab (all `stats_*` RPCs). Idempotent; depends on 0019 (`my_scope()`, `enrollment_visible()`).
+   ⚠️ `20261018120000_stats_tabs_calls_attendance_points.sql` is **required** by the الحضور · النقاط · الافتقاد tabs of الإحصائيات (16 `stats_*` period RPCs + `stats_scope_enrollments` / `stats_expected_occurrences` helpers + indexes on `contact_log(kind, contacted_on)` · `contact_log(recorded_by, contacted_on)` · `contact_log(enrollment_id, contacted_on)` · `points_log(recorded_by)`). Without it those three tabs show «تأكد من تشغيل الترحيل 20261018120000»; the overview tab keeps working. Idempotent; depends on 20261016120000 (`my_scope_sets()`). Test: `supabase/tests/stats_tabs_test.sql`.
    ⚠️ `0021_child_portal.sql` is **required** by بوابة المخدوم (`/child/*`) and `/settings/data-requests`. Creates `data_change_requests`, the `child_portal_*` RPCs (SECURITY DEFINER, granted to `anon`, keyed by the scanned national id), `review_data_change_request` / `pending_data_requests_count` (authenticated) and a storage policy letting the portal upload into `photos/child-requests/`. Idempotent; run after 0020.
    ⚠️ `0022_event_bound_operations.sql` is **required** by the current children page & scanner (points inserts send `event_id`; calls / messages insert into `contact_log`). Adds `points_log.event_id`, the `contact_log` table (RLS + realtime), scope-check triggers and an `event_name` column on `child_portal_points`. Idempotent; run after 0021.
    ⚠️ `0023_call_feedbacks.sql` is **required** for the call-feedback badge / modal / filter and `/settings/call-feedbacks`. Adds the `call_feedbacks` table (scope church/service/class/event, `color`, `icon`, `sort_order`, RLS, realtime) and `contact_log.feedback_id` + `contact_log.occurrence_on`. Idempotent; run after 0022. Without it the badge stays on «لم يُفتقد بعد» and the modal shows a migration hint.
@@ -1384,6 +1386,50 @@ Two extra indexes (`points_log` Cairo-day expression, `points_log(cause_id)`) ke
 the by-cause queries indexed. Frontend helpers live in `src/lib/stats.ts`
 (typed fetchers, period/bucket/series builders) and pure-SVG chart primitives in
 `src/components/stats/Charts.tsx` (no chart library).
+
+### Four tabs — migration 20261018120000
+`src/app/stats/page.tsx` is the shell (tabs · scope + event + day · window
+bar · realtime · Excel); each tab is a component in `src/components/stats/`
+(`OverviewTab` = the 0020 screen above, `AttendanceTab`, `PointsTab`,
+`CallsTab`) exposing `reload()` / `exportSheets()` through a ref. Period
+fetchers and window helpers (`resolveWindow`, `weekOf` / `monthOf` /
+`yearOf`, `alignToKeys`) live in `src/lib/stats-period.ts`; the extra
+chart primitives (`TabBar`, `SegmentDonut`, `LineAreaChart`, `Histogram`,
+`HourProfile`, `CoverageBar`, `ProgressTable`, `PersonRow`, `Chips`) in
+`src/components/stats/Charts2.tsx` — still pure SVG, no chart library.
+
+Every period RPC takes `(p_from, p_to, p_church, p_service, p_class,
+p_event, p_kind)`; `p_event` narrows BOTH the enrollments (to those the
+event applies to) and the log rows (`event_id`). They are SECURITY DEFINER
+and apply the caller's visibility explicitly through
+`stats_scope_enrollments()` → `my_scope_sets()` (InitPlans, once per
+statement), so events / call_feedbacks / servant_enrollments are joined
+only on the grouped rows.
+
+| RPC | Returns |
+|---|---|
+| `stats_calls_summary` | calls (dials + feedbacks) · dials · feedbacks · «أخرى» · persons called / with feedback · messages · servants · days · scope persons · **absentees** (no attendance in the period) · absentees called · attendees called · first / last call |
+| `stats_calls_by_servant` | per `recorded_by`: name, photo, role, own class, calls, persons, feedbacks, «أخرى», messages, classes touched, active days, first / last |
+| `stats_calls_by_class` | per class: enrolled, absentees, calls, persons called, absentees called, feedbacks, persons with feedback, messages, callers, last call |
+| `stats_calls_by_feedback` | per outcome (`feedback` / `other` / `none`): name, color, icon, entries, persons, servants, last |
+| `stats_calls_timeline(p_bucket)` | per bucket: calls, persons, feedbacks, messages, servants |
+| `stats_calls_persons(p_only, p_limit)` | one row per person — `all` · `called` · `not_called` · `absent` · `absent_not_called`: attended, calls, feedbacks, last call, last caller, last outcome (+ color) |
+| `stats_attendance_period_summary` | rows, attendees, scope, never attended, days, **expected occurrences** (`stats_expected_occurrences`: weekly events × matching days + once-events inside the window), avg / day, avg / person, best & worst day, points, males / females, events, servants |
+| `stats_attendance_distribution` | persons per number of attendances (0, 1, 2 …) |
+| `stats_attendance_hour_profile` | attendance per Cairo hour |
+| `stats_attendance_by_class_period` | per class: enrolled, attendees, rows, days, points, avg / day |
+| `stats_attendance_persons(p_order most|least, p_limit)` | per person: period attendance, first / last day, days since last, all-time counter, points |
+| `stats_points_period_summary` | attendance points, cause added / removed, net, entries, recipients, scope, current balances (total · avg · max · zero), causes used, servants, best day |
+| `stats_points_distribution(p_step)` | persons per balance bucket |
+| `stats_points_by_class_period` | per class: attendance points, added, removed, net, recipients, balance, avg balance |
+| `stats_points_by_servant` | per `recorded_by`: entries, added, removed, net, recipients, attendance scans + their points, last |
+| `stats_points_persons(p_order period|balance|removed, p_limit)` | per person: period attendance points / added / removed / net, balance, attendance count |
+
+«A call» = any `contact_log` row with `kind = 'call'` (the dial logged by
+the call button **or** a feedback row); «a feedback» = `occurrence_on` set
+and (`feedback_id` or `note`) — the 0023 / 20261012120000 definitions.
+Coverage percentages always use **distinct persons**, so three calls to
+the same child count once.
 
 ### Expected capacity (Vercel + Supabase)
 | Plan | Persons (المخدومين) | Servants | Notes |
