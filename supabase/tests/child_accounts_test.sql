@@ -70,12 +70,9 @@ begin
   end if;
 
   -- wrong password
-  begin
-    perform public.child_login('KID-1', 'nope', false);
+  if public.child_login('KID-1', 'nope', false)->>'error' is distinct from 'wrong_password' then
     raise exception 'wrong password accepted';
-  exception when others then
-    if sqlerrm not like '%wrong_password%' then raise; end if;
-  end;
+  end if;
 
   -- login → session token → profile
   r := public.child_login('KID-1', 'secret1', true, 'test');

@@ -12,6 +12,19 @@
 //
 // Body: { ticket }  →  { token_hash }
 // Env (server): SUPABASE_SERVICE_ROLE_KEY. Without it → 503 «not_configured».
+//
+// 20261019120000 (login rush): this route used to make TWO Auth-admin calls
+// per servant login (getUserById + generateLink). The Auth server is
+// rate-limited per IP — and from here every request comes from the SAME
+// server IP — so 60 servants signing in together tripped it. Now:
+//   • ONE Auth call: generateLink for the derived e-mail; getUserById runs
+//     only if that fails (an account whose e-mail was changed by hand).
+//   • 429 / 5xx from Auth are passed through as `switch_busy` + Retry-After
+//     so the browser backs off and retries (withLoginRetry) instead of failing.
+//   • the ticket is PEEKED first (account_switch_peek) and consumed only
+//     after the link is minted — a transient Auth failure leaves it valid
+//     for the retry (it still expires in 2 minutes). An older database
+//     without the peek RPC falls back to the one-shot redeem.
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
@@ -35,22 +48,66 @@ export async function POST(req: NextRequest) {
   const ticket = typeof body.ticket === 'string' ? body.ticket.trim() : '';
   if (ticket.length < 20) return NextResponse.json({ error: 'invalid_ticket' }, { status: 400 });
 
-  const { data, error } = await admin.rpc('account_switch_redeem', { p_ticket: ticket });
-  if (error) {
-    const m = error.message ?? '';
+  type Redeemed = { servant_id: string; user_id: string; remember: boolean };
+  const dbError = (m: string) => {
     const code = m.includes('invalid_ticket') ? 'invalid_ticket' : m.includes('account_stopped') ? 'account_stopped' : 'failed';
     return NextResponse.json({ error: code, detail: m }, { status: code === 'failed' ? 500 : 400 });
-  }
-  const r = data as { servant_id: string; user_id: string; remember: boolean };
+  };
 
-  // the servant's login e-mail — read from Auth (authoritative) and fall back
-  // to the derived one so an account whose e-mail was changed by hand works too
-  const { data: u } = await admin.auth.admin.getUserById(r.servant_id);
-  const email = u?.user?.email ?? userIdToEmail(r.user_id);
-
-  const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: 'magiclink', email });
-  if (linkErr || !link?.properties?.hashed_token) {
-    return NextResponse.json({ error: 'failed', detail: linkErr?.message ?? 'no_token' }, { status: 500 });
+  // 1. peek: who is behind the ticket (does NOT consume it)
+  let r: Redeemed | null = null;
+  let redeemed = false;
+  const peek = await admin.rpc('account_switch_peek', { p_ticket: ticket });
+  if (peek.error) {
+    const m = peek.error.message ?? '';
+    const missing = /account_switch_peek|does not exist|PGRST202|schema cache/i.test(m);
+    if (!missing) return dbError(m);
+    // older database → one-shot redeem (previous behaviour)
+    const red = await admin.rpc('account_switch_redeem', { p_ticket: ticket });
+    if (red.error) return dbError(red.error.message ?? '');
+    r = red.data as Redeemed;
+    redeemed = true;
+  } else {
+    r = peek.data as Redeemed;
   }
-  return NextResponse.json({ token_hash: link.properties.hashed_token, remember: r.remember });
+
+  // 2. ONE Auth call: the derived login e-mail; the authoritative one is
+  //    looked up only when Auth does not know the derived one
+  const derived = userIdToEmail(r.user_id);
+  let link = await admin.auth.admin.generateLink({ type: 'magiclink', email: derived });
+  if (link.error && !isTransient(link.error)) {
+    const { data: u } = await admin.auth.admin.getUserById(r.servant_id);
+    if (u?.user?.email && u.user.email !== derived) {
+      link = await admin.auth.admin.generateLink({ type: 'magiclink', email: u.user.email });
+    }
+  }
+  if (link.error || !link.data?.properties?.hashed_token) {
+    if (isTransient(link.error)) {
+      // Auth is rate-limiting / unavailable — the browser backs off and
+      // retries; the ticket is still unredeemed (peek path)
+      const status = authStatus(link.error) === 429 ? 429 : 503;
+      return NextResponse.json({ error: 'switch_busy', retry_after: 2, detail: link.error?.message }, { status, headers: { 'Retry-After': '2' } });
+    }
+    return NextResponse.json({ error: 'failed', detail: link.error?.message ?? 'no_token' }, { status: 500 });
+  }
+
+  // 3. consume the ticket now that the link exists (sets the active place)
+  if (!redeemed) {
+    const red = await admin.rpc('account_switch_redeem', { p_ticket: ticket });
+    if (red.error) return dbError(red.error.message ?? '');
+  }
+  return NextResponse.json({ token_hash: link.data.properties.hashed_token, remember: r.remember });
+}
+
+function authStatus(err: unknown): number {
+  const e = err as { status?: unknown; code?: unknown } | null;
+  const s = typeof e?.status === 'number' ? e.status : Number(e?.code);
+  return Number.isFinite(s) ? s : 0;
+}
+function isTransient(err: unknown): boolean {
+  if (!err) return false;
+  const s = authStatus(err);
+  if (s === 429 || (s >= 500 && s < 600)) return true;
+  const m = String((err as { message?: string }).message ?? '').toLowerCase();
+  return /rate limit|too many|timeout|timed out|fetch failed|econnreset|unavailable|gateway/.test(m);
 }

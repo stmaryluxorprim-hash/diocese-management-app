@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Gender } from '@/lib/types';
+import { throwIfThrottled, withLoginRetry, singleFlight, throttleMessage } from '@/lib/login-throttle';
 
 export const PRIEST_TOKEN_KEY = 'priest_portal_token';
 export const PRIEST_SIGNUP_KEY = 'priest_signup_request';
@@ -188,8 +189,11 @@ const ERRORS: Record<string, string> = {
   not_found: 'غير موجود',
   forbidden: 'ليس لديك صلاحية لهذا الإجراء',
   invalid_status: 'حالة غير صالحة',
+  too_many_attempts: 'محاولات كثيرة خاطئة — انتظر قليلاً ثم حاول مجدداً',
 };
 export function priestErrorMessage(err: unknown, fallback = 'حدث خطأ، حاول مجدداً'): string {
+  const t = throttleMessage(err);
+  if (t) return t;
   const msg = (err as { message?: string } | null)?.message ?? '';
   for (const k of Object.keys(ERRORS)) if (msg.includes(k)) return ERRORS[k];
   return fallback;
@@ -198,9 +202,12 @@ export function priestErrorMessage(err: unknown, fallback = 'حدث خطأ، ح�
 // ---------- Auth ----------
 export async function priestLogin(supabase: SupabaseClient, code: string, password: string, remember: boolean) {
   const ua = typeof navigator === 'undefined' ? null : navigator.userAgent.slice(0, 300);
-  const { data, error } = await supabase.rpc('priest_login', { p_code: code.trim(), p_password: password, p_remember: remember, p_user_agent: ua });
-  if (error) throw error;
-  return data as { token: string; expires_at: string; priest_id: string; remember: boolean };
+  // 20261019120000: throttle payload → error; transient failures retried
+  return singleFlight(() => withLoginRetry(async () => {
+    const { data, error } = await supabase.rpc('priest_login', { p_code: code.trim(), p_password: password, p_remember: remember, p_user_agent: ua });
+    if (error) throw error;
+    return throwIfThrottled(data) as { token: string; expires_at: string; priest_id: string; remember: boolean };
+  }));
 }
 export async function priestLogout(supabase: SupabaseClient, token: string) {
   await supabase.rpc('priest_logout', { p_token: token });

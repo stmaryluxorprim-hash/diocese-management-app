@@ -9,9 +9,9 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { X, Loader2, Users, GraduationCap, Cross, ArrowLeftRight, Check, Clock, Ban, type LucideIcon } from 'lucide-react';
+import { X, Loader2, Users, GraduationCap, Cross, ArrowLeftRight, Check, Clock, Ban, Layers, type LucideIcon } from 'lucide-react';
 import {
-  fetchMyAccounts, switchAccount, currentSessionToken, accountUsable, accountErrorMessage, accountRowKey, isCurrentRow,
+  fetchMyAccounts, switchAccount, currentSessionToken, accountUsable, accountErrorMessage, accountRowKey, isCurrentRow, isAllPlacesRow,
   ACCOUNT_KIND_LABELS, ACCOUNT_STATUS_LABELS,
   type AccountKind, type MyAccounts, type PersonAccount,
 } from '@/lib/accounts';
@@ -43,13 +43,16 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
   // 20261004120000: every row is ONE enrollment — the servant switches the
   // place of his login, the child the class, the priest his single account
   const go = async (a: PersonAccount) => {
-    const key = accountRowKey(a);
+    const key = accountRowKey(a) + (isAllPlacesRow(a) ? ':all' : '');
     if (busy || !data || isCurrentRow(a, data)) return;
     setBusy(key); setError('');
     try {
+      // 20261019120000: the «كل أماكن خدمتي» row switches with church null →
+      // the active place is cleared → the session sees every place
+      const all = isAllPlacesRow(a);
       const href = await switchAccount(supabase, current, {
         kind: a.kind, enrollment_id: a.enrollment_id,
-        church_id: a.church_id ?? null, service_id: a.service_id ?? null, class_id: a.class_id ?? null,
+        church_id: all ? null : a.church_id ?? null, service_id: all ? null : a.service_id ?? null, class_id: all ? null : a.class_id ?? null,
       }, { remember: true });
       // hard navigation: every portal boots its provider from storage / cookies
       window.location.href = href;
@@ -89,7 +92,7 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
         {data && (
           <ul id="switch-account-list" className="space-y-2">
             {accounts.map((a) => {
-              const key = accountRowKey(a);
+              const key = accountRowKey(a) + (isAllPlacesRow(a) ? ':all' : '');
               return <AccountRow key={key} a={a} isCurrent={isCurrentRow(a, data)} busy={busy === key} disabled={!!busy} onPick={() => go(a)} />;
             })}
           </ul>
@@ -97,7 +100,9 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
 
         {data && (
           <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[11px] font-bold text-slate-500">
-            كل سطر = تسجيل واحد (مكان خدمة · فصل · حساب الكاهن) وتعمل الجلسة عليه وحده. لإضافة تسجيل جديد لنفس الكود استخدم رابط الدعوة من المسؤول — بنفس كلمة المرور.
+            {accounts.some(isAllPlacesRow)
+              ? '«كل أماكن خدمتي» = جلسة واحدة ترى كل الكنائس والخدمات والفصول المسموح لك بها. السطور الأخرى تحصر الجلسة في مكان واحد. لإضافة تسجيل جديد لنفس الكود استخدم رابط الدعوة من المسؤول — بنفس كلمة المرور.'
+              : 'كل سطر = تسجيل واحد (مكان خدمة · فصل · حساب الكاهن) وتعمل الجلسة عليه وحده. لإضافة تسجيل جديد لنفس الكود استخدم رابط الدعوة من المسؤول — بنفس كلمة المرور.'}
           </p>
         )}
 
@@ -112,14 +117,15 @@ export default function SwitchAccountModal({ current, onClose }: { current: Acco
 function AccountRow({ a, isCurrent, busy, disabled, onPick }: {
   a: PersonAccount; isCurrent: boolean; busy: boolean; disabled: boolean; onPick: () => void;
 }) {
-  const Icon = ICONS[a.kind];
+  const all = isAllPlacesRow(a);
+  const Icon = all ? Layers : ICONS[a.kind];
   const usable = accountUsable(a);
-  const places = a.label2 ? [a.label2] : [];
+  const places = all ? a.places.map((p) => [p.church, p.service, p.class].filter(Boolean).join(' ← ')) : a.label2 ? [a.label2] : [];
   const sub = a.kind === 'servant' && a.role ? ROLE_AR[a.role] ?? a.role : a.kind === 'priest' && a.title ? a.title : null;
   return (
     <li>
       <button
-        id={`switch-account-${a.kind}-${a.enrollment_id.slice(0, 8)}${a.class_id ? '-' + a.class_id.slice(0, 8) : ''}`}
+        id={all ? 'switch-account-all-places' : `switch-account-${a.kind}-${a.enrollment_id.slice(0, 8)}${a.class_id ? '-' + a.class_id.slice(0, 8) : ''}`}
         type="button"
         disabled={isCurrent || !usable || disabled}
         onClick={onPick}
@@ -128,10 +134,10 @@ function AccountRow({ a, isCurrent, busy, disabled, onPick }: {
           isCurrent ? 'bg-emerald-50 ring-emerald-200' : usable ? 'bg-white ring-slate-200 hover:bg-slate-50 active:scale-[0.99]' : 'bg-slate-50 ring-slate-100 opacity-70'
         }`}
       >
-        <span className={`mt-0.5 rounded-xl p-2 ring-1 ${COLORS[a.kind]}`}><Icon className="h-5 w-5" /></span>
+        <span className={`mt-0.5 rounded-xl p-2 ring-1 ${all ? 'bg-primary-600 text-white ring-primary-600' : COLORS[a.kind]}`}><Icon className="h-5 w-5" /></span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
-            <span className="text-sm font-extrabold">{ACCOUNT_KIND_LABELS[a.kind]}</span>
+            <span className="text-sm font-extrabold">{all ? 'كل أماكن خدمتي' : ACCOUNT_KIND_LABELS[a.kind]}</span>
             {sub && <span className="text-[11px] font-bold text-slate-400">{sub}</span>}
             {isCurrent ? (
               <span className="mr-auto flex items-center gap-0.5 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-extrabold text-white"><Check className="h-3 w-3" /> الحالي</span>

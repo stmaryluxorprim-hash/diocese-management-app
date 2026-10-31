@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { setChildToken, clearChildToken, getChildToken, childLogout } from '@/lib/child-portal';
 import { setPriestToken, clearPriestToken, getPriestToken, priestLogout } from '@/lib/priest-portal';
 import { SERVANT_NO_REMEMBER_KEY, SERVANT_TAB_ALIVE_KEY, clearServantRememberFlags } from '@/lib/session';
+import { throwIfThrottled, withLoginRetry, singleFlight, throttleMessage } from '@/lib/login-throttle';
 
 export type AccountKind = 'servant' | 'child' | 'priest';
 
@@ -52,8 +53,13 @@ export interface PersonAccount {
   service_id?: string | null;
   class_id?: string | null;
   is_primary?: boolean;
+  /** 20261019120000: servant row = EVERY place he serves in (one session, all his data) */
+  all_places?: boolean;
   places: AccountPlace[];
 }
+
+/** the servant's «كل أماكن خدمتي» row (church null · all_places true) */
+export const isAllPlacesRow = (a: PersonAccount) => a.kind === 'servant' && (a.all_places === true || !a.church_id);
 
 export interface MyAccounts {
   person: { id: string; name: string; code: string; image_url: string | null };
@@ -74,9 +80,11 @@ export function isCurrentRow(a: PersonAccount, me: MyAccounts): boolean {
   if (a.kind !== me.current) return false;
   if (a.kind === 'priest') return true;
   if (a.kind === 'child') return me.current_enrollment_id == null || a.enrollment_id === me.current_enrollment_id;
-  // servant: same place as the active one (no active place = «all» → every row is partly current)
+  // servant: no active place = the «all places» session → only the all-places
+  // row is current (a per-place row is still selectable to narrow the session)
   const p = me.current_place;
-  if (!p || !p.church_id) return !a.church_id || true;
+  if (!p || !p.church_id) return isAllPlacesRow(a);
+  if (isAllPlacesRow(a)) return false;
   return a.church_id === p.church_id && (a.service_id ?? null) === (p.service_id ?? null) && (a.class_id ?? null) === (p.class_id ?? null);
 }
 
@@ -174,15 +182,30 @@ export async function finishMint(supabase: SupabaseClient, r: SwitchResult, reme
     setPriestToken(r.token, remember);
     return ACCOUNT_HOME.priest;
   }
-  // servant: the server exchanges the ticket for an Auth session
-  const res = await fetch('/api/account/switch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticket: r.ticket }),
-  });
-  const body = (await res.json().catch(() => ({}))) as { error?: string; token_hash?: string; type?: string };
-  if (!res.ok || !body.token_hash) throw new Error(body.error ?? 'switch_failed');
-  const { error: otpErr } = await supabase.auth.verifyOtp({ token_hash: body.token_hash, type: 'magiclink' });
+  // servant: the server exchanges the ticket for an Auth session. The route
+  // and the Auth verify call are the two legs that fail under a login rush
+  // (429 from the Auth server, 5xx from the edge) → retried with back-off.
+  // The ticket is single-use, so only the TRANSPORT failure is retried: a
+  // route that already redeemed it answers invalid_ticket, which is final.
+  const body = await withLoginRetry(async () => {
+    const res = await fetch('/api/account/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket: r.ticket }),
+    });
+    const b = (await res.json().catch(() => ({}))) as { error?: string; token_hash?: string; retry_after?: number };
+    if (!res.ok || !b.token_hash) {
+      const e = new Error(b.error ?? 'switch_failed') as Error & { status?: number };
+      e.status = res.status;
+      throw e;
+    }
+    return b;
+  }, { retries: 3 });
+  const { error: otpErr } = await withLoginRetry(async () => {
+    const o = await supabase.auth.verifyOtp({ token_hash: body.token_hash!, type: 'magiclink' });
+    if (o.error) throw o.error;
+    return o;
+  }, { retries: 3, baseMs: 1200 });
   if (otpErr) throw otpErr;
   try {
     if (remember) window.localStorage.removeItem(SERVANT_NO_REMEMBER_KEY);
@@ -218,24 +241,41 @@ export interface LoginResult {
   accounts: PersonAccount[];
 }
 
-/** code + the ONE password → a 5-minute grant + every account of the person */
-export async function accountLogin(supabase: SupabaseClient, code: string, password: string, remember: boolean): Promise<LoginResult> {
-  const { data, error } = await supabase.rpc('account_login', { p_code: code.trim(), p_password: password, p_remember: remember });
-  if (error) throw error;
-  return data as LoginResult;
+/**
+ * code + the ONE password → a 5-minute grant + every account of the person.
+ * 20261019120000: wrong password / lock come back as a payload → thrown as
+ * WrongPasswordError / LoginThrottledError. Transient gateway failures (the
+ * login rush) are retried with back-off; `onRetry` lets the page say so.
+ */
+export async function accountLogin(
+  supabase: SupabaseClient, code: string, password: string, remember: boolean,
+  opts: { onRetry?: (attempt: number, waitMs: number) => void } = {},
+): Promise<LoginResult> {
+  return singleFlight(() => withLoginRetry(async () => {
+    const { data, error } = await supabase.rpc('account_login', { p_code: code.trim(), p_password: password, p_remember: remember });
+    if (error) throw error;
+    return throwIfThrottled(data) as LoginResult;
+  }, { onRetry: (a, w) => opts.onRetry?.(a, w) }));
 }
 
 /** the chosen account → its session is minted and stored; returns the URL to go to */
 export async function sessionFromLogin(supabase: SupabaseClient, grant: string, a: PersonAccount, remember: boolean): Promise<string> {
   const ua = typeof navigator === 'undefined' ? null : navigator.userAgent.slice(0, 300);
-  const { data, error } = await supabase.rpc('account_session_from_login', {
-    p_grant: grant,
-    p_kind: a.kind,
-    p_enrollment: a.kind === 'child' ? a.enrollment_id : null,
-    p_church: a.kind === 'servant' ? a.church_id ?? null : null,
-    p_service: a.kind === 'servant' ? a.service_id ?? null : null,
-    p_class: a.kind === 'servant' ? a.class_id ?? null : null,
-    p_user_agent: ua,
+  // the servant «all places» row mints with church null → the active place is
+  // cleared → my_scopes() returns every place he serves in
+  const servantPlace = a.kind === 'servant' && !isAllPlacesRow(a);
+  const { data, error } = await withLoginRetry(async () => {
+    const r = await supabase.rpc('account_session_from_login', {
+      p_grant: grant,
+      p_kind: a.kind,
+      p_enrollment: a.kind === 'child' ? a.enrollment_id : null,
+      p_church: servantPlace ? a.church_id ?? null : null,
+      p_service: servantPlace ? a.service_id ?? null : null,
+      p_class: servantPlace ? a.class_id ?? null : null,
+      p_user_agent: ua,
+    });
+    if (r.error) throw r.error;
+    return r;
   });
   if (error) throw error;
   return finishMint(supabase, data as SwitchResult, remember);
@@ -360,8 +400,11 @@ export async function accountCodeLookup(supabase: SupabaseClient, code: string):
 
 /** true when `password` is the existing password of the person behind `code` */
 export async function verifyPersonPassword(supabase: SupabaseClient, code: string, password: string): Promise<boolean> {
-  const { data, error } = await supabase.rpc('person_verify_password', { p_code: code.trim(), p_password: password });
-  if (error) throw error;
+  const data = await withLoginRetry(async () => {
+    const r = await supabase.rpc('person_verify_password', { p_code: code.trim(), p_password: password });
+    if (r.error) throw r.error;
+    return r.data;
+  });
   return data === true;
 }
 
@@ -402,8 +445,14 @@ const ERRORS: Record<string, string> = {
   signup_invite_update: 'شغّل migration 20261007120000 أولاً لتعديل الدعوات',
   signup_invite_delete: 'شغّل migration 20261007120000 أولاً لحذف الدعوات',
   scope_required: 'اختر الكنيسة والخدمة والفصل',
+  too_many_attempts: 'محاولات كثيرة خاطئة — انتظر قليلاً ثم حاول مجدداً',
+  rate_limited: 'الخادم مشغول الآن — حاول بعد لحظات',
+  switch_busy: 'الخادم مشغول الآن — حاول بعد لحظات',
 };
 export function accountErrorMessage(err: unknown, fallback = 'تعذّر تبديل الحساب، حاول مجدداً'): string {
+  // 20261019120000: lock countdown / remaining attempts carry their own text
+  const t = throttleMessage(err);
+  if (t) return t;
   const msg = (err as { message?: string } | null)?.message ?? String(err ?? '');
   for (const k of Object.keys(ERRORS)) if (msg.includes(k)) return ERRORS[k];
   return fallback;

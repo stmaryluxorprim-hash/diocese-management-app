@@ -5,7 +5,7 @@
 // added here step by step; the first one is module access control.
 
 import Link from 'next/link';
-import { Crown, Layers, ChevronLeft, ArrowRight, Sparkles, Paintbrush, KeyRound, Users, Cross, DatabaseBackup } from 'lucide-react';
+import { Crown, Layers, ChevronLeft, ArrowRight, Sparkles, Paintbrush, KeyRound, Users, Cross, DatabaseBackup, ShieldAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { fetchOwnerPersonsCounts, type OwnerPersonsCounts } from '@/lib/owner-persons';
@@ -31,6 +31,13 @@ export default function OwnerHubPage() {
       supabase.from('priests').select('id', { count: 'exact', head: true }),
       supabase.rpc('pending_priest_requests_count'),
     ]).then(([a, b]) => setPriestStats({ total: a.count ?? 0, pending: typeof b.data === 'number' ? b.data : 0 })).catch(() => {});
+  }, [supabase]);
+  // login security (20261019120000): codes / IPs locked right now
+  const [lockedCount, setLockedCount] = useState<number | null>(null);
+  useEffect(() => {
+    supabase.rpc('login_locks', { p_limit: 500 })
+      .then(({ data }) => setLockedCount(Array.isArray(data) ? (data as { locked: boolean }[]).filter((l) => l.locked).length : 0))
+      .then(undefined, () => setLockedCount(null));
   }, [supabase]);
   // backup & restore (0044 · 20261009120000 — moved into the owner module): schedules + last run
   const [backupStats, setBackupStats] = useState<{ schedules: number; last: { status: string; created_at: string } | null } | null>(null);
@@ -143,6 +150,28 @@ export default function OwnerHubPage() {
               <span className="badge bg-violet-100 text-violet-700 tabular-nums">
                 {permissionProfiles.length} ملف
               </span>
+              <ChevronLeft className="h-4 w-4 text-slate-300" />
+            </Link>
+
+            <Link
+              id="owner-login-security-link"
+              href="/owner/login-security"
+              className="flex items-center gap-3 px-4 py-3.5 hover:bg-indigo-50/50 transition"
+            >
+              <span className="rounded-xl bg-slate-50 p-2">
+                <ShieldAlert className="h-5 w-5 text-amber-600" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block font-bold text-sm">حماية الدخول</span>
+                <span className="block text-xs text-slate-400 truncate">
+                  حدّ محاولات كلمة المرور لكل كود ولكل جهاز · المقفولون الآن · فك القفل · الحدود
+                </span>
+              </span>
+              {lockedCount != null && (
+                <span className={`badge tabular-nums ${lockedCount ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {lockedCount ? `${lockedCount} مقفول` : 'لا أقفال'}
+                </span>
+              )}
               <ChevronLeft className="h-4 w-4 text-slate-300" />
             </Link>
 
