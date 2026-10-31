@@ -15,13 +15,26 @@
 //
 // There is NO signup link here: signing up is possible only from the invite
 // link / QR a manager generates inside the app (?invite=…).
+//
+// 20261019120000:
+//   • RATE LIMIT — the database counts wrong passwords per code and per IP and
+//     answers `too_many_attempts` + retry_after once the limit is hit. The
+//     page shows a live countdown and keeps the button disabled until it
+//     ends; the two last tries before a lock are announced.
+//   • LOGIN RUSH — transient gateway failures (429 / 5xx / dropped socket)
+//     are retried with back-off inside accountLogin(); the button shows
+//     «جارٍ المحاولة…» meanwhile.
+//   • ONE SERVANT ACCOUNT = ALL HIS PLACES — a servant with several places
+//     gets a leading «كل أماكن خدمتي» row; a person who is ONLY a servant
+//     enters it straight away (no picker) and sees every church / service /
+//     class he is allowed to. The per-place rows remain for a narrower session.
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { BRANDING, dioceseLogo } from '@/lib/branding';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
-  LogIn, Loader2, User, Lock, QrCode, Keyboard, Eye, EyeOff, Users, GraduationCap, Cross, ArrowRight, Check, Clock, Ban, type LucideIcon,
+  LogIn, Loader2, User, Lock, QrCode, Keyboard, Eye, EyeOff, Users, GraduationCap, Cross, ArrowRight, Check, Clock, Ban, Layers, ShieldAlert, type LucideIcon,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { userIdToEmail, codeToUserId } from '@/lib/types';
@@ -31,10 +44,13 @@ import QrScanner from '@/components/store/QrScanner';
 import { SERVANT_NO_REMEMBER_KEY, SERVANT_TAB_ALIVE_KEY } from '@/lib/session';
 import { logActivity } from '@/lib/activity';
 import {
-  accountLogin, sessionFromLogin, accountUsable, accountErrorMessage,
+  accountLogin, sessionFromLogin, accountUsable, accountErrorMessage, isAllPlacesRow,
   ACCOUNT_KIND_LABELS, ACCOUNT_STATUS_LABELS,
   type AccountKind, type LoginResult, type PersonAccount,
 } from '@/lib/accounts';
+import { retryAfterOf, lockMessage, secondsUntil, WrongPasswordError, remainingMessage } from '@/lib/login-throttle';
+
+const LOCK_KEY = 'dma_login_lock_until';
 
 const ICONS: Record<AccountKind, LucideIcon> = { servant: Users, child: GraduationCap, priest: Cross };
 const COLORS: Record<AccountKind, string> = {
@@ -69,12 +85,44 @@ function LoginInner() {
   // step 2: the person has several accounts → pick one
   const [login, setLogin] = useState<LoginResult | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
+  // 20261019120000: lock countdown (absolute ms, survives a reload) + retry status
+  const [lockUntil, setLockUntil] = useState<number | null>(null);
+  const [lockLeft, setLockLeft] = useState(0);
+  const [retrying, setRetrying] = useState<number>(0);
 
   // a child / priest that is already signed in goes straight to his portal
   useEffect(() => {
     if (getChildToken()) router.replace('/child');
     else if (getPriestToken()) router.replace('/priest');
   }, [router]);
+
+  // a lock set before a reload is still a lock
+  useEffect(() => {
+    try {
+      const v = Number(window.sessionStorage.getItem(LOCK_KEY) ?? 0);
+      if (v > Date.now()) setLockUntil(v); else window.sessionStorage.removeItem(LOCK_KEY);
+    } catch { /* private mode */ }
+  }, []);
+  useEffect(() => {
+    if (!lockUntil) { setLockLeft(0); return; }
+    const tick = () => {
+      const s = secondsUntil(lockUntil);
+      setLockLeft(s);
+      if (s <= 0) {
+        setLockUntil(null); setError('');
+        try { window.sessionStorage.removeItem(LOCK_KEY); } catch { /* ignore */ }
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [lockUntil]);
+
+  const applyLock = useCallback((seconds: number) => {
+    const until = Date.now() + seconds * 1000;
+    setLockUntil(until);
+    try { window.sessionStorage.setItem(LOCK_KEY, String(until)); } catch { /* ignore */ }
+  }, []);
 
   const onScanned = useCallback((value: string) => {
     setCode(value.trim());
@@ -133,25 +181,46 @@ function LoginInner() {
     const clean = code.trim();
     if (!clean) { setError('أدخل الكود أو امسحه'); return; }
     if (!password) { setError('أدخل كلمة المرور'); return; }
+    if (lockUntil && lockUntil > Date.now()) { setError(lockMessage(secondsUntil(lockUntil))); return; }
+    if (loading) return; // a second tap while the first request is in flight
     setLoading(true);
+    setRetrying(0);
     try {
-      const r = await accountLogin(supabase, clean, password, remember);
+      const r = await accountLogin(supabase, clean, password, remember, { onRetry: (attempt) => setRetrying(attempt) });
+      setRetrying(0);
       const usable = r.accounts.filter(accountUsable);
       if (usable.length === 1 && r.accounts.length === 1) {
         // ONE account → straight in
         await enter(r.grant, usable[0]);
         return;
       }
+      // ONLY a servant (several places, no child / priest account) → enter
+      // the «كل أماكن خدمتي» row: one session that sees every place he is
+      // allowed to. He can narrow it later from «تغيير الحساب».
+      const allRow = r.accounts.find(isAllPlacesRow);
+      if (allRow && accountUsable(allRow) && r.accounts.every((a) => a.kind === 'servant')) {
+        await enter(r.grant, allRow);
+        return;
+      }
       setLogin(r);
       setLoading(false);
     } catch (err) {
+      setRetrying(0);
       const msg = (err as { message?: string } | null)?.message ?? '';
-      if (msg.includes('password_unknown')) {
+      const wait = retryAfterOf(err);
+      if (wait > 0) {
+        // locked (this code or this device) — countdown, no more requests
+        applyLock(wait);
+        setError(lockMessage(wait));
+      } else if (msg.includes('password_unknown')) {
         // legacy servant / priest (password only in Auth) → Supabase Auth directly
         const ok = await legacyAuthLogin(clean);
         if (ok) return;
         void logActivity(supabase, 'auth.login_failed', { meta: { code: clean.slice(0, 40) } });
         setError('بيانات الدخول غير صحيحة، تأكد من الكود وكلمة المرور');
+      } else if (err instanceof WrongPasswordError) {
+        void logActivity(supabase, 'auth.login_failed', { meta: { code: clean.slice(0, 40), remaining: err.remaining } });
+        setError(remainingMessage(err.remaining));
       } else if (msg.includes('wrong_password') || msg.includes('unknown_code')) {
         void logActivity(supabase, 'auth.login_failed', { meta: { code: clean.slice(0, 40) } });
         setError('بيانات الدخول غير صحيحة، تأكد من الكود وكلمة المرور');
@@ -161,6 +230,8 @@ function LoginInner() {
       setLoading(false);
     }
   };
+
+  const locked = !!lockUntil && lockLeft > 0;
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-6 py-8">
@@ -189,27 +260,32 @@ function LoginInner() {
             </div>
             <p className="rounded-xl bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700">
               لديك {login.accounts.length} حسابات بنفس الكود وكلمة المرور — كل جلسة تعمل على حساب واحد، وتستطيع التبديل لاحقًا من زر «تغيير الحساب».
+              {login.accounts.some(isAllPlacesRow) && <> اختر «كل أماكن خدمتي» لترى كل الكنائس والخدمات والفصول المسموح لك بها في جلسة واحدة.</>}
             </p>
             <ul id="login-accounts" className="space-y-2">
               {login.accounts.map((a) => {
-                const Icon = ICONS[a.kind];
+                const all = isAllPlacesRow(a);
+                const Icon = all ? Layers : ICONS[a.kind];
                 const usable = accountUsable(a);
-                const key = `${a.kind}:${a.enrollment_id}:${a.class_id ?? ''}:${a.service_id ?? ''}:${a.church_id ?? ''}`;
+                const key = `${a.kind}:${a.enrollment_id}:${a.class_id ?? ''}:${a.service_id ?? ''}:${a.church_id ?? ''}${all ? ':all' : ''}`;
                 const sub = a.kind === 'servant' && a.role ? ROLE_AR[a.role] ?? a.role : a.kind === 'priest' && a.title ? a.title : null;
                 return (
                   <li key={key}>
                     <button
                       type="button"
+                      id={all ? 'login-account-all-places' : undefined}
                       disabled={!usable || !!picking}
                       onClick={() => enter(login.grant, a)}
                       className={`flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-right ring-1 transition ${
-                        usable ? 'bg-white ring-slate-200 hover:bg-slate-50 active:scale-[0.99]' : 'bg-slate-50 ring-slate-100 opacity-70'
+                        !usable ? 'bg-slate-50 ring-slate-100 opacity-70'
+                          : all ? 'bg-primary-50/60 ring-primary-300 hover:bg-primary-50 active:scale-[0.99]'
+                          : 'bg-white ring-slate-200 hover:bg-slate-50 active:scale-[0.99]'
                       }`}
                     >
-                      <span className={`mt-0.5 rounded-xl p-2 ring-1 ${COLORS[a.kind]}`}><Icon className="h-5 w-5" /></span>
+                      <span className={`mt-0.5 rounded-xl p-2 ring-1 ${all ? 'bg-primary-600 text-white ring-primary-600' : COLORS[a.kind]}`}><Icon className="h-5 w-5" /></span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
-                          <span className="text-sm font-extrabold">{ACCOUNT_KIND_LABELS[a.kind]}</span>
+                          <span className="text-sm font-extrabold">{all ? 'كل أماكن خدمتي' : ACCOUNT_KIND_LABELS[a.kind]}</span>
                           {sub && <span className="text-[11px] font-bold text-slate-400">{sub}</span>}
                           {!usable && (
                             <span className="mr-auto flex items-center gap-0.5 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-extrabold text-slate-600">
@@ -217,7 +293,14 @@ function LoginInner() {
                             </span>
                           )}
                         </span>
-                        {a.label2 && <span className="mt-0.5 block truncate text-[11px] font-bold text-slate-500">{a.label2}</span>}
+                        {all ? (
+                          <span className="mt-1 block space-y-0.5">
+                            {a.places.slice(0, 4).map((p, i) => (
+                              <span key={i} className="block truncate text-[11px] font-bold text-slate-500">{[p.church, p.service, p.class].filter(Boolean).join(' ← ')}</span>
+                            ))}
+                            {a.places.length > 4 && <span className="block text-[11px] font-bold text-slate-400">+{a.places.length - 4} أماكن أخرى</span>}
+                          </span>
+                        ) : a.label2 ? <span className="mt-0.5 block truncate text-[11px] font-bold text-slate-500">{a.label2}</span> : null}
                       </span>
                       {picking === key ? <Loader2 className="mt-1 h-4 w-4 animate-spin text-slate-400" /> : usable ? <Check className="mt-1 h-4 w-4 text-slate-300" /> : null}
                     </button>
@@ -269,11 +352,27 @@ function LoginInner() {
               تذكرني على هذا الجهاز
             </label>
 
-            {error && <p id="login-error" className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600">{error}</p>}
+            {locked ? (
+              <p id="login-locked" role="alert" className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700 ring-1 ring-amber-200">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  محاولات كثيرة خاطئة — الدخول موقوف مؤقتاً.
+                  <span className="mt-0.5 block tabular-nums" dir="rtl">حاول مجدداً بعد {lockLeft >= 60 ? `${Math.floor(lockLeft / 60)}:${String(lockLeft % 60).padStart(2, '0')} دقيقة` : `${lockLeft} ثانية`}</span>
+                </span>
+              </p>
+            ) : error ? (
+              <p id="login-error" role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600">{error}</p>
+            ) : null}
 
-            <button id="login-submit" type="submit" disabled={loading} className="btn-primary flex w-full items-center justify-center gap-2">
-              {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogIn className="h-5 w-5" />}
-              تسجيل الدخول
+            {loading && retrying > 0 && (
+              <p id="login-retrying" className="rounded-xl bg-slate-50 px-3 py-2 text-center text-[11px] font-bold text-slate-500">
+                الخادم مشغول الآن — جارٍ إعادة المحاولة ({retrying})… لا تضغط مجدداً
+              </p>
+            )}
+
+            <button id="login-submit" type="submit" disabled={loading || locked} className="btn-primary flex w-full items-center justify-center gap-2">
+              {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : locked ? <Clock className="h-5 w-5" /> : <LogIn className="h-5 w-5" />}
+              {loading ? (retrying > 0 ? 'جارٍ المحاولة…' : 'جارٍ الدخول…') : locked ? 'انتظر…' : 'تسجيل الدخول'}
             </button>
           </form>
         )}

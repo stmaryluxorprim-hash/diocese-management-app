@@ -9,6 +9,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Gender } from '@/lib/types';
 import type { ExamResult, ExamStatus, PassMode, QuestionMode } from '@/lib/exams';
+import { throwIfThrottled, withLoginRetry, singleFlight, throttleMessage } from '@/lib/login-throttle';
 
 export const CHILD_TOKEN_KEY = 'child_portal_token';
 
@@ -384,14 +385,18 @@ export async function childLogin(
   remember: boolean
 ): Promise<ChildLoginResult> {
   const ua = typeof navigator === 'undefined' ? null : navigator.userAgent.slice(0, 300);
-  const { data, error } = await supabase.rpc('child_login', {
-    p_code: code.trim(),
-    p_password: password,
-    p_remember: remember,
-    p_user_agent: ua,
-  });
-  if (error) throw error;
-  return data as ChildLoginResult;
+  // 20261019120000: wrong password / lock arrive as a payload (throttle);
+  // transient gateway failures under a login rush are retried with back-off
+  return singleFlight(() => withLoginRetry(async () => {
+    const { data, error } = await supabase.rpc('child_login', {
+      p_code: code.trim(),
+      p_password: password,
+      p_remember: remember,
+      p_user_agent: ua,
+    });
+    if (error) throw error;
+    return throwIfThrottled(data) as ChildLoginResult;
+  }));
 }
 
 export async function childLogout(supabase: SupabaseClient, token: string): Promise<void> {
@@ -609,9 +614,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   chat_disabled: 'الدردشة مغلقة في هذا الفصل',
   message_blank: 'اكتب رسالة أولاً',
   rate_limited: 'رسائل كثيرة — انتظر قليلاً',
+  too_many_attempts: 'محاولات كثيرة خاطئة — انتظر قليلاً ثم حاول مجدداً',
 };
 
 export function childErrorMessage(err: unknown, fallback = 'حدث خطأ، حاول مجدداً'): string {
+  const t = throttleMessage(err);
+  if (t) return t;
   const msg = (err as { message?: string } | null)?.message ?? '';
   for (const key of Object.keys(ERROR_MESSAGES)) {
     if (msg.includes(key)) return ERROR_MESSAGES[key];

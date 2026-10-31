@@ -114,8 +114,7 @@ declare r jsonb; ok boolean := false;
 begin
   r := public.child_login('SRV-1', 'srvpass1', true, 'test');
   if r->>'token' is null then raise exception 'child login with the servant password must work'; end if;
-  begin perform public.child_login('SRV-1', 'otherpass', true, 'test');
-  exception when others then ok := sqlerrm like '%wrong_password%'; end;
+  ok := public.child_login('SRV-1', 'otherpass', true, 'test')->>'error' = 'wrong_password';
   if not ok then raise exception 'other password must fail'; end if;
   r := public.child_login('KID-NEW', 'newpass1', true, 'test');
   if r->>'token' is null then raise exception 'new child login must work'; end if;
@@ -223,8 +222,7 @@ begin
   perform public.priest_change_password(ptok, 'srvpass1', 'srvpass2');
   r := public.child_login('SRV-1', 'srvpass2', false, null);
   if r->>'token' is null then raise exception 'child login must use the NEW password'; end if;
-  begin perform public.child_login('SRV-1', 'srvpass1', false, null);
-  exception when others then ok := sqlerrm like '%wrong_password%'; end;
+  ok := public.child_login('SRV-1', 'srvpass1', false, null)->>'error' = 'wrong_password';
   if not ok then raise exception 'old password must be dead'; end if;
   perform public.child_change_password(r->>'token', 'srvpass2', 'srvpass3');
   if (public.priest_login('SRV-1', 'srvpass3', false, null))->>'token' is null then raise exception 'priest must use the newest password'; end if;

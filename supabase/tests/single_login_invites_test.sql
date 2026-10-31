@@ -63,8 +63,16 @@ begin
   select count(*) into n from public.enrollments where kind = 'child';
   if n <> 3 then raise exception 'all places again: 3, got %', n; end if;
   -- accounts: ONE row per place
-  if (select count(*) from jsonb_array_elements(public.my_accounts('servant', null)->'accounts') a where a->>'kind' = 'servant') <> 2 then
-    raise exception 'servant must list 2 enrollment rows';
+  -- 20261019120000: 2 places → 2 per-place rows + the «كل أماكن خدمتي» row
+  if (select count(*) from jsonb_array_elements(public.my_accounts('servant', null)->'accounts') a where a->>'kind' = 'servant') <> 3 then
+    raise exception 'servant must list 2 enrollment rows + the all-places row';
+  end if;
+  if (select count(*) from jsonb_array_elements(public.my_accounts('servant', null)->'accounts') a where (a->>'all_places')::boolean) <> 1 then
+    raise exception 'exactly one all-places row expected';
+  end if;
+  -- while no active place is set, the all-places row is the current one
+  if (public.my_accounts('servant', null)->'current_place') is not null and jsonb_typeof(public.my_accounts('servant', null)->'current_place') <> 'null' then
+    raise exception 'no active place expected after reset';
   end if;
 end $$;
 reset role;
@@ -77,9 +85,10 @@ do $$
 declare r jsonb; s jsonb; prof jsonb; e1 uuid; e2 uuid; ok boolean := false; tok text;
 begin
   -- wrong password
-  begin perform public.account_login('KID-1', 'nope', false);
-  exception when others then ok := sqlerrm like '%wrong_password%'; end;
-  if not ok then raise exception 'wrong password must fail'; end if;
+  -- 20261019120000: a wrong password is RETURNED (throttle payload), not raised
+  r := public.account_login('KID-1', 'nope', false);
+  ok := r->>'error' = 'wrong_password' and (r->>'remaining')::int between 0 and 10;
+  if not ok then raise exception 'wrong password must fail: %', r; end if;
   -- KID-1 has 2 child enrollments → 2 accounts
   r := public.account_login('KID-1', 'kidpass1', true);
   if jsonb_array_length(r->'accounts') <> 2 then raise exception 'KID-1 must have 2 accounts: %', r; end if;
@@ -105,7 +114,8 @@ begin
   if jsonb_array_length(r->'accounts') <> 1 then raise exception 'KID-2 must have 1 account'; end if;
   -- the servant: one login lists his 2 places; picking one issues a ticket with the place
   r := public.account_login('SRV-1', 'srvpass1', true);
-  if jsonb_array_length(r->'accounts') <> 2 then raise exception 'SRV-1 must list 2 places: %', r; end if;
+  if jsonb_array_length(r->'accounts') <> 3 then raise exception 'SRV-1 must list 2 places + all-places row: %', r; end if;
+  if not (r->'accounts'->0->>'all_places')::boolean then raise exception 'all-places row must come first: %', r; end if;
   s := public.account_session_from_login(r->>'grant', 'servant', null,
          '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000002');
   if s->>'ticket' is null then raise exception 'servant ticket expected'; end if;

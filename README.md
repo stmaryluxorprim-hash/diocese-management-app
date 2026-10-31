@@ -244,6 +244,25 @@ The person (code = `national_id` = QR) is ONE identity that may own up to **thre
 
 **إدارة الأفراد → تسجيل كخادم for a person who already IS a servant** adds **more places to the same account** instead of being disabled: role is fixed to his current one, places he already holds are filtered out, `owner_add_servant_places(servant, places)` (owner or `can_manage_servant`) appends them through `set_servant_scopes` (mirrors re-synced). Only the priest kind stays one-per-person (its church is edited from إدارة الكهنة).
 
+### Login rate limit · the login rush · one servant account = all his places — حدّ محاولات الدخول · حساب خادم واحد يرى كل أماكنه — migration 20261019120000
+`supabase/migrations/20261019120000_login_rate_limit_servant_all_places.sql` · test `supabase/tests/login_throttle_test.sql` · `src/lib/login-throttle.ts` · `src/lib/login-security.ts` · `src/app/owner/login-security/page.tsx`
+
+**1. Rate limit (حماية الدخول).** Every password check on the three doors (`account_login` · `child_login` · `priest_login`) and on `person_verify_password` (signup wizards) is counted in `login_throttle` **per code** and **per IP** (`request_ip()` reads `cf-connecting-ip` / first `x-forwarded-for` hop / `x-real-ip` from PostgREST's `request.headers`).
+- Defaults (`login_limits()`, overridable by the owner in `app_settings.login_limits`): **5** wrong tries per code in 15 min → code locked **15 min**; **40** wrong tries per IP in 10 min → IP locked **10 min**; every new lock **doubles** (cap 4 h). A right password clears the code counter.
+- A locked code / IP is answered **before** any bcrypt (`login_throttle_check`) → no CPU, no pooled connection held. The old `pg_sleep(0.25)` brake is gone from the login doors — under a rush it kept a pooled connection busy per wrong try.
+- **Contract change:** the doors now **return** `{error:'wrong_password', remaining}` / `{error:'too_many_attempts', retry_after}` instead of raising (a RAISE would roll the counter back). `throwIfThrottled()` turns the payload back into the errors the pages already map; everything else (`unknown_code` · `pending_approval` · `account_stopped` …) still raises as before.
+- Login page: live **countdown** (survives a reload via sessionStorage), button disabled while locked, «متبقٍ محاولة واحدة» on the last tries.
+- Owner → **حماية الدخول** (`/owner/login-security`): who is locked / failing now (`login_locks()` — code rows show the person's name, IP rows the last code tried), **فك القفل** per row or all (`login_unlock`), and the editable limits.
+
+**2. The login rush (60–80 people in the same minute).** Three legs used to fail:
+- the browser → gateway RPC (429 / 5xx / dropped socket) → `withLoginRetry()` retries **only transient** failures with jittered back-off (never a wrong password / lock — that would double-count); the button shows «جارٍ المحاولة…». `singleFlight()` keeps one login request per tab however many times the button is tapped.
+- `/api/account/switch` made **two** Auth-admin calls per servant login from the **same server IP** (Supabase Auth limits per IP) → now **one** `generateLink` (the `getUserById` fallback runs only when the derived e-mail is unknown); 429 / 5xx from Auth come back as `switch_busy` + `Retry-After` and the browser backs off.
+- the ticket was consumed before the link existed → a transient Auth failure lost the login. Now `account_switch_peek` (service role, non-consuming) reads the ticket, the link is minted, **then** `account_switch_redeem` consumes it — the retry still has a valid ticket (older DBs without the peek RPC fall back to the one-shot redeem).
+
+**3. One servant account = all his places (كل أماكن خدمتي).** `person_accounts()` adds, for a servant with **more than one** place, a leading row `{kind:'servant', all_places:true, church_id:null, places:[…]}`. Minting it (`account_mint` with church null) **clears** `servant_active_places` → `my_scopes()` returns **every** place → the app shows all the churches / services / classes he is allowed to, in one session. A person who is **only** a servant enters this row straight away (no picker); otherwise it is the first, highlighted choice. The per-place rows remain for a narrower session, and «تغيير الحساب» switches between «الكل» and one place without a password. `isCurrentRow()` marks the all-places row current when no active place is set.
+
+**Supabase dashboard (recommended, not code):** Authentication → Rate Limits → raise *Token endpoint* / *Verification* above the defaults if a single church network (one public IP) hosts 60+ servants, and enable **IP Address Forwarding** so the server-side route is limited per end user, not per server.
+
 ### The wake-up storm — Logs Ingest that matched no activity (20261017120000)
 `src/lib/realtime.ts` (`onAppResume` · `useAppResume` · `triggerAppResume` · `RESUME_STALE_MS` · `openTopic` · `startLivePoll`) · `src/components/RefreshButton.tsx` · `src/lib/child-context.tsx` · `src/lib/priest-context.tsx` · `src/components/child/{ChildBits,ConfessionBits,FamilyBits}.tsx` · `src/app/child/occasions/[id]` · `src/app/child/store/[id]` · `supabase/scripts/logs_explorer_queries.md` (§ H–L)
 

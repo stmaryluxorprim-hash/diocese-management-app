@@ -102,9 +102,7 @@ do $$
 declare r jsonb; tok text; prof jsonb; c jsonb; lst jsonb; s jsonb; h jsonb; ok boolean := false;
   kid1 uuid; kid2 uuid; conf_id uuid;
 begin
-  begin
-    perform public.priest_login('PR-1', 'wrong', false, null);
-  exception when others then ok := sqlerrm like '%wrong_password%'; end;
+  ok := public.priest_login('PR-1', 'wrong', false, null)->>'error' = 'wrong_password';
   if not ok then raise exception 'wrong password must fail'; end if;
   r := public.priest_login('PR-1', 'pass123', true, 'test');
   tok := r->>'token';

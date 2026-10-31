@@ -50,12 +50,9 @@ begin
   if not (r->>'default_password')::boolean then raise exception 'login must flag the default password'; end if;
   tok := r->>'token';
   -- wrong default is refused
-  begin
-    perform public.child_login('KID-1', '111111', false);
+  if public.child_login('KID-1', '111111', false)->>'error' is distinct from 'wrong_password' then
     raise exception 'wrong password accepted';
-  exception when others then
-    if sqlerrm not like '%wrong_password%' then raise; end if;
-  end;
+  end if;
   -- change: old (= default) + new
   begin
     perform public.child_change_password(tok, 'bad', 'secret1');
@@ -65,12 +62,9 @@ begin
   end;
   perform public.child_change_password(tok, '000000', 'secret1');
   r := public.child_login('KID-1', 'secret1', false);
-  begin
-    perform public.child_login('KID-1', '000000', false);
+  if public.child_login('KID-1', '000000', false)->>'error' is distinct from 'wrong_password' then
     raise exception 'default must stop working after a change';
-  exception when others then
-    if sqlerrm not like '%wrong_password%' then raise; end if;
-  end;
+  end if;
 
   -- ---------- B. stop ONE child ----------
   r := public.set_enrollments_status('stopped', array[e2]);
