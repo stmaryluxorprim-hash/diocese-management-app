@@ -58,6 +58,8 @@ export interface OrderBy { column: string; ascending?: boolean; nullsFirst?: boo
 
 export interface ServiceEnv {
   cache?: QueryCache;
+  /** development tracer (HIT / MISS / DEDUPED / STALE / REVALIDATE / INVALIDATED) — omit in production */
+  trace?: QueryCacheEnv['trace'];
   storage?: StorageLike | null;
   now?: () => number;
   bus?: BusPort | null;
@@ -70,6 +72,7 @@ export function createQueryService(env: ServiceEnv = {}) {
   const bus = env.bus ?? null;
   const cacheEnv: QueryCacheEnv = {
     now: env.now,
+    trace: env.trace,
     storage: env.storage ?? null,
     subscribeTable: bus ? (t, fn) => bus.onTable(t, fn) : undefined,
   };

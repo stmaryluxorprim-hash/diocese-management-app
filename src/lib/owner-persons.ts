@@ -13,6 +13,7 @@
 //   owner_merge_persons         two persons rows → one (the owner picks the values)
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { devTracer } from '@/lib/cached-query';
 import type { AppRole, ApprovalStatus, EnrollmentStatus, Gender, Person, ScopeRef } from '@/lib/types';
 
 /** One enrollment as embedded by owner_persons_page. */
@@ -99,6 +100,12 @@ export async function fetchOwnerPersons(
   page = 0,
   pageSize = OWNER_PAGE_SIZE,
 ): Promise<{ rows: OwnerPersonRow[]; total: number }> {
+  // DEV ONLY (temporary): shows repeated identical requests; prints no search text / ids
+  devTracer?.request(
+    'rpc owner_persons_page',
+    { page, pageSize, scopeMode: f.scopeMode, kind: f.kind, search: !!f.search?.trim(), scoped: !!(f.church || f.service || f.class), gender: !!f.gender },
+    [f.search?.trim() || null, f.scopeMode, f.church ?? null, f.service ?? null, f.class ?? null, f.gender ?? null, f.kind, page, pageSize],
+  );
   const { data, error } = await supabase.rpc('owner_persons_page', {
     p_search: f.search?.trim() || null,
     p_scope_mode: f.scopeMode,
@@ -130,6 +137,7 @@ export interface OwnerPersonsCounts {
 }
 
 export async function fetchOwnerPersonsCounts(supabase: SupabaseClient): Promise<OwnerPersonsCounts | null> {
+  devTracer?.request('rpc owner_persons_counts', {}, null); // DEV ONLY (temporary)
   const { data, error } = await supabase.rpc('owner_persons_counts');
   if (error || !data) return null;
   return data as OwnerPersonsCounts;

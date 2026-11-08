@@ -60,8 +60,25 @@ export interface StorageLike {
   removeItem(key: string): void;
 }
 
+/**
+ * Development tracing (see src/lib/cache/trace.ts). The core only REPORTS
+ * what it decided; it never reports data, identities or namespaces.
+ */
+export type TraceEvent = 'HIT' | 'MISS' | 'DEDUPED' | 'STALE' | 'REVALIDATE' | 'INVALIDATED' | 'BYPASS';
+export interface TraceInfo {
+  event: TraceEvent;
+  /** the cache key (callers redact it before printing) */
+  key?: string;
+  /** why: verified / fallback-ttl / cold / expired / revalidating / table:x / all / identity / force / no-identity */
+  reason?: string;
+  /** INVALIDATED: how many entries / in-flight fetches were dropped */
+  count?: number;
+}
+
 export interface QueryCacheEnv {
   now?: () => number;
+  /** optional tracer — undefined in production (zero cost, no behaviour change) */
+  trace?: (info: TraceInfo) => void;
   /** sessionStorage (or a fake). Omit / null → no persistence at all. */
   storage?: StorageLike | null;
   /** subscribe to «table X changed»; returns the unsubscribe fn */
@@ -157,6 +174,7 @@ export class QueryCache {
   private readonly now: () => number;
   private readonly storage: StorageLike | null;
   private readonly subscribeTable: ((table: string, onChange: () => void) => () => void) | null;
+  private readonly tracer: ((info: TraceInfo) => void) | null;
 
   private ns: string | null = null;
   private nsHash = '';
@@ -175,6 +193,12 @@ export class QueryCache {
     this.now = env.now ?? (() => Date.now());
     this.storage = env.storage ?? null;
     this.subscribeTable = env.subscribeTable ?? null;
+    this.tracer = env.trace ?? null;
+  }
+
+  private emit(event: TraceEvent, key?: string, reason?: string, count?: number): void {
+    if (!this.tracer) return;
+    try { this.tracer({ event, key, reason, count }); } catch { /* a tracer must never affect the cache */ }
   }
 
   // ------------------------------------------------------------------
@@ -195,6 +219,8 @@ export class QueryCache {
    */
   setIdentity(ns: string | null): boolean {
     if (ns === this.ns) return false;
+    const dropped = this.entries.size + this.flights.size;
+    if (dropped > 0) this.emit('INVALIDATED', undefined, 'identity', dropped);
     this.ns = ns;
     this.nsHash = ns === null ? '' : hashString(ns);
     this.gen++;
@@ -235,19 +261,25 @@ export class QueryCache {
   // reading
   // ------------------------------------------------------------------
   async query<T>(key: string, fetcher: () => Promise<T>, opts: CachedQueryOptions<T> = {}): Promise<T> {
-    if (this.ns === null) return fetcher(); // no identity → never cache, never share
+    if (this.ns === null) { this.emit('BYPASS', key, 'no-identity'); return fetcher(); } // no identity → never cache, never share
     const gen = this.gen;
-    if (opts.force) this.invalidateKey(key);
+    if (opts.force) this.invalidateKey(key, 'force');
 
     const entry = this.entries.get(key);
     if (entry) {
       const state = this.classify(entry, opts);
-      if (state === 'fresh') return entry.data as T;
+      if (state === 'fresh') {
+        this.emit('HIT', key, entry.verified ? 'verified' : 'fallback-ttl');
+        return entry.data as T;
+      }
       if (state === 'stale') {
+        this.emit('STALE', key, entry.verified ? 'verified' : 'unverified');
         this.revalidate(key, fetcher, opts);
         return entry.data as T;
       }
     }
+    if (this.flights.has(key)) this.emit('DEDUPED', key, 'in-flight');
+    else this.emit('MISS', key, entry ? 'expired' : 'cold');
     try {
       return await this.fetchShared(key, fetcher, opts);
     } catch (err) {
@@ -269,9 +301,10 @@ export class QueryCache {
   // ------------------------------------------------------------------
   // invalidation
   // ------------------------------------------------------------------
-  invalidateKey(key: string): void {
-    this.entries.delete(key);
-    this.flights.delete(key); // an in-flight response may predate the change → never stored
+  invalidateKey(key: string, reason = 'key'): void {
+    const dropped = (this.entries.delete(key) ? 1 : 0) + (this.flights.delete(key) ? 1 : 0);
+    if (dropped > 0) this.emit('INVALIDATED', key, reason, dropped);
+    // an in-flight response may predate the change → never stored (flight removed above)
     this.failedAt.delete(key);
     this.removeStored(key);
     this.syncSubscriptions();
@@ -283,6 +316,8 @@ export class QueryCache {
     const keys: string[] = [];
     this.entries.forEach((e, k) => { if (hit(e.tables)) keys.push(k); });
     this.flights.forEach((f, k) => { if (hit(f.tables)) keys.push(k); });
+    const distinct = new Set(keys);
+    if (distinct.size > 0) this.emit('INVALIDATED', undefined, `table:${Array.from(set).join(',')}`, distinct.size);
     keys.forEach((k) => {
       this.entries.delete(k);
       this.flights.delete(k);
@@ -296,6 +331,8 @@ export class QueryCache {
 
   /** hard-clear everything of the current identity (role / scope / permission changed) */
   invalidateAll(): void {
+    const dropped = this.entries.size + this.flights.size;
+    if (dropped > 0) this.emit('INVALIDATED', undefined, 'all', dropped);
     this.epoch++;
     this.entries.clear();
     this.flights.clear();
@@ -374,10 +411,11 @@ export class QueryCache {
   }
 
   private revalidate<T>(key: string, fetcher: () => Promise<T>, opts: CachedQueryOptions<T>): void {
-    if (this.flights.has(key)) return;
+    if (this.flights.has(key)) { this.emit('DEDUPED', key, 'revalidating'); return; }
     const failed = this.failedAt.get(key);
     if (failed !== undefined && this.now() - failed < REVALIDATE_RETRY_MS) return;
     const gen = this.gen;
+    this.emit('REVALIDATE', key);
     this.fetchShared(key, fetcher, opts).then(
       (data) => { if (this.gen === gen) opts.onRevalidated?.(data); },
       () => { /* the stale value stays; failedAt backs the next attempt off */ },

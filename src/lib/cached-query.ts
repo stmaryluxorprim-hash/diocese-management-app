@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------
 
 import { createQueryService } from '@/lib/cache/service';
+import { createDevTracer, type DevTracer } from '@/lib/cache/trace';
 import type { CachedQueryOptions, NamespaceParts, StorageLike } from '@/lib/cache/query-cache';
 import { onBusTable, onBusConnection, onAppResume, busConnected } from '@/lib/realtime';
 
@@ -38,8 +39,19 @@ function browserSessionStorage(): StorageLike | null {
 
 const isBrowser = typeof window !== 'undefined';
 
+/**
+ * DEVELOPMENT ONLY (TEMPORARY): `next dev` / any non-production build prints
+ * HIT · MISS · DEDUPED · STALE · REVALIDATE · INVALIDATED lines (redacted keys,
+ * no data, no ids) and exposes `window.__dmaCache.summary()`.
+ * NODE_ENV is inlined by Next, so a production bundle has `devTracer = null`.
+ */
+export const devTracer: DevTracer | null =
+  isBrowser && process.env.NODE_ENV !== 'production' ? createDevTracer() : null;
+if (devTracer) (window as unknown as { __dmaCache?: DevTracer }).__dmaCache = devTracer;
+
 /** one instance per page session; on the server it is an inert pass-through (no identity is ever set) */
 const service = createQueryService({
+  trace: devTracer ? devTracer.trace : undefined,
   storage: isBrowser ? browserSessionStorage() : null,
   bus: isBrowser
     ? { onTable: onBusTable, onConnection: onBusConnection, connected: busConnected, onResume: onAppResume }
