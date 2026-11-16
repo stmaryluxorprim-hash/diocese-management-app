@@ -43,7 +43,7 @@ export default function OnlineHubPage() {
 
   const load = useCallback(async () => {
     try {
-      const list = await fetchOnlineClasses(supabase, { church: scope.church, service: scope.service, class: scope.class });
+      const list = await fetchOnlineClasses(supabase, { church: scope.church, service: scope.service, classes: scope.classes });
       setRows(list);
       setCounts(await fetchParticipantCounts(supabase, list.map((r) => r.id)));
       setMigrationMissing(false);
@@ -52,7 +52,7 @@ export default function OnlineHubPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, scope.church, scope.service, scope.class]);
+  }, [supabase, scope.church, scope.service, scope.classes]);
 
   useEffect(() => { if (approved) load(); }, [approved, load]);
   useDebouncedRealtime(supabase, 'online-hub', [{ table: 'online_classes' }, { table: 'online_class_participants' }], load, { enabled: approved, delayMs: 1000 });

@@ -1,4 +1,6 @@
 'use client';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { inClasses, singleClass } from '@/lib/class-multi';
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Loader2, Printer, Search, CheckSquare, Square, Users, Inbox, Trash2, X } from 'lucide-react';
@@ -71,7 +73,7 @@ export default function PrintTab({
   const [source, setSource] = useState<PrintSource>('manual');
   const [churchFilter, setChurchFilter] = useState<string>(template.church_id || ALL);
   const [serviceFilter, setServiceFilter] = useState<string>(template.service_id ?? ALL);
-  const [classFilter, setClassFilter] = useState<string>(template.class_id ?? ALL);
+  const [classFilter, setClassFilter] = useState<string[]>(template.class_id ? [template.class_id] : []);
   const [selected, setSelected] = useState<Set<string>>(new Set()); // enrollment ids
   const [selectedReq, setSelectedReq] = useState<Set<string>>(new Set()); // request ids
   const [deleteAfterPrint, setDeleteAfterPrint] = useState(true);
@@ -89,7 +91,7 @@ export default function PrintTab({
     const [enr, ch, sv, cl, rq] = await Promise.all([
       // Only the SELECTED scope — ALL of it, paged server-side (no cap):
       // a church-wide print must include every child.
-      fetchAllEnrollments(supabase, { church: churchFilter, service: serviceFilter, class: classFilter }, { onProgress: setLoadedCount }),
+      fetchAllEnrollments(supabase, { church: churchFilter, service: serviceFilter, classes: classFilter }, { onProgress: setLoadedCount }),
       cachedLookup<Church>(supabase, 'churches'),
       cachedLookup<Service>(supabase, 'services'),
       cachedLookup<ClassRoom>(supabase, 'classes'),
@@ -115,7 +117,7 @@ export default function PrintTab({
   const inScope = useCallback((x: { church_id: string; service_id: string | null; class_id: string | null }) => {
     if (churchFilter !== ALL && x.church_id !== churchFilter) return false;
     if (serviceFilter !== ALL && x.service_id !== serviceFilter) return false;
-    if (classFilter !== ALL && x.class_id !== classFilter) return false;
+    if (!inClasses(classFilter, x.class_id)) return false;
     return true;
   }, [churchFilter, serviceFilter, classFilter]);
 
@@ -470,7 +472,7 @@ export default function PrintTab({
               onChange={(e) => {
                 setChurchFilter(e.target.value);
                 setServiceFilter(ALL);
-                setClassFilter(ALL);
+                setClassFilter([]);
               }}
             >
               <option value={ALL}>كل الكنائس</option>
@@ -484,7 +486,7 @@ export default function PrintTab({
               value={serviceFilter}
               onChange={(e) => {
                 setServiceFilter(e.target.value);
-                setClassFilter(ALL);
+                setClassFilter([]);
               }}
             >
               <option value={ALL}>كل الخدمات</option>
@@ -495,18 +497,14 @@ export default function PrintTab({
           </label>
           <label className="block">
             <span className="mb-0.5 block text-[11px] font-bold text-slate-500">الفصل</span>
-            <select
-              className="input-field !py-2 !px-2 !text-xs"
+            <MultiClassSelect
+              className="!py-2"
               value={classFilter}
-              onChange={(e) => setClassFilter(e.target.value)}
-            >
-              <option value={ALL}>كل الفصول</option>
-              {classes
-                .filter((c) =>
-                  (churchFilter === ALL || c.church_id === churchFilter) &&
-                  (serviceFilter === ALL || c.service_id === serviceFilter))
-                .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+              onChange={setClassFilter}
+              options={classes.filter((c) =>
+                (churchFilter === ALL || c.church_id === churchFilter) &&
+                (serviceFilter === ALL || c.service_id === serviceFilter))}
+            />
           </label>
         </div>
         {/* source toggle */}

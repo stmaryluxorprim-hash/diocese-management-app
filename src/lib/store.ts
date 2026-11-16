@@ -12,7 +12,8 @@ import type {
   StoreItem, StoreOrder, StoreOrderItem, StoreCheckoutResult, EnrollmentWithPerson,
   StoreShop, StoreShopTarget, StoreRequest, StoreRequestDetail, StoreRequestStatus,
 } from '@/lib/types';
-import { ALL, type ScopeSelection } from '@/lib/queries';
+import { ALL, applyClassScope, type ScopeSelection } from '@/lib/queries';
+import { classIdsOf } from '@/lib/class-multi';
 
 // ---------- Basket ----------
 export interface BasketLine {
@@ -132,8 +133,9 @@ export async function fetchStoreItems(
   if (scope.service && scope.service !== ALL) {
     rows = rows.filter((r) => r.shop_id || r.service_id === null || r.service_id === scope.service);
   }
-  if (scope.class && scope.class !== ALL) {
-    rows = rows.filter((r) => r.shop_id || r.class_id === null || r.class_id === scope.class);
+  {
+    const ids = classIdsOf(scope);
+    if (ids.length > 0) rows = rows.filter((r) => r.shop_id || r.class_id === null || ids.includes(r.class_id));
   }
   return rows;
 }
@@ -232,7 +234,7 @@ export async function fetchStoreRequests(
     .select('*, person:persons(id, name, national_id, image_url), shop:store_shops(id, name, image_url)');
   if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
   if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
-  if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
+  q = applyClassScope(q, scope);
   if (opts.status && opts.status !== 'all') q = q.eq('status', opts.status);
   if (opts.shopId) q = q.eq('shop_id', opts.shopId);
   const { data, error } = await q.order('created_at', { ascending: false }).limit(opts.limit ?? 200);
@@ -328,7 +330,7 @@ export async function fetchStoreOrders(
     let q = supabase.from('store_orders').select(select);
     if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
     if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
-    if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
+    q = applyClassScope(q, scope);
     if (opts.enrollmentId) q = q.eq('enrollment_id', opts.enrollmentId);
     if (opts.shopId) q = q.eq('shop_id', opts.shopId);
     if (search) {

@@ -43,7 +43,7 @@ export default function BirthdayPrintTab({
   onChange: (s: CardPrintSettings) => void;
   template: BirthdayCardTemplate;
   initialYear: number; initialMonth: number;
-  initialScope?: { church?: string; service?: string; class?: string };
+  initialScope?: { church?: string; service?: string; class?: string; classes?: string[] };
   currentUserId?: string;
   onPrinted: (msg: string) => void;
 }) {
@@ -61,7 +61,10 @@ export default function BirthdayPrintTab({
     // seed from the template scope, overridden by the query passed from the month view
     scope.setChurch(initialScope?.church ?? template.church_id);
     if (initialScope?.service ?? template.service_id) scope.setService(initialScope?.service ?? template.service_id!);
-    if (initialScope?.class ?? template.class_id) scope.setClass(initialScope?.class ?? template.class_id!);
+    const seedClasses = initialScope?.classes?.length ? initialScope.classes
+      : initialScope?.class ? initialScope.class.split(',').filter(Boolean)
+      : template.class_id ? [template.class_id] : [];
+    if (seedClasses.length > 0) scope.setClasses(seedClasses);
     setScopeSeeded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -74,7 +77,7 @@ export default function BirthdayPrintTab({
     if (!scopeSeeded) return;
     setRows(null);
     try {
-      const r = await fetchBirthdaysInMonth(supabase, year, month, { church: scope.church, service: scope.service, class: scope.class });
+      const r = await fetchBirthdaysInMonth(supabase, year, month, { church: scope.church, service: scope.service, classes: scope.classes });
       // only children this template applies to
       const fit = r.filter((x) => x.church_id === template.church_id &&
         (template.service_id === null || template.service_id === x.service_id) &&
@@ -82,7 +85,7 @@ export default function BirthdayPrintTab({
       setRows(fit);
       setSelected(new Set(fit.map((x) => x.person_id)));
     } catch { setRows([]); }
-  }, [supabase, year, month, scope.church, scope.service, scope.class, scopeSeeded, template]);
+  }, [supabase, year, month, scope.church, scope.service, scope.classes, scopeSeeded, template]);
   useEffect(() => { load(); }, [load]);
 
   const toggle = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });

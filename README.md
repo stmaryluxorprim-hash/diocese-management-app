@@ -244,6 +244,13 @@ The person (code = `national_id` = QR) is ONE identity that may own up to **thre
 
 **إدارة الأفراد → تسجيل كخادم for a person who already IS a servant** adds **more places to the same account** instead of being disabled: role is fixed to his current one, places he already holds are filtered out, `owner_add_servant_places(servant, places)` (owner or `can_manage_servant`) appends them through `set_servant_scopes` (mirrors re-synced). Only the priest kind stays one-per-person (its church is edited from إدارة الكهنة).
 
+### Multi-class filter on الإحصائيات and سجل النشاط — migration 20261021120000
+`supabase/migrations/20261021120000_stats_activity_multi_class.sql` · `src/components/MultiClassSelect.tsx` · `src/lib/class-multi.ts` (`classRpcArgs`) · `src/lib/stats.ts` · `src/lib/stats-period.ts` · `src/app/stats/page.tsx` · `src/app/activity/page.tsx`
+
+The class selector on `/stats` and `/activity` is a multi-select (`[]` = «كل الفصول»). **Run the migration before deploying this client** - the new client sends `p_classes` only when two or more classes are ticked (one class still goes through the old `p_class`).
+- All 27 `stats_*` RPCs (incl. `stats_scope_enrollments` / `stats_expected_occurrences`) gain an optional `p_classes uuid[] default null`: rows of ANY listed class. `p_class` is still honoured (ANDed). Distinct counts, rates and best-day are computed once over the union in SQL, never merged on the client.
+- `activity_where` accepts `class_ids` (array) next to `class_id`, so `activity_feed` / `activity_summary` / `activity_actors` stay correctly paginated.
+
 ### Login rate limit · the login rush · one servant account = all his places — حدّ محاولات الدخول · حساب خادم واحد يرى كل أماكنه — migration 20261019120000
 `supabase/migrations/20261019120000_login_rate_limit_servant_all_places.sql` · test `supabase/tests/login_throttle_test.sql` · `src/lib/login-throttle.ts` · `src/lib/login-security.ts` · `src/app/owner/login-security/page.tsx`
 

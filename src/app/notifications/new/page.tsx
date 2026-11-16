@@ -111,11 +111,13 @@ export default function NewNotificationPage() {
       : church && visServices.length === 1 ? visServices[0].id
       : (church && profile && profile.role !== 'owner' && profile.service_id) || null;
     const visClasses = classes.filter((c) => (!church || c.church_id === church) && (!service || c.service_id === service));
-    const cls = scope.class !== ALL ? scope.class
-      : service && visClasses.length === 1 ? visClasses[0].id
-      : (service && profile && profile.role !== 'owner' && profile.class_id) || null;
-    return { church, service, class: cls };
-  }, [scope.church, scope.service, scope.class, churches, services, classes, profile]);
+    // MULTI-select: every chosen class gets the notification
+    const clsList: string[] = scope.classes.length > 0 ? scope.classes
+      : service && visClasses.length === 1 ? [visClasses[0].id]
+      : (service && profile && profile.role !== 'owner' && profile.class_id) ? [profile.class_id]
+      : [];
+    return { church, service, classes: clsList, class: clsList.length === 1 ? clsList[0] : null };
+  }, [scope.church, scope.service, scope.classes, churches, services, classes, profile]);
 
   // the effective target for the chosen kind
   const target = useMemo(() => {
@@ -123,7 +125,7 @@ export default function NewNotificationPage() {
     if (kind === 'all') return { ...base };
     if (kind === 'church') return { ...base, church_id: scopeIds.church };
     if (kind === 'service') return { ...base, church_id: scopeIds.church, service_id: scopeIds.service };
-    if (kind === 'class') return { ...base, church_id: scopeIds.church, service_id: scopeIds.service, class_id: scopeIds.class };
+    if (kind === 'class') return { ...base, church_id: scopeIds.church, service_id: scopeIds.service, class_id: scopeIds.classes[0] ?? null };
     if (kind === 'group') return { ...base };
     return { ...base, enrollment_ids: Array.from(selected.keys()) };
   }, [kind, audience, scopeIds, selected]);
@@ -131,7 +133,7 @@ export default function NewNotificationPage() {
   const scopeMissing =
     (kind === 'church' && !scopeIds.church) ||
     (kind === 'service' && !scopeIds.service) ||
-    (kind === 'class' && !scopeIds.class);
+    (kind === 'class' && scopeIds.classes.length === 0);
 
   // live recipients count
   useEffect(() => {
@@ -140,20 +142,24 @@ export default function NewNotificationPage() {
     if (scopeMissing) { setAudienceCount(null); return; }
     setAudienceCount(null);
     const t = setTimeout(() => {
-      fetchAudienceCount(supabase, target).then(setAudienceCount).catch(() => setAudienceCount(0));
+      // 'class' kind: the RPC counts ONE class → sum the chosen classes
+      const targets = kind === 'class' ? scopeIds.classes.map((c) => ({ ...target, class_id: c })) : [target];
+      Promise.all(targets.map((tg) => fetchAudienceCount(supabase, tg)))
+        .then((counts) => setAudienceCount(counts.reduce((a, b) => a + b, 0)))
+        .catch(() => setAudienceCount(0));
     }, 200);
     return () => clearTimeout(t);
-  }, [approved, supabase, target, kind, selected.size, scopeMissing]);
+  }, [approved, supabase, target, kind, selected.size, scopeMissing, scopeIds.classes]);
 
   // children list for «مخدوم محدد»
   const loadEnrollments = useCallback(async () => {
     if (kind !== 'person') return;
     setListLoading(true);
     try {
-      const r = await fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, class: scope.class }, { search, pageSize: 60 });
+      const r = await fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, classes: scope.classes }, { search, pageSize: 60 });
       setEnrollments(r.rows); setHasMore(r.hasMore);
     } finally { setListLoading(false); }
-  }, [supabase, kind, scope.church, scope.service, scope.class, search]);
+  }, [supabase, kind, scope.church, scope.service, scope.classes, search]);
   useEffect(() => {
     if (!approved) return;
     const t = setTimeout(loadEnrollments, 250);
@@ -168,8 +174,8 @@ export default function NewNotificationPage() {
     if (kind === 'church') return ch ? `كنيسة ${ch}` : 'اختر الكنيسة';
     const sv = services.find((s) => s.id === scopeIds.service)?.name ?? '';
     if (kind === 'service') return sv ? `خدمة ${sv}` : 'اختر الخدمة';
-    const cl = classes.find((c) => c.id === scopeIds.class)?.name ?? '';
-    return cl ? `فصل ${cl}` : 'اختر الفصل';
+    const cl = scopeIds.classes.map((id) => classes.find((c) => c.id === id)?.name ?? '').filter(Boolean).join('، ');
+    return cl ? `${scopeIds.classes.length > 1 ? 'فصول' : 'فصل'} ${cl}` : 'اختر الفصل';
   }, [kind, audience, selected, churches, services, classes, scopeIds]);
 
   const linkValue = linkPreset === 'custom' ? linkCustom.trim() : linkPreset;
@@ -186,11 +192,20 @@ export default function NewNotificationPage() {
     try {
       let image_url: string | null = null;
       if (file) image_url = await uploadPhoto(supabase, 'notifications', await compressImage(file), 'notif.webp');
-      const res = await sendNotification(supabase, {
+      const common = {
         title: title.trim(), body: body.trim(), image_url, link_url: linkValue || null,
-        ...target,
         scheduled_at: when === 'later' ? localInputToISO(at) : null,
-      });
+      };
+      // 'class' kind: the RPC addresses ONE class → one notification per chosen class
+      const targets = kind === 'class' ? scopeIds.classes.map((c) => ({ ...target, class_id: c })) : [target];
+      let res = await sendNotification(supabase, { ...common, ...targets[0] });
+      let recipientsTotal = res.recipients_count ?? 0;
+      for (const tg of targets.slice(1)) {
+        const r = await sendNotification(supabase, { ...common, ...tg });
+        recipientsTotal += r.recipients_count ?? 0;
+        if (r.status === 'failed' && res.status !== 'failed') res = r;
+      }
+      res = { ...res, recipients_count: recipientsTotal };
       if (res.status === 'scheduled') flash(`تمت الجدولة إلى ${targetLabel} ⏰`);
       else if (res.status === 'failed') flash('لا يوجد مستلمون في هذا النطاق');
       else { flash(`تم الإرسال إلى ${res.recipients_count} مستلم ✅`); kickDispatcher({ force: true }); }

@@ -1,5 +1,7 @@
 'use client';
 
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { inClasses, inClassesOrWide, singleClass } from '@/lib/class-multi';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   ScanLine, Camera, CameraOff, CheckCircle2, AlertCircle, Search, Star, Loader2, School,
@@ -104,7 +106,8 @@ export default function ScannerPage() {
   // ---------- Scope selectors: church -> service -> class ----------
   const [churchFilter, setChurchFilter] = useState<string>(ALL);
   const [serviceFilter, setServiceFilter] = useState<string>(ALL);
-  const [classFilter, setClassFilter] = useState<string>(ALL);
+  // MULTI-select: chosen class ids, EMPTY = «كل الفصول»
+  const [classFilter, setClassFilter] = useState<string[]>([]);
 
   // ---------- Job + modes ----------
   const [job, setJob] = useState<ScannerJob>('attendance');
@@ -184,7 +187,7 @@ export default function ScannerPage() {
   // Any doubt (stale, other scope / account, bus down, person touched…) → the server RPC, as before.
   useEffect(() => {
     if (profile?.status !== 'approved') return;
-    void scannerRoster.load(supabase, { church: churchFilter, service: serviceFilter, class: classFilter });
+    void scannerRoster.load(supabase, { church: churchFilter, service: serviceFilter, classes: classFilter });
   }, [profile?.status, supabase, churchFilter, serviceFilter, classFilter]);
   useEffect(() => () => scannerRoster.release(), []);
 
@@ -202,8 +205,8 @@ export default function ScannerPage() {
       ),
     [classes, churchFilter, serviceFilter]
   );
-  const onChurchChange = (v: string) => { setChurchFilter(v); setServiceFilter(ALL); setClassFilter(ALL); };
-  const onServiceChange = (v: string) => { setServiceFilter(v); setClassFilter(ALL); };
+  const onChurchChange = (v: string) => { setChurchFilter(v); setServiceFilter(ALL); setClassFilter([]); };
+  const onServiceChange = (v: string) => { setServiceFilter(v); setClassFilter([]); };
 
   const visibleEvents = useMemo(
     () =>
@@ -211,7 +214,7 @@ export default function ScannerPage() {
         (ev) =>
           (churchFilter === ALL || ev.church_id === churchFilter) &&
           (serviceFilter === ALL || ev.service_id === null || ev.service_id === serviceFilter) &&
-          (classFilter === ALL || ev.class_id === null || ev.class_id === classFilter)
+          inClassesOrWide(classFilter, ev.class_id)
       ),
     [events, churchFilter, serviceFilter, classFilter]
   );
@@ -221,7 +224,7 @@ export default function ScannerPage() {
         (ca) =>
           (churchFilter === ALL || ca.church_id === churchFilter) &&
           (serviceFilter === ALL || ca.service_id === null || ca.service_id === serviceFilter) &&
-          (classFilter === ALL || ca.class_id === null || ca.class_id === classFilter)
+          inClassesOrWide(classFilter, ca.class_id)
       ),
     [causes, churchFilter, serviceFilter, classFilter]
   );
@@ -235,7 +238,7 @@ export default function ScannerPage() {
   // with one church / service / class gets his class (or service) default
   // preselected exactly as if he had picked them by hand.
   const scopeSel = useMemo(
-    () => effectiveScope({ church: churchFilter, service: serviceFilter, class: classFilter }, churches, services, classes),
+    () => effectiveScope({ church: churchFilter, service: serviceFilter, class: singleClass(classFilter) ?? ALL }, churches, services, classes),
     [churchFilter, serviceFilter, classFilter, churches, services, classes]
   );
   // NOTE: this is the ONLY place that writes the selection automatically.
@@ -312,7 +315,7 @@ export default function ScannerPage() {
     (e: { church_id: string; service_id: string; class_id: string }) =>
       (churchFilter === ALL || e.church_id === churchFilter) &&
       (serviceFilter === ALL || e.service_id === serviceFilter) &&
-      (classFilter === ALL || e.class_id === classFilter),
+      inClasses(classFilter, e.class_id),
     [churchFilter, serviceFilter, classFilter]
   );
 
@@ -326,7 +329,7 @@ export default function ScannerPage() {
       try {
         const { rows } = await fetchEnrollmentsPage(
           supabase,
-          { church: churchFilter, service: serviceFilter, class: classFilter },
+          { church: churchFilter, service: serviceFilter, classes: classFilter },
           { page: 0, pageSize: 8, search: q }
         );
         if (!cancelled) setSearchRows(rows);
@@ -647,7 +650,7 @@ export default function ScannerPage() {
         scannerRoster,
         supabase,
         nationalId,
-        { church: churchFilter, service: serviceFilter, class: classFilter },
+        { church: churchFilter, service: serviceFilter, classes: classFilter },
         inScope,
         (nid) =>
           supabase.rpc('lookup_enrollments_by_national_id', {
@@ -983,17 +986,14 @@ export default function ScannerPage() {
             <option value={ALL}>{visibleServices.length === 1 ? visibleServices[0].name : 'كل الخدمات'}</option>
             {visibleServices.length > 1 && visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select
+          <MultiClassSelect
             id="class-selector"
-            aria-label="اختيار الفصل"
-            className="input-field appearance-none !px-2 text-xs font-bold"
+            ariaLabel="اختيار الفصول"
             value={classFilter}
-            onChange={(e) => setClassFilter(e.target.value)}
+            onChange={setClassFilter}
+            options={visibleClasses}
             disabled={visibleClasses.length <= 1}
-          >
-            <option value={ALL}>{visibleClasses.length === 1 ? visibleClasses[0].name : 'كل الفصول'}</option>
-            {visibleClasses.length > 1 && visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          />
           <select
             id="event-selector"
             aria-label="اختيار المناسبة"

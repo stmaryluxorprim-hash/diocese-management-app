@@ -60,6 +60,8 @@ export interface ActivityFilters {
   church_id?: string;
   service_id?: string;
   class_id?: string;
+  /** several classes at once (needs 20261021120000_stats_activity_multi_class.sql) */
+  class_ids?: string[];
   from?: string;
   to?: string;
   q?: string;

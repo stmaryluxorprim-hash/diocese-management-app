@@ -263,16 +263,18 @@ export function createReads(deps: { query: QueryFn }) {
   const LOG_LIMIT = 2000;
 
   async function followUpRoster(
-    supabase: SupabaseClient, scope: { church: string; service?: string | null; class?: string | null }, o: ReadOpts = {},
+    supabase: SupabaseClient, scope: { church: string; service?: string | null; class?: string | null; classes?: string[] | null }, o: ReadOpts = {},
   ): Promise<FollowUpRosterRow[]> {
     try {
       return await run<FollowUpRosterRow[]>(
-        `read:enrollments:roster:${stableArgs({ church: scope.church, service: scope.service ?? null, class: scope.class ?? null, limit: ROSTER_LIMIT })}`,
+        `read:enrollments:roster:${stableArgs({ church: scope.church, service: scope.service ?? null, class: scope.classes && scope.classes.length ? [...scope.classes].sort() : scope.class ?? null, limit: ROSTER_LIMIT })}`,
         FOLLOW_UP_ROSTER_TABLES, TTL.followUp, o,
         async () => {
           let q = supabase.from('enrollments').select('id, person:persons(name, phone, image_url)').eq('church_id', scope.church).limit(ROSTER_LIMIT);
           if (scope.service) q = q.eq('service_id', scope.service);
-          if (scope.class) q = q.eq('class_id', scope.class);
+          if (scope.classes && scope.classes.length > 1) q = q.in('class_id', scope.classes);
+          else if (scope.classes && scope.classes.length === 1) q = q.eq('class_id', scope.classes[0]);
+          else if (scope.class) q = q.eq('class_id', scope.class);
           const { data, error } = await q;
           if (error) throw error;
           return (data ?? []) as unknown as FollowUpRosterRow[];

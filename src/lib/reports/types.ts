@@ -75,8 +75,15 @@ export interface SortRule {
 export interface ReportScope {
   church: string;
   service: string;
+  /** legacy single class of older saved templates — read through `reportClassIds` */
   class: string;
+  /** MULTI-select of classes (empty / undefined = all); wins over `class` */
+  classes?: string[];
 }
+
+/** the class ids a report scope narrows to ([] = every class) */
+export const reportClassIds = (scope: Pick<ReportScope, 'class' | 'classes'>): string[] =>
+  scope.classes && scope.classes.length > 0 ? scope.classes : scope.class ? [scope.class] : [];
 
 /**
  * Source-specific filters. Optional keys — each source reads the ones it
@@ -361,7 +368,7 @@ export function defaultDesign(title = 'تقرير'): ReportDesign {
 export function defaultQuery(source: ReportSourceKey = 'enrollments'): ReportQuery {
   return {
     source,
-    scope: { church: '', service: '', class: '' },
+    scope: { church: '', service: '', class: '', classes: [] },
     filters: { kind: 'child', status: 'active' },
     fields: [],
     rowFilters: [],
@@ -380,7 +387,12 @@ export function normalizeDefinition(raw: unknown): ReportDefinition {
   const base = defaultDefinition((d.query?.source as ReportSourceKey) ?? 'enrollments');
   const query: ReportQuery = {
     ...base.query, ...(d.query ?? {}),
-    scope: { ...base.query.scope, ...(d.query?.scope ?? {}) },
+    scope: (() => {
+      const sc = { ...base.query.scope, ...(d.query?.scope ?? {}) };
+      // older templates stored ONE class → lift it into the list
+      const ids = reportClassIds(sc);
+      return { ...sc, class: ids.length === 1 ? ids[0] : '', classes: ids };
+    })(),
     filters: { ...base.query.filters, ...(d.query?.filters ?? {}) },
     fields: Array.isArray(d.query?.fields) ? d.query!.fields : [],
     rowFilters: Array.isArray(d.query?.rowFilters) ? d.query!.rowFilters : [],

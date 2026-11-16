@@ -23,6 +23,7 @@ import {
   Cpu, User, Trash2, Save, Clock, Database, ChevronLeft,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import {
   ActivityHeader, ActivityItem, ActivityDetails, LoadMoreBar, Toast, Empty, ActorChip, ActorAvatar,
 } from '@/components/activity/ActivityBits';
@@ -98,7 +99,7 @@ function ActivityInner() {
   const [opF, setOpF] = useState<ActivityOp | 'all'>('all');
   const [church, setChurch] = useState<string>(ALL);
   const [service, setService] = useState<string>(ALL);
-  const [klass, setKlass] = useState<string>(ALL);
+  const [klass, setKlass] = useState<string[]>([]); // [] = كل الفصول
   const [showFilters, setShowFilters] = useState(false);
   const [pageSize, setPageSize] = useState<PageSize>(100);
 
@@ -131,7 +132,8 @@ function ActivityInner() {
     if (opF !== 'all') f.op = opF;
     if (church !== ALL) f.church_id = church;
     if (service !== ALL) f.service_id = service;
-    if (klass !== ALL) f.class_id = klass;
+    if (klass.length === 1) f.class_id = klass[0];
+    else if (klass.length > 1) f.class_ids = klass;
     if (actorId) { f.actor_id = actorId; if (actorKind) f.actor_kind = actorKind; }
     else if (actorKind === 'system') { f.actor_kind = 'system'; }
     if (action) f.action = action;
@@ -305,15 +307,20 @@ function ActivityInner() {
         </div>
         {showFilters && (
           <div id="activity-filters" className="card grid grid-cols-2 gap-2 !p-3 sm:grid-cols-4">
-            <select value={church} onChange={(e) => { setChurch(e.target.value); setService(ALL); setKlass(ALL); }} className="input-field !py-2 text-xs">
+            <select value={church} onChange={(e) => { setChurch(e.target.value); setService(ALL); setKlass([]); }} className="input-field !py-2 text-xs">
               <option value={ALL}>كل الكنائس</option>{churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <select value={service} onChange={(e) => { setService(e.target.value); setKlass(ALL); }} className="input-field !py-2 text-xs">
+            <select value={service} onChange={(e) => { setService(e.target.value); setKlass([]); }} className="input-field !py-2 text-xs">
               <option value={ALL}>كل الخدمات</option>{svcOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <select value={klass} onChange={(e) => setKlass(e.target.value)} className="input-field !py-2 text-xs">
-              <option value={ALL}>كل الفصول</option>{clsOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <MultiClassSelect
+              id="activity-class"
+              ariaLabel="اختيار الفصول"
+              className="!py-2"
+              value={klass}
+              onChange={setKlass}
+              options={clsOptions}
+            />
             <select value={opF} onChange={(e) => setOpF(e.target.value as ActivityOp | 'all')} className="input-field !py-2 text-xs">
               <option value="all">كل الأنواع</option>
               {(Object.keys(OP_LABELS) as ActivityOp[]).map((o) => <option key={o} value={o}>{OP_LABELS[o]}</option>)}

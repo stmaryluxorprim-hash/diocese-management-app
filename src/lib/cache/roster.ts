@@ -47,9 +47,16 @@ export interface RosterRow {
   person: { id: string; national_id: string };
 }
 
-export interface RosterScope { church?: string; service?: string; class?: string }
+/** `classes` = MULTI-select (empty / undefined = all); wins over the legacy single `class` */
+export interface RosterScope { church?: string; service?: string; class?: string; classes?: string[] }
 export const ROSTER_ALL = 'all';
-export const scopeKey = (s: RosterScope): string => `${s.church ?? ROSTER_ALL}/${s.service ?? ROSTER_ALL}/${s.class ?? ROSTER_ALL}`;
+/** the class ids a roster scope narrows to ([] = every class) */
+export const rosterClassIds = (s: RosterScope): string[] =>
+  s.classes && s.classes.length > 0 ? s.classes : s.class && s.class !== ROSTER_ALL ? [s.class] : [];
+export const scopeKey = (s: RosterScope): string => {
+  const ids = rosterClassIds(s);
+  return `${s.church ?? ROSTER_ALL}/${s.service ?? ROSTER_ALL}/${ids.length ? [...ids].sort().join('+') : ROSTER_ALL}`;
+};
 
 export interface RosterBusMessage { op: string; ids?: string[]; n?: number }
 
@@ -187,7 +194,7 @@ export function createScannerRoster<T extends RosterRow, C = unknown>(env: Roste
   const inScope = (scope: RosterScope, r: RosterRow) =>
     (!scope.church || scope.church === ROSTER_ALL || r.church_id === scope.church) &&
     (!scope.service || scope.service === ROSTER_ALL || r.service_id === scope.service) &&
-    (!scope.class || scope.class === ROSTER_ALL || r.class_id === scope.class);
+    (rosterClassIds(scope).length === 0 || rosterClassIds(scope).includes(r.class_id));
   const validId = (id: string) => !!id && id.length <= MAX_NATIONAL_ID_LENGTH && !/[\u0000-\u001f\u007f]/.test(id);
   const bulk = (m: RosterBusMessage) => !m.ids || m.ids.length === 0 || (typeof m.n === 'number' && m.n > m.ids.length);
 

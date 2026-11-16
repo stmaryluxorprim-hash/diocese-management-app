@@ -9,6 +9,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALL, type ScopeSelection } from '@/lib/queries';
+import { classIdsOf } from '@/lib/class-multi';
 
 // ---------- Types (mirror of migration 0032) ----------
 export type OccasionKind = 'trip' | 'conference' | 'celebration' | 'activity' | 'other';
@@ -342,7 +343,7 @@ export async function fetchOccasions(supabase: SupabaseClient, scope: ScopeSelec
   if (error) throw error;
   let rows = (data ?? []) as Occasion[];
   if (scope.service && scope.service !== ALL) rows = rows.filter((r) => r.service_id === null || r.service_id === scope.service);
-  if (scope.class && scope.class !== ALL) rows = rows.filter((r) => r.class_id === null || r.class_id === scope.class);
+  { const ids = classIdsOf(scope); if (ids.length > 0) rows = rows.filter((r) => r.class_id === null || ids.includes(r.class_id)); }
   return rows;
 }
 

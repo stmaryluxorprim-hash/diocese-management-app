@@ -24,8 +24,9 @@ import type { Church, Service, ClassRoom, AppEvent, Cause, CallFeedback } from '
 import { fetchResultExams, type ResultExam } from '@/lib/results';
 import {
   type ReportDefinition, type ReportQuery, type ReportDesign, type ReportTemplate, type ReportRow, type FieldDef, type ReportContext,
-  defaultDefinition, normalizeDefinition,
+  defaultDefinition, normalizeDefinition, reportClassIds,
 } from '@/lib/reports/types';
+import { singleClass } from '@/lib/class-multi';
 import { REPORT_SOURCES, SOURCE_BY_KEY, subjectFieldsFor, type ReportLookups } from '@/lib/reports/sources';
 import { applyQuery, buildVariables } from '@/lib/reports/engine';
 import { exportExcel, safeFile } from '@/lib/reports/export-excel';
@@ -175,7 +176,7 @@ function ReportsInner() {
     return {
       churchName: scope.church ? church?.name ?? '' : lookups.churches.length === 1 ? lookups.churches[0].name : '',
       serviceName: lookups.services.find((s) => s.id === scope.service)?.name ?? '',
-      className: lookups.classes.find((c) => c.id === scope.class)?.name ?? '',
+      className: reportClassIds(scope).map((id) => lookups.classes.find((c) => c.id === id)?.name ?? '').filter(Boolean).join('، '),
       churchLogoUrl: church?.logo_url ?? null,
       eventName: filters.event ? lookups.events.find((e) => e.id === filters.event)?.name : undefined,
       examName: filters.exam ? exams.find((x) => x.id === filters.exam)?.name : undefined,
@@ -254,7 +255,7 @@ function ReportsInner() {
     description: editingTemplate?.description ?? '',
     church_id: editingTemplate ? editingTemplate.church_id : (def.query.scope.church || profile?.church_id || (lookups.churches.length === 1 ? lookups.churches[0].id : null)),
     service_id: editingTemplate ? editingTemplate.service_id : (def.query.scope.service || null),
-    class_id: editingTemplate ? editingTemplate.class_id : (def.query.scope.class || null),
+    class_id: editingTemplate ? editingTemplate.class_id : (singleClass(reportClassIds(def.query.scope)) || null),
     is_default: editingTemplate?.is_default ?? false,
   };
 

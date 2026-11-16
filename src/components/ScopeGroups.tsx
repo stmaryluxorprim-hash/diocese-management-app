@@ -19,11 +19,13 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown, Search, Church as ChurchIcon, Layers, School, FolderTree } from 'lucide-react';
 import { ALL } from '@/lib/queries';
 import type { Church, Service, ClassRoom } from '@/lib/types';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { inClassesOrWide } from '@/lib/class-multi';
 import { ScopeSelect, scopeOrderOf, type Lookups, type ScopeSelection, type ScopedRow, type ScopeLevel } from '@/components/ScopeTree';
 
 export type { Lookups, ScopeSelection, ScopedRow } from '@/components/ScopeTree';
 
-export const ALL_SCOPE: ScopeSelection = { church: ALL, service: ALL, class: ALL };
+export const ALL_SCOPE: ScopeSelection = { church: ALL, service: ALL, classes: [] };
 
 /** Keep the rows inside the selected church / service / class (null scope = "all" → matches any narrower filter) */
 export type ScopeOf<T> = (r: T) => ScopedRow;
@@ -37,7 +39,7 @@ export function filterByScope<T>(rows: T[], sel: ScopeSelection, scopeOf: ScopeO
     const r = scopeOf(row);
     return (sel.church === ALL || r.church_id === sel.church) &&
       (sel.service === ALL || r.service_id === sel.service || r.service_id === null) &&
-      (sel.class === ALL || r.class_id === sel.class || r.class_id === null);
+      inClassesOrWide(sel.classes, r.class_id);
   });
 }
 
@@ -83,15 +85,15 @@ export function ScopeGroupFilters({
         <div className={`grid gap-2 ${cols === 3 ? 'grid-cols-3' : cols === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
           {showChurch && (
             <ScopeSelect id={`${idPrefix}-church`} icon={<ChurchIcon className="h-3.5 w-3.5 text-gold-500" />} value={scope.church}
-              onChange={(v) => onScope({ church: v, service: ALL, class: ALL })} all="كل الكنائس" options={lookups.churches} />
+              onChange={(v) => onScope({ church: v, service: ALL, classes: [] })} all="كل الكنائس" options={lookups.churches} />
           )}
           {showService && (
             <ScopeSelect id={`${idPrefix}-service`} icon={<Layers className="h-3.5 w-3.5 text-accent-600" />} value={scope.service}
-              onChange={(v) => onScope({ ...scope, service: v, class: ALL })} all="كل الخدمات" options={visibleServices} />
+              onChange={(v) => onScope({ ...scope, service: v, classes: [] })} all="كل الخدمات" options={visibleServices} />
           )}
           {showClass && (
-            <ScopeSelect id={`${idPrefix}-class`} icon={<School className="h-3.5 w-3.5 text-sky-600" />} value={scope.class}
-              onChange={(v) => onScope({ ...scope, class: v })} all="كل الفصول" options={visibleClasses} />
+            <MultiClassSelect id={`${idPrefix}-class`} icon={<School className="h-3.5 w-3.5 text-sky-600" />} value={scope.classes}
+              onChange={(ids) => onScope({ ...scope, classes: ids })} options={visibleClasses} />
           )}
         </div>
       )}

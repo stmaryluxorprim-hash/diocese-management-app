@@ -58,7 +58,7 @@ export default function AchievementsPage() {
   const load = useCallback(async () => {
     try {
       const [rows, p] = await Promise.all([
-        fetchAchievements(supabase, { church: scope.church, service: scope.service, class: scope.class }),
+        fetchAchievements(supabase, { church: scope.church, service: scope.service, classes: scope.classes }),
         fetchAchievementPermissions(supabase),
       ]);
       setItems(rows);
@@ -70,7 +70,7 @@ export default function AchievementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, scope.church, scope.service, scope.class]);
+  }, [supabase, scope.church, scope.service, scope.classes]);
 
   useEffect(() => { if (approved) load(); }, [approved, load]);
   useDebouncedRealtime(supabase, 'achievements-admin', [{ table: 'achievements' }, { table: 'user_achievements' }], load, { enabled: approved, delayMs: 600 });

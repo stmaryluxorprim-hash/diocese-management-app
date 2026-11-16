@@ -29,6 +29,8 @@ import {
   LayoutDashboard, CalendarCheck, Star, PhoneCall,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classesLabel, inClassesOrWide } from '@/lib/class-multi';
 import { useAuth } from '@/lib/auth-context';
 import { useAppDate } from '@/lib/app-date-context';
 import { createClient } from '@/lib/supabase/client';
@@ -100,7 +102,7 @@ function StatsModule() {
   // ---------- Scope selectors (cascading, each with ALL) + event ----------
   const [churchFilter, setChurchFilter] = useState<string>(ALL);
   const [serviceFilter, setServiceFilter] = useState<string>(ALL);
-  const [classFilter, setClassFilter] = useState<string>(ALL);
+  const [classFilter, setClassFilter] = useState<string[]>([]); // [] = كل الفصول
   const [eventFilter, setEventFilter] = useState<string>(ALL);
 
   const visibleServices = useMemo(() => services.filter((s) => churchFilter === ALL || s.church_id === churchFilter), [services, churchFilter]);
@@ -109,27 +111,26 @@ function StatsModule() {
     [classes, churchFilter, serviceFilter]
   );
   const visibleEvents = useMemo(() => {
-    const cls = classFilter !== ALL ? classes.find((c) => c.id === classFilter) : null;
     return events.filter((ev) =>
       (churchFilter === ALL || ev.church_id === churchFilter) &&
       (serviceFilter === ALL || ev.service_id === null || ev.service_id === serviceFilter) &&
-      (!cls || ev.class_id === null || ev.class_id === cls.id)
+      inClassesOrWide(classFilter, ev.class_id)
     );
-  }, [events, churchFilter, serviceFilter, classFilter, classes]);
+  }, [events, churchFilter, serviceFilter, classFilter]);
   useEffect(() => {
     if (eventFilter !== ALL && !visibleEvents.some((e) => e.id === eventFilter)) setEventFilter(ALL);
   }, [visibleEvents, eventFilter]);
 
-  const onChurchChange = (v: string) => { setChurchFilter(v); setServiceFilter(ALL); setClassFilter(ALL); };
-  const onServiceChange = (v: string) => { setServiceFilter(v); setClassFilter(ALL); };
+  const onChurchChange = (v: string) => { setChurchFilter(v); setServiceFilter(ALL); setClassFilter([]); };
+  const onServiceChange = (v: string) => { setServiceFilter(v); setClassFilter([]); };
 
-  const scope: ScopeSelection = useMemo(() => ({ church: churchFilter, service: serviceFilter, class: classFilter }), [churchFilter, serviceFilter, classFilter]);
+  const scope: ScopeSelection = useMemo(() => ({ church: churchFilter, service: serviceFilter, classes: classFilter }), [churchFilter, serviceFilter, classFilter]);
   const filter: StatsFilter = useMemo(() => ({ ...scope, event: eventFilter }), [scope, eventFilter]);
   const scopeText = useMemo(() => {
     const parts: string[] = [];
     parts.push(churchFilter === ALL ? 'كل الكنائس' : churches.find((c) => c.id === churchFilter)?.name ?? '');
     parts.push(serviceFilter === ALL ? 'كل الخدمات' : services.find((s) => s.id === serviceFilter)?.name ?? '');
-    parts.push(classFilter === ALL ? 'كل الفصول' : classes.find((c) => c.id === classFilter)?.name ?? '');
+    parts.push(classesLabel(classFilter, classes));
     if (eventFilter !== ALL) parts.push(events.find((e) => e.id === eventFilter)?.name ?? '');
     return parts.filter(Boolean).join(' › ');
   }, [churchFilter, serviceFilter, classFilter, eventFilter, churches, services, classes, events]);
@@ -252,10 +253,15 @@ function StatsModule() {
             <option value={ALL}>{visibleServices.length === 1 ? visibleServices[0].name : 'كل الخدمات'}</option>
             {visibleServices.length > 1 && visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select id="stats-class" aria-label="اختيار الفصل" className={selectCls} value={classFilter} onChange={(e) => setClassFilter(e.target.value)} disabled={visibleClasses.length <= 1}>
-            <option value={ALL}>{visibleClasses.length === 1 ? visibleClasses[0].name : 'كل الفصول'}</option>
-            {visibleClasses.length > 1 && visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <MultiClassSelect
+            id="stats-class"
+            ariaLabel="اختيار الفصول"
+            className="!px-2 !py-2.5 text-xs font-bold"
+            value={classFilter}
+            onChange={setClassFilter}
+            options={visibleClasses}
+            disabled={visibleClasses.length <= 1}
+          />
         </div>
 
         <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
