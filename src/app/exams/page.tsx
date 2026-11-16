@@ -48,7 +48,7 @@ export default function ExamsHubPage() {
 
   const load = useCallback(async () => {
     try {
-      const rows = await fetchExams(supabase, { church: scope.church, service: scope.service, class: scope.class });
+      const rows = await fetchExams(supabase, { church: scope.church, service: scope.service, classes: scope.classes });
       setExams(rows);
       const ids = rows.map((r) => r.id);
       const [qc, as] = await Promise.all([fetchQuestionCounts(supabase, ids), fetchAttemptStats(supabase, ids)]);
@@ -59,7 +59,7 @@ export default function ExamsHubPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, scope.church, scope.service, scope.class]);
+  }, [supabase, scope.church, scope.service, scope.classes]);
 
   useEffect(() => { if (approved) load(); }, [approved, load]);
   useDebouncedRealtime(

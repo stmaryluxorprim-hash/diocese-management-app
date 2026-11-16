@@ -44,7 +44,7 @@ export default function OccasionsBoardPage() {
   const load = useCallback(async () => {
     try {
       const [rows, p] = await Promise.all([
-        fetchOccasions(supabase, { church: scope.church, service: scope.service, class: scope.class }),
+        fetchOccasions(supabase, { church: scope.church, service: scope.service, classes: scope.classes }),
         fetchOccasionPermissions(supabase),
       ]);
       setItems(rows);
@@ -56,7 +56,7 @@ export default function OccasionsBoardPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, scope.church, scope.service, scope.class]);
+  }, [supabase, scope.church, scope.service, scope.classes]);
 
   useEffect(() => { if (approved) load(); }, [approved, load]);
   useDebouncedRealtime(supabase, 'occasions-board', [{ table: 'occasions' }, { table: 'occasion_registrations' }], load, { enabled: approved, delayMs: 700 });

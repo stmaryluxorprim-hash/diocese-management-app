@@ -50,7 +50,7 @@ export default function ResultsExamsPage() {
   const load = useCallback(async () => {
     try {
       const [rows, p, gs] = await Promise.all([
-        fetchResultExams(supabase, { church: scope.church, service: scope.service, class: scope.class }),
+        fetchResultExams(supabase, { church: scope.church, service: scope.service, classes: scope.classes }),
         fetchResultPermissions(supabase),
         fetchGradingSystems(supabase),
       ]);
@@ -76,7 +76,7 @@ export default function ResultsExamsPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, scope.church, scope.service, scope.class]);
+  }, [supabase, scope.church, scope.service, scope.classes]);
 
   useEffect(() => { if (approved) load(); }, [approved, load]);
   useDebouncedRealtime(supabase, 'results-exams', [{ table: 'result_exams' }, { table: 'result_subjects' }, { table: 'exam_results' }], load, { enabled: approved, delayMs: 800 });
@@ -210,7 +210,7 @@ export default function ResultsExamsPage() {
       {form.open && (
         <ExamFormModal
           exam={form.exam} churches={churches} services={services} classes={classes} gradingSystems={systems}
-          initialScope={{ church: scope.church, service: scope.service, class: scope.class }}
+          initialScope={{ church: scope.church, service: scope.service, classes: scope.classes }}
           onClose={() => setForm({ open: false, exam: null })}
           onSaved={(saved) => {
             setForm({ open: false, exam: null });

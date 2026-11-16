@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { ALL } from '@/lib/queries';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 
 // =====================================================================
@@ -48,7 +49,8 @@ export interface Lookups {
 export interface ScopeSelection {
   church: string;
   service: string;
-  class: string;
+  /** MULTI-select: chosen class ids — EMPTY = «كل الفصول» */
+  classes: string[];
 }
 
 export interface ScopeNode<T> {
@@ -183,11 +185,11 @@ export function ScopeFilters({
       </div>
       <div className="grid grid-cols-3 gap-2">
         <ScopeSelect id={`${idPrefix}-church`} icon={<ChurchIcon className="h-3.5 w-3.5 text-gold-500" />} value={scope.church}
-          onChange={(v) => onScope({ church: v, service: ALL, class: ALL })} all="كل الكنائس" options={lookups.churches} />
+          onChange={(v) => onScope({ church: v, service: ALL, classes: [] })} all="كل الكنائس" options={lookups.churches} />
         <ScopeSelect id={`${idPrefix}-service`} icon={<Layers className="h-3.5 w-3.5 text-accent-600" />} value={scope.service}
-          onChange={(v) => onScope({ ...scope, service: v, class: ALL })} all="كل الخدمات" options={visibleServices} />
-        <ScopeSelect id={`${idPrefix}-class`} icon={<School className="h-3.5 w-3.5 text-sky-600" />} value={scope.class}
-          onChange={(v) => onScope({ ...scope, class: v })} all="كل الفصول" options={visibleClasses} />
+          onChange={(v) => onScope({ ...scope, service: v, classes: [] })} all="كل الخدمات" options={visibleServices} />
+        <MultiClassSelect id={`${idPrefix}-class`} icon={<School className="h-3.5 w-3.5 text-sky-600" />} value={scope.classes}
+          onChange={(ids) => onScope({ ...scope, classes: ids })} options={visibleClasses} />
       </div>
       <div id={`${idPrefix}-status-filter`} role="tablist" aria-label="الحالة" className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
         {([['all', 'الكل'], ['active', 'يعمل'], ['stopped', 'موقوف']] as [StatusFilter, string][]).map(([v, l]) => (
@@ -417,15 +419,15 @@ function BulkScopeStatusForm({ kind, lookups, initial, onDone }: {
   const [supabase] = useState(() => createClient());
   const [church, setChurch] = useState(initial.church === ALL ? '' : initial.church);
   const [service, setService] = useState(initial.service === ALL ? '' : initial.service);
-  const [cls, setCls] = useState(initial.class === ALL ? '' : initial.class);
+  const [cls, setCls] = useState<string[]>(initial.classes);
   const [busy, setBusy] = useState<'stopped' | 'active' | null>(null);
 
   const scopedServices = lookups.services.filter((s) => !church || s.church_id === church);
   const scopedClasses = lookups.classes.filter((c) => (!church || c.church_id === church) && (!service || c.service_id === service));
 
-  const level = cls ? 'الفصل' : service ? 'الخدمة' : church ? 'الكنيسة' : '';
+  const level = cls.length > 1 ? 'الفصول' : cls.length === 1 ? 'الفصل' : service ? 'الخدمة' : church ? 'الكنيسة' : '';
   const who = KIND_LABELS[kind].many;
-  const scopeName = cls ? lookups.classes.find((c) => c.id === cls)?.name
+  const scopeName = cls.length > 0 ? cls.map((id) => lookups.classes.find((c) => c.id === id)?.name ?? '—').join('، ')
     : service ? lookups.services.find((s) => s.id === service)?.name
     : lookups.churches.find((c) => c.id === church)?.name;
 
@@ -437,13 +439,21 @@ function BulkScopeStatusForm({ kind, lookups, initial, onDone }: {
       : 'سيعودون للعمل فورًا.';
     if (!confirm(`${verb} كل ${who} في ${level} «${scopeName}»؟\n\n${effect}`)) return;
     setBusy(status);
-    const { data, error } = await supabase.rpc('set_enrollments_status', {
-      p_status: status, p_church: church, p_service: service || null, p_class: cls || null, p_kind: kind,
-    });
+    // the RPC takes ONE class → one call per chosen class (none chosen = the whole service / church)
+    const targets: (string | null)[] = cls.length > 0 ? cls : [null];
+    let n = 0;
+    for (const target of targets) {
+      const { data, error } = await supabase.rpc('set_enrollments_status', {
+        p_status: status, p_church: church, p_service: service || null, p_class: target, p_kind: kind,
+      });
+      if (error) {
+        setBusy(null);
+        return onDone('تعذر تنفيذ العملية — تأكد من صلاحياتك على هذا النطاق وتحديث قاعدة البيانات (0043)', false);
+      }
+      const r = (data ?? {}) as { children?: number; servants?: number };
+      n += kind === 'child' ? r.children ?? 0 : r.servants ?? 0;
+    }
     setBusy(null);
-    if (error) return onDone('تعذر تنفيذ العملية — تأكد من صلاحياتك على هذا النطاق وتحديث قاعدة البيانات (0043)', false);
-    const r = (data ?? {}) as { children?: number; servants?: number };
-    const n = kind === 'child' ? r.children ?? 0 : r.servants ?? 0;
     onDone(`تم ${verb} ${n} من ${who} — ${level} «${scopeName}»`, true);
   };
 
@@ -454,18 +464,15 @@ function BulkScopeStatusForm({ kind, lookups, initial, onDone }: {
         اختر المستوى: كنيسة كاملة، أو خدمة، أو فصل. الموقوف يحتفظ ببياناته وسجلاته ويمكن تفعيله في أي وقت.
       </p>
       <div className="grid grid-cols-3 gap-2">
-        <select id={`bulk-${kind}-church`} className="input-field !text-xs" value={church} onChange={(e) => { setChurch(e.target.value); setService(''); setCls(''); }}>
+        <select id={`bulk-${kind}-church`} className="input-field !text-xs" value={church} onChange={(e) => { setChurch(e.target.value); setService(''); setCls([]); }}>
           <option value="">الكنيسة *</option>
           {lookups.churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select id={`bulk-${kind}-service`} className="input-field !text-xs" value={service} disabled={!church} onChange={(e) => { setService(e.target.value); setCls(''); }}>
+        <select id={`bulk-${kind}-service`} className="input-field !text-xs" value={service} disabled={!church} onChange={(e) => { setService(e.target.value); setCls([]); }}>
           <option value="">كل الخدمات</option>
           {scopedServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select id={`bulk-${kind}-class`} className="input-field !text-xs" value={cls} disabled={!service} onChange={(e) => setCls(e.target.value)}>
-          <option value="">كل الفصول</option>
-          {scopedClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <MultiClassSelect id={`bulk-${kind}-class`} className="!py-3" value={cls} disabled={!service} onChange={setCls} options={scopedClasses} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <button id={`bulk-${kind}-stop-run`} type="button" disabled={!church || busy !== null} onClick={() => run('stopped')}

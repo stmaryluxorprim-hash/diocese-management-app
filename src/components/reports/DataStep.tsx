@@ -1,4 +1,6 @@
 'use client';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { inClassesOrWide } from '@/lib/class-multi';
 
 // ---------- Step 1 — اختيار البيانات ----------
 // Source cards → scope (church → service → class) → the filters the source
@@ -11,6 +13,7 @@ import { ROLE_LABELS, STATUS_LABELS } from '@/lib/types';
 import type { ResultExam } from '@/lib/results';
 import { REPORT_SOURCES, FILTER_LABELS, type ReportLookups, type FilterKey } from '@/lib/reports/sources';
 import type { ReportQuery, ReportSourceKey } from '@/lib/reports/types';
+import { reportClassIds } from '@/lib/reports/types';
 import { Field, Section } from './ReportBits';
 
 export function DataStep({
@@ -27,26 +30,27 @@ export function DataStep({
 }) {
   const source = REPORT_SOURCES.find((s) => s.key === query.source) ?? REPORT_SOURCES[0];
   const { scope, filters } = query;
+  const classIds = reportClassIds(scope);
 
   const services = useMemo(() => lookups.services.filter((s) => !scope.church || s.church_id === scope.church), [lookups.services, scope.church]);
   const classes = useMemo(() => lookups.classes.filter((c) => (!scope.church || c.church_id === scope.church) && (!scope.service || c.service_id === scope.service)), [lookups.classes, scope]);
   const events = useMemo(() => lookups.events.filter((e) =>
     (!scope.church || e.church_id === scope.church) &&
     (!scope.service || e.service_id === null || e.service_id === scope.service) &&
-    (!scope.class || e.class_id === null || e.class_id === scope.class)), [lookups.events, scope]);
+    inClassesOrWide(classIds, e.class_id)), [lookups.events, scope, classIds]);
   const causes = useMemo(() => lookups.causes.filter((c) =>
     (!scope.church || c.church_id === scope.church) &&
     (!scope.service || c.service_id === null || c.service_id === scope.service) &&
-    (!scope.class || c.class_id === null || c.class_id === scope.class)), [lookups.causes, scope]);
+    inClassesOrWide(classIds, c.class_id)), [lookups.causes, scope, classIds]);
   const visibleExams = useMemo(() => exams.filter((x) =>
     (!scope.church || x.church_id === scope.church) &&
     (!scope.service || x.service_id === null || x.service_id === scope.service) &&
-    (!scope.class || x.class_id === null || x.class_id === scope.class)), [exams, scope]);
+    inClassesOrWide(classIds, x.class_id)), [exams, scope, classIds]);
 
   const setScope = (patch: Partial<typeof scope>) => {
     const next = { ...scope, ...patch };
-    if (patch.church !== undefined) { next.service = ''; next.class = ''; }
-    if (patch.service !== undefined) next.class = '';
+    if (patch.church !== undefined) { next.service = ''; next.class = ''; next.classes = []; }
+    if (patch.service !== undefined) { next.class = ''; next.classes = []; }
     onChange({ scope: next, filters: { ...filters, event: '', cause: '', exam: filters.exam } });
   };
   const setFilter = <K extends keyof ReportQuery['filters']>(k: K, v: ReportQuery['filters'][K]) => onChange({ filters: { ...filters, [k]: v } });
@@ -88,10 +92,8 @@ export function DataStep({
             </select>
           </Field>
           <Field label="الفصل">
-            <select id="report-scope-class" className={selectCls} value={scope.class} onChange={(e) => setScope({ class: e.target.value })}>
-              <option value="">كل الفصول</option>
-              {classes.map((c: ClassRoom) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <MultiClassSelect id="report-scope-class" className="!py-2.5 !px-2.5 !text-sm" value={classIds}
+              onChange={(ids) => setScope({ classes: ids, class: ids.length === 1 ? ids[0] : '' })} options={classes} />
           </Field>
         </div>
       </Section>

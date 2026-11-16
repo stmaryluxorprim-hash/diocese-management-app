@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALL, type ScopeSelection } from '@/lib/queries';
+import { classIdsOf } from '@/lib/class-multi';
 
 // ---------- Types ----------
 export type ResultExamStatus = 'draft' | 'open' | 'completed' | 'archived';
@@ -335,7 +336,7 @@ export async function fetchResultExams(supabase: SupabaseClient, scope: ScopeSel
   if (error) throw error;
   let rows = ((data ?? []) as ResultExam[]).map(numExam);
   if (scope.service && scope.service !== ALL) rows = rows.filter((r) => r.service_id === null || r.service_id === scope.service);
-  if (scope.class && scope.class !== ALL) rows = rows.filter((r) => r.class_id === null || r.class_id === scope.class);
+  { const ids = classIdsOf(scope); if (ids.length > 0) rows = rows.filter((r) => r.class_id === null || ids.includes(r.class_id)); }
   return rows;
 }
 const numExam = (x: ResultExam): ResultExam => ({ ...x, pass_percent: Number(x.pass_percent) });

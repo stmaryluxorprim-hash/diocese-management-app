@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALL, type ScopeSelection } from '@/lib/queries';
 import { shiftDay, formatDay, type Bucket, type Period } from '@/lib/stats';
 import { reads, type ReadOpts } from '@/lib/cached-reads';
+import { classRpcArgs } from '@/lib/class-multi';
 
 const nz = (v: unknown) => Number(v ?? 0);
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
@@ -29,7 +30,7 @@ function filterArgs(f: StatsFilter) {
   return {
     p_church: f.church && f.church !== ALL ? f.church : null,
     p_service: f.service && f.service !== ALL ? f.service : null,
-    p_class: f.class && f.class !== ALL ? f.class : null,
+    ...classRpcArgs(f),
     p_event: f.event && f.event !== ALL ? f.event : null,
     p_kind: f.kind ?? 'child',
   };

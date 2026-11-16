@@ -75,7 +75,7 @@ export default function ServantsPanel() {
   const [notice, setNotice] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
 
   // filters — same as إدارة المخدومين
-  const [scope, setScope] = useState<ScopeSelection>({ church: ALL, service: ALL, class: ALL });
+  const [scope, setScope] = useState<ScopeSelection>({ church: ALL, service: ALL, classes: [] });
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [q, setQ] = useState('');
 
@@ -128,9 +128,9 @@ export default function ServantsPanel() {
     const hit = (s: Servant) => allScopesOf(s, s.extra_scopes ?? []).some((x) =>
       (scope.church === ALL || x.church_id === scope.church)
       && (scope.service === ALL || x.service_id === scope.service)
-      && (scope.class === ALL || x.class_id === scope.class));
+      && (scope.classes.length === 0 || (!!x.class_id && scope.classes.includes(x.class_id))));
     return servants.filter((s) =>
-      (scope.church === ALL && scope.service === ALL && scope.class === ALL ? true : hit(s))
+      (scope.church === ALL && scope.service === ALL && scope.classes.length === 0 ? true : hit(s))
       && (!t
         || s.full_name.toLowerCase().includes(t)
         || (s.person?.national_id ?? s.user_id).toLowerCase().includes(t)

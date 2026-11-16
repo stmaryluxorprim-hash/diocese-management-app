@@ -76,7 +76,7 @@ export default function BirthdaysMonthPage() {
   const load = useCallback(async () => {
     try {
       const [r, t, s] = await Promise.all([
-        fetchBirthdaysInMonth(supabase, year, month, { church: scope.church, service: scope.service, class: scope.class }),
+        fetchBirthdaysInMonth(supabase, year, month, { church: scope.church, service: scope.service, classes: scope.classes }),
         fetchBirthdayTemplates(supabase),
         fetchBirthdaySettings(supabase),
       ]);
@@ -85,7 +85,7 @@ export default function BirthdaysMonthPage() {
       if (isMigrationMissing(e)) setMigrationMissing(true);
       setRows([]);
     }
-  }, [supabase, year, month, scope.church, scope.service, scope.class]);
+  }, [supabase, year, month, scope.church, scope.service, scope.classes]);
 
   useEffect(() => { if (enabled) { setRows(null); load(); } }, [enabled, load]);
   useDebouncedRealtime(
@@ -267,7 +267,7 @@ export default function BirthdaysMonthPage() {
     XLSX.writeFile(wb, `birthdays-${year}-${String(month).padStart(2, '0')}.xlsx`);
   };
 
-  const cardsHref = `/birthdays/cards?year=${year}&month=${month}${scope.church !== 'all' ? `&church=${scope.church}` : ''}${scope.service !== 'all' ? `&service=${scope.service}` : ''}${scope.class !== 'all' ? `&class=${scope.class}` : ''}`;
+  const cardsHref = `/birthdays/cards?year=${year}&month=${month}${scope.church !== 'all' ? `&church=${scope.church}` : ''}${scope.service !== 'all' ? `&service=${scope.service}` : ''}${scope.classes.length > 0 ? `&class=${scope.classes.join(',')}` : ''}`;
 
   return (
     <AppShell>

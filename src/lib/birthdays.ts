@@ -12,6 +12,7 @@ import type { CardDesign, CardPrintSettings } from '@/lib/card-types';
 import { ARABIC_MONTHS } from '@/lib/card-types';
 import type { CardPersonData } from '@/components/cards/CardCanvas';
 import { ALL, type ScopeSelection } from '@/lib/queries';
+import { classIdsOf } from '@/lib/class-multi';
 
 // ---------- types ----------
 export type GreetingKind = 'call' | 'whatsapp' | 'sms' | 'card_printed' | 'card_shared' | 'gift' | 'note';
@@ -132,10 +133,10 @@ export function birthdayErrorMessage(err: unknown, fallback = 'حدث خطأ، �
 }
 
 // ---------- fetchers ----------
-const scopeArgs = (scope: ScopeSelection) => ({
+const scopeArgs = (scope: ScopeSelection, cls: string | null = null) => ({
   p_church: scope.church && scope.church !== ALL ? scope.church : null,
   p_service: scope.service && scope.service !== ALL ? scope.service : null,
-  p_class: scope.class && scope.class !== ALL ? scope.class : null,
+  p_class: cls,
 });
 
 export async function fetchBirthdaysInMonth(
@@ -143,18 +144,32 @@ export async function fetchBirthdaysInMonth(
 ): Promise<BirthdayRow[]> {
   // Set-returning RPCs are cut at PostgREST `max_rows` (1000) like tables —
   // page through so a big church's month (or the printing tab) gets everyone.
-  const out: BirthdayRow[] = [];
-  const size = 500;
-  for (let from = 0; ; from += size) {
-    const { data, error } = await supabase
-      .rpc('birthdays_in_month', { p_year: year, p_month: month, ...scopeArgs(scope) })
-      .range(from, from + size - 1);
-    if (error) throw error;
-    const rows = (data ?? []) as BirthdayRow[];
-    out.push(...rows);
-    if (rows.length < size) break;
+  // The RPC filters ONE class → with several chosen classes call it once per
+  // class and merge (rows are per enrollment, so de-duplicate on its id).
+  const ids = classIdsOf(scope);
+  const one = async (cls: string | null): Promise<BirthdayRow[]> => {
+    const out: BirthdayRow[] = [];
+    const size = 500;
+    for (let from = 0; ; from += size) {
+      const { data, error } = await supabase
+        .rpc('birthdays_in_month', { p_year: year, p_month: month, ...scopeArgs(scope, cls) })
+        .range(from, from + size - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as BirthdayRow[];
+      out.push(...rows);
+      if (rows.length < size) break;
+    }
+    return out;
+  };
+  const lists = await Promise.all((ids.length > 0 ? ids : [null]).map(one));
+  const seen = new Set<string>();
+  const merged: BirthdayRow[] = [];
+  for (const list of lists) for (const r of list) {
+    if (seen.has(r.enrollment_id)) continue;
+    seen.add(r.enrollment_id);
+    merged.push(r);
   }
-  return out.map((r) => ({ ...r, greetings: (r.greetings ?? []) as BirthdayGreeting[] }));
+  return merged.map((r) => ({ ...r, greetings: (r.greetings ?? []) as BirthdayGreeting[] }));
 }
 
 export async function fetchUpcomingBirthdays(

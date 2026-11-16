@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { ALL, type ScopeSelection } from '@/lib/queries';
 import { cairoToday } from '@/lib/time';
 import { reads, type ReadOpts } from '@/lib/cached-reads';
+import { classRpcArgs } from '@/lib/class-multi';
 
 // ---------- Row shapes returned by the RPCs ----------
 
@@ -251,7 +252,7 @@ function scopeArgs(scope: ScopeSelection) {
   return {
     p_church: scope.church && scope.church !== ALL ? scope.church : null,
     p_service: scope.service && scope.service !== ALL ? scope.service : null,
-    p_class: scope.class && scope.class !== ALL ? scope.class : null,
+    ...classRpcArgs(scope),
   };
 }
 

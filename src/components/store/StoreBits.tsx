@@ -9,6 +9,7 @@
 // ScopeSelectors: church → service → class selects (same as the other modules)
 // useStoreLookups: churches / services / classes via cachedLookup
 
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -204,19 +205,27 @@ export function useStoreLookups(supabase: SupabaseClient, enabled: boolean) {
 }
 
 export interface ScopeState {
-  church: string; service: string; class: string;
-  setChurch: (v: string) => void; setService: (v: string) => void; setClass: (v: string) => void;
+  church: string; service: string;
+  /** MULTI-select: chosen class ids — EMPTY = «كل الفصول» */
+  classes: string[];
+  /** legacy single value: the class when exactly ONE is chosen, else ALL */
+  class: string;
+  setChurch: (v: string) => void; setService: (v: string) => void;
+  setClasses: (ids: string[]) => void;
+  /** legacy single setter (one class, or ALL = none) */
+  setClass: (v: string) => void;
 }
 
 export function useScopeState(): ScopeState {
   const [church, setChurchRaw] = useState(ALL);
   const [service, setServiceRaw] = useState(ALL);
-  const [cls, setClassRaw] = useState(ALL);
+  const [classes, setClassesRaw] = useState<string[]>([]);
   return {
-    church, service, class: cls,
-    setChurch: (v) => { setChurchRaw(v); setServiceRaw(ALL); setClassRaw(ALL); },
-    setService: (v) => { setServiceRaw(v); setClassRaw(ALL); },
-    setClass: (v) => setClassRaw(v),
+    church, service, classes, class: classes.length === 1 ? classes[0] : ALL,
+    setChurch: (v) => { setChurchRaw(v); setServiceRaw(ALL); setClassesRaw([]); },
+    setService: (v) => { setServiceRaw(v); setClassesRaw([]); },
+    setClasses: (ids) => setClassesRaw(ids),
+    setClass: (v) => setClassesRaw(v === ALL || !v ? [] : [v]),
   };
 }
 
@@ -253,15 +262,11 @@ export function ScopeSelectors({
         <option value={ALL}>{visibleServices.length === 1 ? visibleServices[0].name : 'كل الخدمات'}</option>
         {visibleServices.length > 1 && visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
       </select>
-      <select
-        id={`${idPrefix}-class`} aria-label="اختيار الفصل"
-        className="input-field appearance-none !px-2 text-xs font-bold"
-        value={scope.class} disabled={visibleClasses.length <= 1}
-        onChange={(e) => scope.setClass(e.target.value)}
-      >
-        <option value={ALL}>{visibleClasses.length === 1 ? visibleClasses[0].name : 'كل الفصول'}</option>
-        {visibleClasses.length > 1 && visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-      </select>
+      <MultiClassSelect
+        id={`${idPrefix}-class`} ariaLabel="اختيار الفصول"
+        value={scope.classes} disabled={visibleClasses.length <= 1}
+        onChange={scope.setClasses} options={visibleClasses}
+      />
     </div>
   );
 }

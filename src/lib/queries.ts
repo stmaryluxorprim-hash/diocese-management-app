@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { EnrollmentWithPerson } from '@/lib/types';
 import { cachedLookupRows, invalidateLookupTables } from '@/lib/cached-query';
 import type { LookupTable } from '@/lib/cache/service';
+import { classIdsOf } from '@/lib/class-multi';
 
 export const ALL = 'all';
 
@@ -22,6 +23,17 @@ export interface ScopeSelection {
   church?: string; // ALL | uuid
   service?: string;
   class?: string;
+  /** MULTI-select of classes (empty / undefined = no narrowing); wins over `class` */
+  classes?: string[];
+}
+
+/** narrow an enrollments query to the chosen class(es) — `classes` list or legacy single `class` */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function applyClassScope<Q extends { eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q }>(q: Q, scope: ScopeSelection, column = 'class_id'): Q {
+  const ids = classIdsOf(scope);
+  if (ids.length === 1) return q.eq(column, ids[0]);
+  if (ids.length > 1) return q.in(column, ids);
+  return q;
 }
 
 /** Hard cap so a runaway query can never pull the whole diocese. */
@@ -55,7 +67,7 @@ export async function fetchEnrollmentsPage(
   if (status !== 'all') q = q.eq('status', status);
   if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
   if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
-  if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
+  q = applyClassScope(q, scope);
   if (search) {
     const s = search.replace(/[,()]/g, ' ');
     // Filters on an embedded resource address it by its ALIAS (`person`).
@@ -123,7 +135,7 @@ export async function fetchMyGroupEnrollments(
     if (kind !== 'all') q = q.eq('kind', kind);
     if (scope.church && scope.church !== ALL) q = q.eq('church_id', scope.church);
     if (scope.service && scope.service !== ALL) q = q.eq('service_id', scope.service);
-    if (scope.class && scope.class !== ALL) q = q.eq('class_id', scope.class);
+    q = applyClassScope(q, scope);
     if (s) {
       q = q.or(`name.ilike.%${s}%,phone.ilike.%${s}%,national_id.ilike.%${s}%`, {
         referencedTable: 'person',

@@ -1,4 +1,5 @@
 'use client';
+import { inClasses } from '@/lib/class-multi';
 
 // ---------- BULK RESULTS ENTRY (إدخال جماعي) ----------
 // Pick exam → (church → service → class narrow) → subject (or ALL subjects
@@ -164,11 +165,11 @@ function BulkInner() {
     return students.filter((st) =>
       (scope.church === ALL || st.church_id === scope.church) &&
       (scope.service === ALL || st.service_id === scope.service) &&
-      (scope.class === ALL || st.class_id === scope.class) &&
+      inClasses(scope.classes, st.class_id) &&
       (!s || st.name.toLowerCase().includes(s) || st.national_id.includes(s)) &&
       (!emptyOnly || activeSubjects.some((sb) => { const c = grid[st.enrollment_id]?.[sb.id]; return !c || (c.value === '' && c.status !== 'absent' && c.status !== 'excused'); })),
     );
-  }, [students, scope.church, scope.service, scope.class, q, emptyOnly, activeSubjects, grid]);
+  }, [students, scope.church, scope.service, scope.classes, q, emptyOnly, activeSubjects, grid]);
 
   const dirtyCells = useMemo(() => {
     const out: { e: string; s: string; c: Cell }[] = [];

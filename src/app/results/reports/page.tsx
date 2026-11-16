@@ -1,4 +1,5 @@
 'use client';
+import { inClasses, inClassesOrWide } from '@/lib/class-multi';
 
 // ---------- REPORTS (التقارير) ----------
 // Filters: church → service → class · exam(s) · academic year · date range.
@@ -94,10 +95,10 @@ function ReportsInner() {
     x.status !== 'archived' || multi) .filter((x) =>
     (scope.church === ALL || x.church_id === scope.church) &&
     (scope.service === ALL || x.service_id === null || x.service_id === scope.service) &&
-    (scope.class === ALL || x.class_id === null || x.class_id === scope.class) &&
+    inClassesOrWide(scope.classes, x.class_id) &&
     (year === 'all' || x.academic_year === year) &&
     (!from || (x.exam_date ?? '') >= from) &&
-    (!to || (x.exam_date ?? '') <= to)), [exams, scope.church, scope.service, scope.class, year, from, to, multi]);
+    (!to || (x.exam_date ?? '') <= to)), [exams, scope.church, scope.service, scope.classes, year, from, to, multi]);
 
   // ---- run ----
   const run = useCallback(async () => {
@@ -118,8 +119,8 @@ function ReportsInner() {
 
   // ---- scope filter of students within a summary ----
   const inScope = useCallback((s: StudentSummary) =>
-    (scope.church === ALL || s.church_id === scope.church) && (scope.service === ALL || s.service_id === scope.service) && (scope.class === ALL || s.class_id === scope.class),
-  [scope.church, scope.service, scope.class]);
+    (scope.church === ALL || s.church_id === scope.church) && (scope.service === ALL || s.service_id === scope.service) && inClasses(scope.classes, s.class_id),
+  [scope.church, scope.service, scope.classes]);
   const className = (id: string) => classes.find((c) => c.id === id)?.name ?? '—';
   const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? '—';
   const churchName = (id: string) => churches.find((c) => c.id === id)?.name ?? '—';

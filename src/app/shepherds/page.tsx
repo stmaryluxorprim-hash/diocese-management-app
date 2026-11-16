@@ -1,4 +1,6 @@
 'use client';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { inClasses, singleClass } from '@/lib/class-multi';
 
 // ---------- SHEPHERDS MODULE (الأشابين) — my group picker ----------
 // Every servant (أشبين) is bound to a group of children. This page lets him
@@ -56,7 +58,7 @@ export default function ShepherdsPage() {
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [churchFilter, setChurchFilter] = useState(ALL);
   const [serviceFilter, setServiceFilter] = useState(ALL);
-  const [classFilter, setClassFilter] = useState(ALL);
+  const [classFilter, setClassFilter] = useState<string[]>([]);
   useEffect(() => {
     if (profile?.status !== 'approved') return;
     (async () => {
@@ -97,7 +99,7 @@ export default function ShepherdsPage() {
     const ids = new Set((data ?? []).map((r: { enrollment_id: string }) => r.enrollment_id));
     setGroupIds(ids);
     const [rows, claimsRes, sumRes] = await Promise.all([
-      fetchMyGroupEnrollments(supabase, ids, { church: ALL, service: ALL, class: ALL }),
+      fetchMyGroupEnrollments(supabase, ids, { church: ALL, service: ALL }),
       supabase.rpc('shepherd_claims'),
       isManager ? supabase.rpc('shepherd_group_summary') : Promise.resolve({ data: null }),
     ]);
@@ -120,7 +122,7 @@ export default function ShepherdsPage() {
     setPoolLoading(true);
     try {
       const { rows, hasMore } = await fetchEnrollmentsPage(
-        supabase, { church: churchFilter, service: serviceFilter, class: classFilter },
+        supabase, { church: churchFilter, service: serviceFilter, classes: classFilter },
         { page, search: searchQ }
       );
       setPool((prev) => {
@@ -189,7 +191,7 @@ export default function ShepherdsPage() {
     return mine.filter((e) =>
       (churchFilter === ALL || e.church_id === churchFilter) &&
       (serviceFilter === ALL || e.service_id === serviceFilter) &&
-      (classFilter === ALL || e.class_id === classFilter) &&
+      inClasses(classFilter, e.class_id) &&
       (!s || e.person.name.toLowerCase().includes(s) ||
         (e.person.phone ?? '').includes(s) || e.person.national_id.includes(s))
     );
@@ -270,7 +272,7 @@ export default function ShepherdsPage() {
           id="shepherd-church" aria-label="اختيار الكنيسة"
           className="input-field appearance-none !px-2 text-xs font-bold"
           value={churchFilter} disabled={churches.length <= 1}
-          onChange={(e) => { setChurchFilter(e.target.value); setServiceFilter(ALL); setClassFilter(ALL); }}
+          onChange={(e) => { setChurchFilter(e.target.value); setServiceFilter(ALL); setClassFilter([]); }}
         >
           <option value={ALL}>{churches.length === 1 ? churches[0].name : 'كل الكنائس'}</option>
           {churches.length > 1 && churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -279,20 +281,16 @@ export default function ShepherdsPage() {
           id="shepherd-service" aria-label="اختيار الخدمة"
           className="input-field appearance-none !px-2 text-xs font-bold"
           value={serviceFilter} disabled={visibleServices.length <= 1}
-          onChange={(e) => { setServiceFilter(e.target.value); setClassFilter(ALL); }}
+          onChange={(e) => { setServiceFilter(e.target.value); setClassFilter([]); }}
         >
           <option value={ALL}>{visibleServices.length === 1 ? visibleServices[0].name : 'كل الخدمات'}</option>
           {visibleServices.length > 1 && visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select
-          id="shepherd-class" aria-label="اختيار الفصل"
-          className="input-field appearance-none !px-2 text-xs font-bold"
+        <MultiClassSelect
+          id="shepherd-class" ariaLabel="اختيار الفصول"
           value={classFilter} disabled={visibleClasses.length <= 1}
-          onChange={(e) => setClassFilter(e.target.value)}
-        >
-          <option value={ALL}>{visibleClasses.length === 1 ? visibleClasses[0].name : 'كل الفصول'}</option>
-          {visibleClasses.length > 1 && visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+          onChange={setClassFilter} options={visibleClasses}
+        />
       </div>
 
       {/* ---------- MY GROUP ---------- */}

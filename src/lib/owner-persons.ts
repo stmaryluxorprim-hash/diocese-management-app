@@ -15,6 +15,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppRole, ApprovalStatus, EnrollmentStatus, Gender, Person, ScopeRef } from '@/lib/types';
 import { reads, type ReadOpts } from '@/lib/cached-reads';
+import { classIdsOf } from '@/lib/class-multi';
 
 /** One enrollment as embedded by owner_persons_page. */
 export interface OwnerEnrollment {
@@ -88,6 +89,8 @@ export interface OwnerPersonsFilter {
   church?: string | null;
   service?: string | null;
   class?: string | null;
+  /** MULTI-select of classes (empty = all); wins over `class`. 2+ classes → one RPC per class, merged client-side */
+  classes?: string[];
   gender?: Gender | null;
   kind: PersonKindFilter;
 }
@@ -108,25 +111,42 @@ export async function fetchOwnerPersons(
   pageSize = OWNER_PAGE_SIZE,
   opts: ReadOpts = {},
 ): Promise<{ rows: OwnerPersonRow[]; total: number }> {
-  // the error is thrown raw (as before) — the page maps it with ownerPersonsError()
-  const data = await reads.rpc<OwnerPersonRow[] | null>(supabase, 'owner_persons_page', {
-    p_search: f.search?.trim() || null,
-    p_scope_mode: f.scopeMode,
-    p_church: f.scopeMode === 'scope' ? f.church || null : null,
-    p_service: f.scopeMode === 'scope' ? f.service || null : null,
-    p_class: f.scopeMode === 'scope' ? f.class || null : null,
-    p_gender: f.gender || null,
-    p_kind: f.kind,
-    p_limit: pageSize,
-    p_offset: page * pageSize,
-  }, opts);
-  const rows = ((data ?? []) as OwnerPersonRow[]).map((r) => ({
+  const classIds = f.scopeMode === 'scope' ? classIdsOf(f) : [];
+  const call = (cls: string | null, limit: number, offset: number) =>
+    // the error is thrown raw (as before) — the page maps it with ownerPersonsError()
+    reads.rpc<OwnerPersonRow[] | null>(supabase, 'owner_persons_page', {
+      p_search: f.search?.trim() || null,
+      p_scope_mode: f.scopeMode,
+      p_church: f.scopeMode === 'scope' ? f.church || null : null,
+      p_service: f.scopeMode === 'scope' ? f.service || null : null,
+      p_class: cls,
+      p_gender: f.gender || null,
+      p_kind: f.kind,
+      p_limit: limit,
+      p_offset: offset,
+    }, opts);
+  const normalize = (data: OwnerPersonRow[] | null) => ((data ?? []) as OwnerPersonRow[]).map((r) => ({
     ...r,
     enrollments: (r.enrollments ?? []) as OwnerEnrollment[],
     servant: (r.servant ?? null) as OwnerServantInfo | null,
     priest: (r.priest ?? null) as OwnerPriestInfo | null,
   }));
-  return { rows, total: rows[0]?.total_count ?? 0 };
+
+  if (classIds.length <= 1) {
+    const rows = normalize(await call(classIds[0] ?? null, pageSize, page * pageSize));
+    return { rows, total: rows[0]?.total_count ?? 0 };
+  }
+
+  // 2+ classes: the RPC filters ONE class → fetch each (a person in several of
+  // them counts once), sort like the RPC (name, id) and page locally
+  const MAX_PER_CLASS = 500; // the RPC's own cap
+  const lists = await Promise.all(classIds.map((c) => call(c, MAX_PER_CLASS, 0)));
+  const byId = new Map<string, OwnerPersonRow>();
+  for (const list of lists) for (const r of normalize(list)) if (!byId.has(r.id)) byId.set(r.id, r);
+  const merged = Array.from(byId.values()).sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const total = merged.length;
+  return { rows: merged.slice(page * pageSize, page * pageSize + pageSize).map((r) => ({ ...r, total_count: total })), total };
 }
 
 export interface OwnerPersonsCounts {

@@ -69,7 +69,7 @@ function StudentsInner() {
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        const { rows, hasMore: more } = await fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, class: scope.class }, { page, pageSize: 50, search: q });
+        const { rows, hasMore: more } = await fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, classes: scope.classes }, { page, pageSize: 50, search: q });
         if (!alive) return;
         setList((prev) => (page === 0 ? rows : [...prev, ...rows]));
         setHasMore(more);
@@ -77,8 +77,8 @@ function StudentsInner() {
       finally { if (alive) setSearching(false); }
     }, q ? 300 : 0);
     return () => { alive = false; clearTimeout(t); };
-  }, [supabase, approved, q, page, scope.church, scope.service, scope.class]);
-  useEffect(() => { setPage(0); }, [q, scope.church, scope.service, scope.class]);
+  }, [supabase, approved, q, page, scope.church, scope.service, scope.classes]);
+  useEffect(() => { setPage(0); }, [q, scope.church, scope.service, scope.classes]);
 
   // ---- deep link ?person= ----
   useEffect(() => {

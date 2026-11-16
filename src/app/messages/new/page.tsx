@@ -76,12 +76,12 @@ export default function NewMessagePage() {
     if (target !== 'children' || mode !== 'selected') return;
     setListLoading(true);
     try {
-      const r = await fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, class: scope.class }, { search, pageSize: 60 });
+      const r = await fetchEnrollmentsPage(supabase, { church: scope.church, service: scope.service, classes: scope.classes }, { search, pageSize: 60 });
       setEnrollments(r.rows); setHasMore(r.hasMore);
     } finally {
       setListLoading(false);
     }
-  }, [supabase, target, mode, scope.church, scope.service, scope.class, search]);
+  }, [supabase, target, mode, scope.church, scope.service, scope.classes, search]);
   useEffect(() => {
     if (!approved) return;
     const t = setTimeout(loadEnrollments, 250);
@@ -111,15 +111,21 @@ export default function NewMessagePage() {
       : church && visServices.length === 1 ? visServices[0].id
       : (church && profile && profile.role !== 'owner' && profile.service_id) || null;
     const visClasses = classes.filter((c) => (!church || c.church_id === church) && (!service || c.service_id === service));
-    const cls = scope.class !== ALL ? scope.class
-      : service && visClasses.length === 1 ? visClasses[0].id
-      : (service && profile && profile.role !== 'owner' && profile.class_id) || null;
-    return { church, service, class: cls };
-  }, [scope.church, scope.service, scope.class, churches, services, classes, profile]);
+    // MULTI-select: every chosen class gets the message ([] = the whole service / church)
+    const clsList: string[] = scope.classes.length > 0 ? scope.classes
+      : service && visClasses.length === 1 ? [visClasses[0].id]
+      : (service && profile && profile.role !== 'owner' && profile.class_id) ? [profile.class_id]
+      : [];
+    return { church, service, classes: clsList, class: clsList.length === 1 ? clsList[0] : null };
+  }, [scope.church, scope.service, scope.classes, churches, services, classes, profile]);
   useEffect(() => {
     if (!approved || mode !== 'scope') return;
     setAudience(null);
-    fetchAudienceCount(supabase, target, scopeIds.church, scopeIds.service, scopeIds.class).then(setAudience).catch(() => setAudience(0));
+    // the RPC counts ONE class → sum the chosen classes (a person is in one class of a service per enrollment)
+    const targets: (string | null)[] = scopeIds.classes.length > 0 ? scopeIds.classes : [null];
+    Promise.all(targets.map((c) => fetchAudienceCount(supabase, target, scopeIds.church, scopeIds.service, c)))
+      .then((counts) => setAudience(counts.reduce((a, b) => a + b, 0)))
+      .catch(() => setAudience(0));
   }, [approved, mode, target, scopeIds, supabase]);
 
   const scopeAllowed = useMemo(() => {
@@ -129,7 +135,8 @@ export default function NewMessagePage() {
     if (profile.role === 'church_manager') return true;
     if (profile.service_id && scopeIds.service !== profile.service_id) return false;
     if (profile.role === 'service_manager') return true;
-    if (profile.class_id && scopeIds.class !== profile.class_id) return false;
+    if (profile.class_id && scopeIds.classes.some((c) => c !== profile.class_id)) return false;
+    if (profile.class_id && scopeIds.classes.length === 0) return false;
     return true;
   }, [profile, scopeIds]);
 
@@ -138,8 +145,8 @@ export default function NewMessagePage() {
     const ch = churches.find((c) => c.id === scopeIds.church)?.name ?? '';
     if (!scopeIds.service) return `كنيسة ${ch}`;
     const sv = services.find((s) => s.id === scopeIds.service)?.name ?? '';
-    if (!scopeIds.class) return `خدمة ${sv} — ${ch}`;
-    const cl = classes.find((c) => c.id === scopeIds.class)?.name ?? '';
+    if (scopeIds.classes.length === 0) return `خدمة ${sv} — ${ch}`;
+    const cl = scopeIds.classes.map((id) => classes.find((c) => c.id === id)?.name ?? '').filter(Boolean).join('، ');
     return `فصل ${cl} — ${sv}`;
   }, [scopeIds, churches, services, classes]);
 
@@ -161,11 +168,21 @@ export default function NewMessagePage() {
     try {
       let image_url: string | null = null;
       if (file) image_url = await uploadPhoto(supabase, 'messages', await compressImage(file), 'msg.webp');
-      const res = await sendMessage(supabase, mode === 'selected'
-        ? (target === 'children'
+      const sendOne = (payload: Parameters<typeof sendMessage>[1]) => sendMessage(supabase, payload);
+      let res: { sent: number; message_ids: string[] };
+      if (mode === 'selected') {
+        res = await sendOne(target === 'children'
           ? { target, body: body.trim(), image_url, enrollment_ids: Array.from(selectedEnr.keys()) }
-          : { target, body: body.trim(), image_url, profile_ids: Array.from(selectedStaff) })
-        : { target, body: body.trim(), image_url, church_id: scopeIds.church, service_id: scopeIds.service, class_id: scopeIds.class });
+          : { target, body: body.trim(), image_url, profile_ids: Array.from(selectedStaff) });
+      } else {
+        // the RPC addresses ONE class → one announcement per chosen class
+        const targets: (string | null)[] = scopeIds.classes.length > 0 ? scopeIds.classes : [null];
+        res = { sent: 0, message_ids: [] };
+        for (const c of targets) {
+          const r = await sendOne({ target, body: body.trim(), image_url, church_id: scopeIds.church, service_id: scopeIds.service, class_id: c });
+          res = { sent: res.sent + r.sent, message_ids: [...res.message_ids, ...r.message_ids] };
+        }
+      }
       flash(mode === 'scope' ? `تم إرسال الإعلان إلى ${audienceLabel} ✅` : `تم الإرسال إلى ${res.sent} ${target === 'children' ? 'مخدوم' : 'خادم'} ✅`);
       setTimeout(() => {
         if (mode === 'selected' && res.sent === 1) {

@@ -85,9 +85,9 @@ export default function AutomationForm({ supabase, initial, churches, services, 
     const visServices = services.filter((s) => !church || s.church_id === church);
     const service = scope.service !== ALL ? scope.service : (church && visServices.length === 1 ? visServices[0].id : null);
     const visClasses = classes.filter((c) => (!church || c.church_id === church) && (!service || c.service_id === service));
-    const cls = scope.class !== ALL ? scope.class : (service && visClasses.length === 1 ? visClasses[0].id : null);
-    return { church, service, class: cls };
-  }, [scope.church, scope.service, scope.class, churches, services, classes]);
+    const clsList: string[] = scope.classes.length > 0 ? scope.classes : (service && visClasses.length === 1 ? [visClasses[0].id] : []);
+    return { church, service, classes: clsList, class: clsList.length === 1 ? clsList[0] : null };
+  }, [scope.church, scope.service, scope.classes, churches, services, classes]);
 
   const linkValue = linkPreset === 'custom' ? linkCustom.trim() : linkPreset;
   const linkOk = !linkValue || linkValue.startsWith('/') || linkValue.startsWith('https://');
@@ -99,16 +99,20 @@ export default function AutomationForm({ supabase, initial, churches, services, 
     try {
       let image_url = imageUrl;
       if (file) image_url = await uploadPhoto(supabase, 'notifications', await compressImage(file), 'auto.webp');
-      const input: AutomationInput = {
+      const baseInput: Omit<AutomationInput, 'class_id'> = {
         church_id: scopeIds.church,
         service_id: scopeIds.church ? scopeIds.service : null,
-        class_id: scopeIds.church && scopeIds.service ? scopeIds.class : null,
         trigger_key: trigger, recipient, name: name.trim(), title_template: titleT.trim(), body_template: bodyT.trim(),
         image_url, link_url: linkValue || null, is_active: active,
         config: def.config ? { [def.config.key]: Math.max(def.config.min, Math.min(def.config.max, Math.round(cfg || def.config.default))) } : {},
       };
-      await saveAutomation(supabase, input, initial?.id, userId);
-      onSaved(initial ? 'تم حفظ التعديل' : 'تم إنشاء الإشعار التلقائي ✅');
+      // A row holds ONE class. Several chosen classes → the first one updates / creates the row,
+      // every other chosen class gets its own copy (one automation per class).
+      const classTargets: (string | null)[] = scopeIds.church && scopeIds.service && scopeIds.classes.length > 0 ? scopeIds.classes : [null];
+      await saveAutomation(supabase, { ...baseInput, class_id: classTargets[0] }, initial?.id, userId);
+      for (const c of classTargets.slice(1)) await saveAutomation(supabase, { ...baseInput, class_id: c }, undefined, userId);
+      onSaved(initial ? (classTargets.length > 1 ? `تم حفظ التعديل وإنشاء ${classTargets.length - 1} نسخة للفصول الأخرى ✅` : 'تم حفظ التعديل')
+        : classTargets.length > 1 ? `تم إنشاء ${classTargets.length} إشعارات تلقائية (واحد لكل فصل) ✅` : 'تم إنشاء الإشعار التلقائي ✅');
     } catch (e) { setErr(notifErrorMessage(e, 'تعذر الحفظ')); }
     finally { setBusy(false); }
   };

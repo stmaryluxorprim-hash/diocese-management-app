@@ -1,4 +1,5 @@
 'use client';
+import { singleClass } from '@/lib/class-multi';
 
 // ---------- BIRTHDAYS — card templates (كروت التهنئة) ----------
 // List of birthday card templates scoped church → service? → class?
@@ -170,7 +171,7 @@ function AddTemplateModal({
     const { data, error } = await supabase.from('birthday_card_templates').insert({
       church_id: churchId,
       service_id: scope.service === ALL ? null : scope.service,
-      class_id: scope.service === ALL || scope.class === ALL ? null : scope.class,
+      class_id: scope.service === ALL ? null : singleClass(scope.classes),
       name: name.trim(), design: DEFAULT_BIRTHDAY_DESIGN, print_settings: { ...DEFAULT_PRINT_SETTINGS, gapX: 6, gapY: 6 },
       is_default: false, created_by: userId,
     }).select('id').single();

@@ -26,6 +26,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import { cachedLookup, ALL } from '@/lib/queries';
 import { ScopeSelect, PanelNotice } from '@/components/ScopeTree';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { EditPersonModal } from '@/components/PersonDataModals';
 import OwnerPersonCard from '@/components/owner/OwnerPersonCard';
 import AddEnrollmentModal from '@/components/owner/AddEnrollmentModal';
@@ -59,7 +60,7 @@ export default function OwnerPersonsPage() {
   const [unenrolledOnly, setUnenrolledOnly] = useState(false);
   const [church, setChurch] = useState(ALL);
   const [service, setService] = useState(ALL);
-  const [cls, setCls] = useState(ALL);
+  const [cls, setCls] = useState<string[]>([]);
   const [gender, setGender] = useState<Gender | ''>('');
   const [page, setPage] = useState(0);
   useEffect(() => {
@@ -107,7 +108,7 @@ export default function OwnerPersonsPage() {
     scopeMode,
     church: church === ALL ? null : church,
     service: service === ALL ? null : service,
-    class: cls === ALL ? null : cls,
+    classes: cls,
     gender: gender || null,
     kind,
   }), [searchQ, scopeMode, church, service, cls, gender, kind]);
@@ -256,11 +257,11 @@ export default function OwnerPersonsPage() {
           </div>
           <div className={`grid grid-cols-3 gap-2 ${unenrolledOnly ? 'opacity-50 pointer-events-none' : ''}`}>
             <ScopeSelect id="op-church" icon={<ChurchIcon className="h-3.5 w-3.5 text-gold-500" />} value={church}
-              onChange={(v) => { setChurch(v); setService(ALL); setCls(ALL); }} all="كل الكنائس" options={churches} />
+              onChange={(v) => { setChurch(v); setService(ALL); setCls([]); }} all="كل الكنائس" options={churches} />
             <ScopeSelect id="op-service" icon={<Layers className="h-3.5 w-3.5 text-accent-600" />} value={service}
-              onChange={(v) => { setService(v); setCls(ALL); }} all="كل الخدمات" options={visibleServices} />
-            <ScopeSelect id="op-class" icon={<School className="h-3.5 w-3.5 text-sky-600" />} value={cls}
-              onChange={setCls} all="كل الفصول" options={visibleClasses} />
+              onChange={(v) => { setService(v); setCls([]); }} all="كل الخدمات" options={visibleServices} />
+            <MultiClassSelect id="op-class" icon={<School className="h-3.5 w-3.5 text-sky-600" />} value={cls}
+              onChange={setCls} options={visibleClasses} />
           </div>
           <div className="flex items-center gap-2">
             <div id="op-kind" role="tablist" className="grid flex-1 grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1">

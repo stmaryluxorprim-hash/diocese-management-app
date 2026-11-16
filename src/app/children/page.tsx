@@ -1,5 +1,7 @@
 'use client';
 
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { inClassesOrWide, singleClass } from '@/lib/class-multi';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -125,7 +127,8 @@ export default function ChildrenPage() {
   // only contains what the current user is allowed to see.
   const [churchFilter, setChurchFilter] = useState<string>(ALL);
   const [serviceFilter, setServiceFilter] = useState<string>(ALL);
-  const [classFilter, setClassFilter] = useState<string>(ALL);
+  // MULTI-select: chosen class ids, EMPTY = «كل الفصول»
+  const [classFilter, setClassFilter] = useState<string[]>([]);
 
   // ---------- Job selector + activated modes ----------
   const [job, setJob] = useState<Job>('attendance');
@@ -283,7 +286,7 @@ export default function ChildrenPage() {
   const profileId = profile?.id;
   const loadList = useCallback(async () => {
     const seq = ++loadSeq.current;
-    const scope = { church: churchFilter, service: serviceFilter, class: classFilter };
+    const scope = { church: churchFilter, service: serviceFilter, classes: classFilter };
     const pages = pagesRef.current;
     try {
       // «مجموعتي» — the whole group at once (small, bounded set), no paging
@@ -333,7 +336,7 @@ export default function ChildrenPage() {
     try {
       const { rows, hasMore: more } = await fetchEnrollmentsPage(
         supabase,
-        { church: churchFilter, service: serviceFilter, class: classFilter },
+        { church: churchFilter, service: serviceFilter, classes: classFilter },
         { page: nextPage, search: searchQ, kind }
       );
       pagesRef.current = nextPage + 1;
@@ -406,11 +409,11 @@ export default function ChildrenPage() {
   const onChurchChange = (v: string) => {
     setChurchFilter(v);
     setServiceFilter(ALL);
-    setClassFilter(ALL);
+    setClassFilter([]);
   };
   const onServiceChange = (v: string) => {
     setServiceFilter(v);
-    setClassFilter(ALL);
+    setClassFilter([]);
   };
 
   // Events / causes narrowed by the current scope selectors
@@ -421,7 +424,7 @@ export default function ChildrenPage() {
         (ev) =>
           (churchFilter === ALL || ev.church_id === churchFilter) &&
           (serviceFilter === ALL || ev.service_id === null || ev.service_id === serviceFilter) &&
-          (classFilter === ALL || ev.class_id === null || ev.class_id === classFilter)
+          inClassesOrWide(classFilter, ev.class_id)
       ),
     [events, churchFilter, serviceFilter, classFilter]
   );
@@ -431,7 +434,7 @@ export default function ChildrenPage() {
         (ca) =>
           (churchFilter === ALL || ca.church_id === churchFilter) &&
           (serviceFilter === ALL || ca.service_id === null || ca.service_id === serviceFilter) &&
-          (classFilter === ALL || ca.class_id === null || ca.class_id === classFilter)
+          inClassesOrWide(classFilter, ca.class_id)
       ),
     [causes, churchFilter, serviceFilter, classFilter]
   );
@@ -607,7 +610,7 @@ export default function ChildrenPage() {
           (fb) =>
             (churchFilter === ALL || fb.church_id === churchFilter) &&
             (serviceFilter === ALL || fb.service_id === null || fb.service_id === serviceFilter) &&
-            (classFilter === ALL || fb.class_id === null || fb.class_id === classFilter) &&
+            inClassesOrWide(classFilter, fb.class_id) &&
             (!eventId || fb.event_id === null || fb.event_id === eventId)
         )
         .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ar')),
@@ -642,7 +645,7 @@ export default function ChildrenPage() {
   // with one church / service / class gets his class (or service) default
   // preselected exactly as if he had picked them by hand.
   const scopeSel = useMemo(
-    () => effectiveScope({ church: churchFilter, service: serviceFilter, class: classFilter }, churches, services, classes),
+    () => effectiveScope({ church: churchFilter, service: serviceFilter, class: singleClass(classFilter) ?? ALL }, churches, services, classes),
     [churchFilter, serviceFilter, classFilter, churches, services, classes]
   );
   // NOTE: this is the ONLY place that writes the selection automatically.
@@ -1275,22 +1278,14 @@ export default function ChildrenPage() {
           </select>
         </div>
 
-        <div className="relative">
-          <select
-            id="class-selector"
-            aria-label="اختيار الفصل"
-            className="input-field appearance-none !px-2 text-xs font-bold"
-            value={classFilter}
-            onChange={(e) => setClassFilter(e.target.value)}
-            disabled={visibleClasses.length <= 1}
-          >
-            <option value={ALL}>{visibleClasses.length === 1 ? visibleClasses[0].name : 'كل الفصول'}</option>
-            {visibleClasses.length > 1 &&
-              visibleClasses.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-          </select>
-        </div>
+        <MultiClassSelect
+          id="class-selector"
+          ariaLabel="اختيار الفصول"
+          value={classFilter}
+          onChange={setClassFilter}
+          options={visibleClasses}
+          disabled={visibleClasses.length <= 1}
+        />
 
         <div className="relative">
           <select

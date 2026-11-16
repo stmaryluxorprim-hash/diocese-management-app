@@ -23,7 +23,7 @@ export default function ExamFormModal({
   exam: ResultExam | null;
   churches: Church[]; services: Service[]; classes: ClassRoom[];
   gradingSystems: GradingSystem[];
-  initialScope?: { church: string; service: string; class: string };
+  initialScope?: { church: string; service: string; classes?: string[]; class?: string };
   onClose: () => void;
   onSaved: (saved: ResultExam) => void;
 }) {
@@ -44,7 +44,7 @@ export default function ExamFormModal({
     : defaultExamInput({
         church_id: startChurch,
         service_id: initialScope && initialScope.service !== ALL ? initialScope.service : profile?.service_id ?? null,
-        class_id: initialScope && initialScope.class !== ALL ? initialScope.class : profile?.class_id ?? null,
+        class_id: (initialScope && (initialScope.classes?.length === 1 ? initialScope.classes[0] : initialScope.classes === undefined && initialScope.class && initialScope.class !== ALL ? initialScope.class : null)) || profile?.class_id || null,
       }, defaultSystem));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

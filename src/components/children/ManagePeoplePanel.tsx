@@ -41,7 +41,7 @@ export default function ManagePeoplePanel() {
   const [notice, setNotice] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
 
   // filters
-  const [scope, setScope] = useState<ScopeSelection>({ church: ALL, service: ALL, class: ALL });
+  const [scope, setScope] = useState<ScopeSelection>({ church: ALL, service: ALL, classes: [] });
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
   const [searchQ, setSearchQ] = useState('');

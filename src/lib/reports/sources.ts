@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Church, Service, ClassRoom, AppEvent, Cause, CallFeedback } from '@/lib/types';
 import { GENDER_LABELS, ENROLLMENT_STATUS_LABELS, ROLE_LABELS, STATUS_LABELS, CONTACT_KIND_LABELS } from '@/lib/types';
 import type { FieldDef, ReportFilters, ReportRow, ReportScope, ReportSourceKey } from './types';
+import { reportClassIds } from './types';
 
 // ---------- lookups every loader needs ----------
 export interface ReportLookups {
@@ -58,10 +59,12 @@ const ageOf = (birthdate: string | null | undefined): number | null => {
 const nameOf = <T extends { id: string; name: string }>(list: T[], id: string | null | undefined) =>
   id ? (list.find((x) => x.id === id)?.name ?? '') : '';
 
-const applyScope = <Q extends { eq: (c: string, v: string) => Q }>(q: Q, scope: ReportScope): Q => {
+const applyScope = <Q extends { eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q }>(q: Q, scope: ReportScope): Q => {
   if (scope.church) q = q.eq('church_id', scope.church);
   if (scope.service) q = q.eq('service_id', scope.service);
-  if (scope.class) q = q.eq('class_id', scope.class);
+  const ids = reportClassIds(scope);
+  if (ids.length === 1) q = q.eq('class_id', ids[0]);
+  else if (ids.length > 1) q = q.in('class_id', ids);
   return q;
 };
 
@@ -409,7 +412,7 @@ const examResultsSource: ReportSource = {
     for (const r of (res ?? []) as ResRaw[]) scores.set(`${r.enrollment_id}|${r.subject_id}`, r);
     // person extras (gender · phone …) — one bounded query
     const summaries = ((sum ?? []) as SummaryRaw[]).filter((s) =>
-      (!scope.church || s.church_id === scope.church) && (!scope.service || s.service_id === scope.service) && (!scope.class || s.class_id === scope.class));
+      (!scope.church || s.church_id === scope.church) && (!scope.service || s.service_id === scope.service) && (reportClassIds(scope).length === 0 || reportClassIds(scope).includes(s.class_id)));
     const personIds = Array.from(new Set(summaries.map((s) => s.person_id)));
     const persons = new Map<string, { gender: 'male' | 'female' | null; phone: string | null; birthdate: string | null }>();
     for (let i = 0; i < personIds.length; i += 500) {
