@@ -19,6 +19,8 @@ import {
   KIND_LABELS, KIND_EMOJI, OCCASION_STATUS_LABELS, CHECKLIST_SUGGESTIONS,
   type Occasion, type OccasionInput, type OccasionKind, type OccasionStatus,
 } from '@/lib/occasions';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { OccasionCover } from '@/components/occasions/OccasionBits';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 
@@ -68,7 +70,7 @@ export default function OccasionFormModal({
   const defaultChurch = item?.church_id ?? profile?.church_id ?? (churches.length === 1 ? churches[0].id : '');
   const [churchId, setChurchId] = useState(defaultChurch);
   const [serviceId, setServiceId] = useState(item ? (item.service_id ?? ALL) : (profile?.service_id ?? ALL));
-  const [classId, setClassId] = useState(item ? (item.class_id ?? ALL) : (profile?.class_id ?? ALL));
+  const [classIds, setClassIds] = useState<string[]>(classSel(item ? item.class_id : profile?.class_id)); // [] = كل الفصول
   const [title, setTitle] = useState(item?.title ?? '');
   const [kind, setKind] = useState<OccasionKind>(item?.kind ?? 'trip');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -149,7 +151,6 @@ export default function OccasionFormModal({
     const payload: OccasionInput = {
       church_id: churchId,
       service_id: serviceId === ALL ? null : serviceId,
-      class_id: serviceId === ALL || classId === ALL ? null : classId,
       title: title.trim(),
       description: description.trim() || null,
       image_url,
@@ -168,10 +169,15 @@ export default function OccasionFormModal({
     };
 
     try {
-      const saved = await saveOccasion(supabase, item?.id ?? null, payload, profile?.id);
+      // one occasion per chosen class (none = all classes); editing updates the
+      // existing one to the first class and creates copies for the others
+      const targets = serviceId === ALL ? [null] : classTargets(classIds);
+      const saved = await saveOccasion(supabase, item?.id ?? null, { ...payload, class_id: targets[0] }, profile?.id);
+      const created = [saved];
+      for (const cid of targets.slice(1)) created.push(await saveOccasion(supabase, null, { ...payload, class_id: cid }, profile?.id));
       if (!item && checklist.length > 0) {
         // best effort — the occasion is saved even if an item fails
-        await Promise.all(checklist.map((label, i) => addChecklistItem(supabase, saved.id, label, true, i + 1, profile?.id).catch(() => null)));
+        await Promise.all(created.flatMap((oc) => checklist.map((label, i) => addChecklistItem(supabase, oc.id, label, true, i + 1, profile?.id).catch(() => null))));
       }
       onSaved(saved);
     } catch (err) {
@@ -245,20 +251,17 @@ export default function OccasionFormModal({
           <Field label="لمن هذه الفعالية؟ (كنيسة ← خدمة ← فصل)" hint="اترك الخدمة / الفصل على «الكل» لفعالية على مستوى الكنيسة أو الخدمة.">
             <div className="grid grid-cols-3 gap-2">
               <select id="occasion-church" className={`input-field !px-2 text-xs font-bold ${churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }} required>
+                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassIds([]); }} required>
                 <option value="">الكنيسة</option>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select id="occasion-service" className={`input-field !px-2 text-xs font-bold ${serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassId(ALL); }}>
+                value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}>
                 <option value={ALL}>كل الخدمات</option>
                 {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select id="occasion-class" className={`input-field !px-2 text-xs font-bold ${classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={classId} onChange={(e) => setClassId(e.target.value)} disabled={serviceId === ALL}>
-                <option value={ALL}>كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="occasion-class" className={classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}
+                value={classIds} onChange={setClassIds} options={visibleClasses} disabled={serviceId === ALL} />
             </div>
           </Field>
 

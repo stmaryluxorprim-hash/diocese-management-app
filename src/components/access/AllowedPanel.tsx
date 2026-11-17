@@ -18,6 +18,8 @@ import {
 } from '@/lib/access';
 import type { ScopeLookups } from '@/components/access/AccessForms';
 import { HintBox } from '@/components/access/AccessBits';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 
 const ALL = 'all';
 const KIND_ICON: Record<AllowedKind, typeof Users> = { person: Users, church: ChurchIcon, service: Layers, class: School };
@@ -40,7 +42,7 @@ export default function AllowedPanel({
   // ---- group form ----
   const [churchId, setChurchId] = useState(event.church_id);
   const [serviceId, setServiceId] = useState(event.service_id ?? ALL);
-  const [classId, setClassId] = useState(event.class_id ?? ALL);
+  const [classIds, setClassIds] = useState<string[]>(classSel(event.class_id)); // [] = كل الفصول
   const visibleServices = useMemo(() => scope.services.filter((s) => s.church_id === churchId), [scope.services, churchId]);
   const visibleClasses = useMemo(() => scope.classes.filter((c) => c.church_id === churchId && (serviceId === ALL || c.service_id === serviceId)), [scope.classes, churchId, serviceId]);
 
@@ -48,14 +50,15 @@ export default function AllowedPanel({
     if (!churchId) return;
     setBusy(true); setMsg(null);
     try {
-      const { added, skipped } = await addAllowed(supabase, [{
+      const targets = serviceId === ALL ? [null] : classTargets(classIds);
+      const { added, skipped } = await addAllowed(supabase, targets.map((cid) => ({
         event_id: event.id, person_id: null, church_id: churchId,
         service_id: serviceId === ALL ? null : serviceId,
-        class_id: serviceId === ALL || classId === ALL ? null : classId,
+        class_id: cid,
         note: null,
-      }]);
+      })));
       if (added.length) onChanged([...allowed, ...added]);
-      setMsg(skipped ? { ok: false, text: 'هذه المجموعة مضافة بالفعل' } : { ok: true, text: 'أُضيفت المجموعة' });
+      setMsg(skipped && !added.length ? { ok: false, text: 'هذه المجموعة مضافة بالفعل' } : { ok: true, text: skipped ? `أُضيف ${added.length} · ${skipped} كان مضافاً` : 'أُضيفت المجموعة' });
     } catch (e) {
       setMsg({ ok: false, text: 'تعذر الإضافة — ' + ((e as { message?: string }).message ?? '') });
     } finally { setBusy(false); }
@@ -192,21 +195,18 @@ export default function AllowedPanel({
           {tab === 'group' ? (
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2">
-                <select id="access-allowed-church" className="input-field !px-2 text-xs font-bold" value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }}>
+                <select id="access-allowed-church" className="input-field !px-2 text-xs font-bold" value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassIds([]); }}>
                   {scope.churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-                <select id="access-allowed-service" className="input-field !px-2 text-xs font-bold" value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassId(ALL); }}>
+                <select id="access-allowed-service" className="input-field !px-2 text-xs font-bold" value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}>
                   <option value={ALL}>كل الخدمات</option>
                   {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
-                <select id="access-allowed-class" className="input-field !px-2 text-xs font-bold" value={classId} onChange={(e) => setClassId(e.target.value)} disabled={serviceId === ALL}>
-                  <option value={ALL}>كل الفصول</option>
-                  {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <MultiClassSelect id="access-allowed-class" value={classIds} onChange={setClassIds} options={visibleClasses} disabled={serviceId === ALL} />
               </div>
               <button id="access-allowed-add-group" type="button" onClick={addGroup} disabled={busy || !churchId} className="btn-primary flex w-full items-center justify-center gap-1.5 !py-2 text-sm">
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                {serviceId === ALL ? 'إضافة الكنيسة كاملة' : classId === ALL ? 'إضافة الخدمة كاملة' : 'إضافة الفصل'}
+                {serviceId === ALL ? 'إضافة الكنيسة كاملة' : classIds.length === 0 ? 'إضافة الخدمة كاملة' : classIds.length === 1 ? 'إضافة الفصل' : `إضافة ${classIds.length} فصول`}
               </button>
             </div>
           ) : (

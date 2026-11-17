@@ -25,6 +25,7 @@ import { useCodeGenerator } from '@/lib/customization-context';
 import type { CodeContext } from '@/lib/code-templates';
 import QrScanner from '@/components/store/QrScanner';
 import ResetPasswordSection from '@/components/ResetPasswordSection';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { changeServantCode, resetServantPassword, servantAccountMessage } from '@/lib/servant-account';
 import {
   GENDER_LABELS, PHONE_PREFIX, PHONE_LOCAL_LENGTH,
@@ -237,10 +238,18 @@ export function EditPersonModal({
   // ---- scope of THIS enrollment (church → service → class) ----
   const [churchId, setChurchId] = useState(enrollment.church_id);
   const [serviceId, setServiceId] = useState(enrollment.service_id);
-  const [classId, setClassId] = useState(enrollment.class_id);
+  // several classes may be ticked: this enrollment keeps/moves to one of them, the rest get new enrollments
+  const [classIds, setClassIds] = useState<string[]>([enrollment.class_id]);
   const scopedServices = services.filter((s) => !churchId || s.church_id === churchId);
   const scopedClasses = classes.filter((c) => (!churchId || c.church_id === churchId) && (!serviceId || c.service_id === serviceId));
+  const pickedClasses = scopedClasses.filter((c) => classIds.includes(c.id));
+  // this enrollment stays on its own class when it is still ticked, otherwise it moves to the first ticked one
+  const keepsOwn = pickedClasses.some((c) => c.id === enrollment.class_id) && churchId === enrollment.church_id && serviceId === enrollment.service_id;
+  const mainClass = keepsOwn ? pickedClasses.find((c) => c.id === enrollment.class_id)! : pickedClasses[0];
+  const classId = mainClass?.id ?? '';
+  const otherClasses = pickedClasses.filter((c) => c.id !== classId);
   const scopeChanged = churchId !== enrollment.church_id || serviceId !== enrollment.service_id || classId !== enrollment.class_id;
+  const scopeDirty = scopeChanged || otherClasses.length > 0;
 
   // ---- Code (national id / QR) — shown disabled, edited only through
   //      a confirmed flow: confirm → modal (generate / scan) → confirm ----
@@ -264,7 +273,7 @@ export function EditPersonModal({
     }
     const newCode = code.trim();
     if (!newCode) return setError('الكود (الرقم القومي) مطلوب');
-    if (canMove && scopeChanged && (!churchId || !serviceId || !classId)) {
+    if (canMove && scopeDirty && (!churchId || !serviceId || !classId)) {
       return setError('اختر الكنيسة والخدمة والفصل الجديد');
     }
 
@@ -275,11 +284,11 @@ export function EditPersonModal({
       );
       if (!ok) return;
     }
-    if (canMove && scopeChanged) {
+    if (canMove && scopeDirty) {
       const from = [scopeName(enrollment.church_id, churches, 'الكنيسة'), scopeName(enrollment.service_id, services, 'الخدمة'), scopeName(enrollment.class_id, classes, 'الفصل')].join(' ← ');
       const to = [scopeName(churchId, churches, 'الكنيسة'), scopeName(serviceId, services, 'الخدمة'), scopeName(classId, classes, 'الفصل')].join(' ← ');
       const ok = confirm(
-        `نقل «${person.name}»\n\nمن: ${from}\nإلى: ${to}\n\nينتقل معه حضوره ونقاطه في هذا التسجيل.\n\nهل أنت متأكد؟`
+        `نقل «${person.name}»\n\nمن: ${from}\nإلى: ${to}\n\nينتقل معه حضوره ونقاطه في هذا التسجيل.${otherClasses.length ? `\n\nوسيُسجَّل أيضًا في: ${otherClasses.map((c) => c.name).join('، ')}` : ''}\n\nهل أنت متأكد؟`
       );
       if (!ok) return;
     }
@@ -340,6 +349,25 @@ export function EditPersonModal({
           return setError('هذا المخدوم مسجَّل بالفعل في الفصل المختار — احذف أحد التسجيلين بدلًا من النقل');
         }
         return setError('تم حفظ البيانات لكن تعذر النقل — تأكد من صلاحياتك على الفصل الجديد');
+      }
+    }
+
+    // 3) the other ticked classes → new enrollments of the same person (by his code)
+    if (canMove && otherClasses.length) {
+      const failed: string[] = [];
+      for (const c of otherClasses) {
+        const { error: xe } = await supabase.rpc('add_person_and_enroll', {
+          p_church: c.church_id, p_service: c.service_id, p_class: c.id,
+          p_name: name.trim(), p_national_id: newCode, p_gender: gender || null,
+          p_birthdate: birthdate || null, p_phone: phoneLocal ? `${PHONE_PREFIX}${phoneLocal}` : null,
+          p_address: address.trim() || null, p_notes: notes.trim() || null,
+          p_image_url: image_url, p_points: 0, p_password: null,
+        });
+        if (xe) failed.push(c.name);
+      }
+      if (failed.length) {
+        setBusy(false);
+        return setError(`تم حفظ البيانات لكن تعذر التسجيل في: ${failed.join('، ')}`);
       }
     }
 
@@ -420,29 +448,33 @@ export function EditPersonModal({
             <div>
               <label className="mb-1 block text-xs font-bold text-slate-500">الكنيسة</label>
               <select id="edit-person-church" className="input-field" value={churchId}
-                onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}>
+                onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
               <label className="mb-1 block text-xs font-bold text-slate-500">الخدمة</label>
               <select id="edit-person-service" className="input-field" value={serviceId}
-                onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}>
+                onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}>
                 <option value="">اختر الخدمة *</option>
                 {scopedServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-500">الفصل</label>
-              <select id="edit-person-class" className="input-field" value={classId} onChange={(e) => setClassId(e.target.value)}>
-                <option value="">اختر الفصل *</option>
-                {scopedClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+              <MultiClassSelect id="edit-person-class" value={classIds} onChange={setClassIds} options={scopedClasses}
+                showAll={false} allLabel="اختر الفصول *" />
             </div>
             {scopeChanged && (
               <p className="flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 سيُنقل هذا التسجيل إلى النطاق الجديد عند الحفظ — ينتقل معه الحضور والنقاط.
+              </p>
+            )}
+            {otherClasses.length > 0 && (
+              <p className="flex items-start gap-1.5 rounded-xl bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                سيُسجَّل أيضًا في: {otherClasses.map((c) => c.name).join('، ')} (تسجيل جديد لكل فصل).
               </p>
             )}
           </>

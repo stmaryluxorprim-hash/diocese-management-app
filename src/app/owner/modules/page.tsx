@@ -22,6 +22,8 @@ import { OwnerGate } from '@/components/ModuleGate';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { cachedLookup } from '@/lib/queries';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classTargets } from '@/lib/class-multi';
 import { useModules } from '@/lib/modules-context';
 import { MODULES, isPersonGrant, type AppModule, type ModuleAccess } from '@/lib/modules';
 import { ROLE_LABELS, SERVANTS_TABLE, type Church, type Service, type ClassRoom, type ServantEnrollment } from '@/lib/types';
@@ -308,7 +310,7 @@ function AddGrantModal({
   const [supabase] = useState(() => createClient());
   const [churchId, setChurchId] = useState<string>('');
   const [serviceId, setServiceId] = useState<string>('');
-  const [classId, setClassId] = useState<string>('');
+  const [classIds, setClassIds] = useState<string[]>([]); // [] = كل الفصول
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -318,24 +320,25 @@ function AddGrantModal({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const row = {
+    if (churchId !== ALL && !churchId) { setError('اختر الكنيسة'); return; }
+    if (churchId !== ALL && !serviceId) { setError('اختر الخدمة'); return; }
+    const allClasses = churchId === ALL || serviceId === ALL;
+    const targets = allClasses ? [null] : classTargets(classIds);
+    const rows = targets.map((cid) => ({
       module_key: module.key,
       church_id: churchId === ALL ? null : churchId,
       service_id: churchId === ALL || serviceId === ALL ? null : serviceId,
-      class_id: churchId === ALL || serviceId === ALL || classId === ALL ? null : classId,
+      class_id: cid,
       created_by: profile?.id,
-    };
-    if (!row.church_id && churchId !== ALL) { setError('اختر الكنيسة'); return; }
-    if (row.church_id && !row.service_id && serviceId !== ALL) { setError('اختر الخدمة'); return; }
-    if (row.service_id && !row.class_id && classId !== ALL) { setError('اختر الفصل'); return; }
+    }));
 
-    const dup = existing.some(
+    const fresh = rows.filter((row) => !existing.some(
       (g) => g.church_id === row.church_id && g.service_id === row.service_id && g.class_id === row.class_id
-    );
-    if (dup) { setError('هذه الصلاحية موجودة بالفعل'); return; }
+    ));
+    if (!fresh.length) { setError(rows.length > 1 ? 'هذه الصلاحيات موجودة بالفعل' : 'هذه الصلاحية موجودة بالفعل'); return; }
 
     setSaving(true);
-    const { error: err } = await supabase.from('module_access').insert(row);
+    const { error: err } = await supabase.from('module_access').insert(fresh);
     if (err) {
       setError(err.code === '23505' ? 'هذه الصلاحية موجودة بالفعل' : 'تعذر الحفظ — تأكد من تشغيل الترحيل 0024');
       setSaving(false);
@@ -365,7 +368,7 @@ function AddGrantModal({
               id="grant-church"
               className="input-field"
               value={churchId}
-              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}
+              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}
               required
             >
               <option value="">اختر الكنيسة</option>
@@ -380,7 +383,7 @@ function AddGrantModal({
                 id="grant-service"
                 className="input-field"
                 value={serviceId}
-                onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}
+                onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
                 required
               >
                 <option value="">اختر الخدمة</option>
@@ -391,18 +394,8 @@ function AddGrantModal({
           )}
           {churchId !== ALL && serviceId && serviceId !== ALL && (
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-500">الفصل *</label>
-              <select
-                id="grant-class"
-                className="input-field"
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-                required
-              >
-                <option value="">اختر الفصل</option>
-                <option value={ALL}>✳ كل الفصول</option>
-                {filteredClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+              <MultiClassSelect id="grant-class" value={classIds} onChange={setClassIds} options={filteredClasses} allLabel="✳ كل الفصول" />
             </div>
           )}
           {error && <p className="text-xs font-bold text-red-600">{error}</p>}

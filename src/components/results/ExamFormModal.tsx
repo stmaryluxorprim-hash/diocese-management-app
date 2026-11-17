@@ -10,6 +10,8 @@ import { Save, Loader2, ClipboardList } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { ALL } from '@/lib/queries';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classIdsOf, classSel, classTargets } from '@/lib/class-multi';
 import { Field, Toggle, ModalFrame } from '@/components/results/ResultBits';
 import {
   createResultExam, updateResultExam, resultErrorMessage, defaultExamInput, EXAM_STATUS_LABELS, PASS_RULE_LABELS,
@@ -49,6 +51,12 @@ export default function ExamFormModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof ResultExamInput>(k: K, v: ResultExamInput[K]) => setForm((f) => ({ ...f, [k]: v }));
+  // chosen classes ([] = كل الفصول); one exam is saved per class
+  const [classIds, setClassIds] = useState<string[]>(() => {
+    if (exam) return classSel(exam.class_id);
+    const ic = initialScope ? classIdsOf(initialScope) : [];
+    return ic.length > 0 ? ic : classSel(profile?.class_id);
+  });
 
   const visibleServices = useMemo(() => services.filter((s) => s.church_id === form.church_id), [services, form.church_id]);
   const visibleClasses = useMemo(() => classes.filter((c) => c.service_id === form.service_id), [classes, form.service_id]);
@@ -73,9 +81,13 @@ export default function ExamFormModal({
         description: form.description?.trim() || null,
         exam_date: form.exam_date || null,
         service_id: form.service_id || null,
-        class_id: form.service_id ? form.class_id || null : null,
       };
-      const saved = exam ? await updateResultExam(supabase, exam.id, payload) : await createResultExam(supabase, payload);
+      const targets = form.service_id ? classTargets(classIds) : [null];
+      const saved = exam
+        ? await updateResultExam(supabase, exam.id, { ...payload, class_id: targets[0] })
+        : await createResultExam(supabase, { ...payload, class_id: targets[0] });
+      // extra classes → copies of the same exam
+      for (const cid of targets.slice(1)) await createResultExam(supabase, { ...payload, class_id: cid });
       onSaved(saved);
     } catch (err) {
       setError(resultErrorMessage(err, 'تعذر الحفظ'));
@@ -102,23 +114,20 @@ export default function ExamFormModal({
         <div className="grid grid-cols-3 gap-2">
           <Field label="الكنيسة *">
             <select id="rx-church" className="input-field appearance-none !px-2 text-xs" value={form.church_id} disabled={lockChurch || !!exam}
-              onChange={(e) => setForm((f) => ({ ...f, church_id: e.target.value, service_id: null, class_id: null, grading_system_id: null }))}>
+              onChange={(e) => { setClassIds([]); setForm((f) => ({ ...f, church_id: e.target.value, service_id: null, class_id: null, grading_system_id: null })); }}>
               {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>
           <Field label="الخدمة">
             <select id="rx-service" className="input-field appearance-none !px-2 text-xs" value={form.service_id ?? ''} disabled={lockService}
-              onChange={(e) => setForm((f) => ({ ...f, service_id: e.target.value || null, class_id: null }))}>
+              onChange={(e) => { setClassIds([]); setForm((f) => ({ ...f, service_id: e.target.value || null, class_id: null })); }}>
               <option value="">كل الخدمات</option>
               {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </Field>
           <Field label="الفصل">
-            <select id="rx-class" className="input-field appearance-none !px-2 text-xs" value={form.class_id ?? ''} disabled={lockClass || !form.service_id}
-              onChange={(e) => set('class_id', e.target.value || null)}>
-              <option value="">كل الفصول</option>
-              {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <MultiClassSelect id="rx-class" value={classIds} onChange={setClassIds} options={visibleClasses}
+              disabled={lockClass || !form.service_id} />
           </Field>
         </div>
 

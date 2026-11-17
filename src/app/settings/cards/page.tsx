@@ -8,6 +8,8 @@ import {
   IdCard, Plus, ArrowRight, Loader2, X, Trash2, Copy, ChevronLeft, Link2, Printer,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import type { Church, Service, ClassRoom } from '@/lib/types';
@@ -228,9 +230,10 @@ function RebindTemplateModal({
   onClose: () => void;
 }) {
   const supabase = createClient();
+  const { profile } = useAuth();
   const [churchId, setChurchId] = useState(template.church_id);
   const [serviceId, setServiceId] = useState(template.service_id ?? ALL);
-  const [classId, setClassId] = useState(template.class_id ?? ALL);
+  const [classIds, setClassIds] = useState<string[]>(classSel(template.class_id)); // [] = كل الفصول
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -244,16 +247,16 @@ function RebindTemplateModal({
     setError('');
     if (!churchId) return setError('اختر الكنيسة');
     if (!serviceId) return setError('اختر الخدمة أو «كل الخدمات»');
-    if (serviceId !== ALL && !classId) return setError('اختر الفصل أو «كل الفصول»');
     setSaving(true);
-    const { error: err } = await supabase
-      .from('card_templates')
-      .update({
-        church_id: churchId,
-        service_id: serviceId === ALL ? null : serviceId,
-        class_id: serviceId === ALL || classId === ALL ? null : classId,
-      })
-      .eq('id', template.id);
+    // first class rebinds this template; each extra class gets a copy of it
+    const targets = serviceId === ALL ? [null] : classTargets(classIds);
+    const scopeOf = (cid: string | null) => ({ church_id: churchId, service_id: serviceId === ALL ? null : serviceId, class_id: cid });
+    let { error: err } = await supabase.from('card_templates').update(scopeOf(targets[0])).eq('id', template.id);
+    if (!err && targets.length > 1) {
+      ({ error: err } = await supabase.from('card_templates').insert(targets.slice(1).map((cid) => ({
+        ...scopeOf(cid), name: template.name, design: template.design, print_settings: template.print_settings, created_by: profile?.id,
+      }))));
+    }
     setSaving(false);
     if (err) { setError('تعذر الحفظ، تأكد من الصلاحيات'); return; }
     onSaved();
@@ -274,7 +277,7 @@ function RebindTemplateModal({
             <select
               className="input-field"
               value={churchId}
-              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}
+              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}
               required
             >
               <option value="">اختر الكنيسة</option>
@@ -286,7 +289,7 @@ function RebindTemplateModal({
             <select
               className="input-field"
               value={serviceId}
-              onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}
+              onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
               disabled={!churchId}
               required
             >
@@ -297,17 +300,9 @@ function RebindTemplateModal({
           </div>
           {serviceId && serviceId !== ALL && (
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-500">الفصل *</label>
-              <select
-                className="input-field"
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-                required
-              >
-                <option value="">اختر الفصل</option>
-                <option value={ALL}>كل الفصول</option>
-                {filteredClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+              <MultiClassSelect id="card-class" value={classIds} onChange={setClassIds} options={filteredClasses}
+                className="!py-2.5 !text-sm" />
             </div>
           )}
           {error && <p className="text-sm font-bold text-red-500">{error}</p>}
@@ -339,7 +334,7 @@ function AddTemplateModal({
   const [name, setName] = useState('');
   const [churchId, setChurchId] = useState(churches.length === 1 ? churches[0].id : '');
   const [serviceId, setServiceId] = useState('');
-  const [classId, setClassId] = useState('');
+  const [classIds, setClassIds] = useState<string[]>([]); // [] = كل الفصول
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -353,29 +348,29 @@ function AddTemplateModal({
     setError('');
     if (!churchId) return setError('اختر الكنيسة');
     if (!serviceId) return setError('اختر الخدمة أو «كل الخدمات»');
-    if (serviceId !== ALL && !classId) return setError('اختر الفصل أو «كل الفصول»');
     setSaving(true);
 
+    // one template per chosen class; the designer opens on the first
+    const targets = serviceId === ALL ? [null] : classTargets(classIds);
     const { data, error: err } = await supabase
       .from('card_templates')
-      .insert({
+      .insert(targets.map((cid) => ({
         church_id: churchId,
         service_id: serviceId === ALL ? null : serviceId,
-        class_id: serviceId === ALL || classId === ALL ? null : classId,
+        class_id: cid,
         name: name.trim(),
         design: DEFAULT_DESIGN,
         print_settings: DEFAULT_PRINT_SETTINGS,
         created_by: profile?.id,
-      })
-      .select('id')
-      .single();
+      })))
+      .select('id');
 
-    if (err || !data) {
+    if (err || !data || data.length === 0) {
       setError('تعذر الحفظ، تأكد من الصلاحيات');
       setSaving(false);
       return;
     }
-    router.push(`/settings/cards/${data.id}`);
+    router.push(`/settings/cards/${data[0].id}`);
   };
 
   return (
@@ -403,7 +398,7 @@ function AddTemplateModal({
             <select
               className="input-field"
               value={churchId}
-              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}
+              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}
               required
             >
               <option value="">اختر الكنيسة</option>
@@ -415,7 +410,7 @@ function AddTemplateModal({
             <select
               className="input-field"
               value={serviceId}
-              onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}
+              onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
               disabled={!churchId}
               required
             >
@@ -426,17 +421,9 @@ function AddTemplateModal({
           </div>
           {serviceId && serviceId !== ALL && (
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-500">الفصل *</label>
-              <select
-                className="input-field"
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-                required
-              >
-                <option value="">اختر الفصل</option>
-                <option value={ALL}>كل الفصول</option>
-                {filteredClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+              <MultiClassSelect id="card-class" value={classIds} onChange={setClassIds} options={filteredClasses}
+                className="!py-2.5 !text-sm" />
             </div>
           )}
           {error && <p className="text-sm font-bold text-red-500">{error}</p>}

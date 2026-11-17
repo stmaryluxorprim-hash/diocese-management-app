@@ -15,6 +15,8 @@ import {
   saveAchievement, achievementErrorMessage, KIND_LABELS, AWARD_MODE_LABELS, RULE_LABELS,
   type Achievement, type AchievementKind, type AwardMode, type AttendanceRule, type AchievementInput,
 } from '@/lib/achievements';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { AchievementThumb } from '@/components/achievements/AchievementBits';
 import type { Church, Service, ClassRoom, AppEvent } from '@/lib/types';
 
@@ -64,7 +66,7 @@ export default function AchievementFormModal({
   const defaultChurch = item?.church_id ?? profile?.church_id ?? (churches.length === 1 ? churches[0].id : '');
   const [churchId, setChurchId] = useState(defaultChurch);
   const [serviceId, setServiceId] = useState(item ? (item.service_id ?? ALL) : (profile?.service_id ?? ALL));
-  const [classId, setClassId] = useState(item ? (item.class_id ?? ALL) : (profile?.class_id ?? ALL));
+  const [classIds, setClassIds] = useState<string[]>(classSel(item ? item.class_id : profile?.class_id)); // [] = كل الفصول
   const [eventId, setEventId] = useState(item?.event_id ?? NONE);
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -97,8 +99,9 @@ export default function AchievementFormModal({
     () => events.filter((ev) =>
       ev.church_id === churchId &&
       (ev.service_id === null || serviceId === ALL || ev.service_id === serviceId) &&
-      (ev.class_id === null || classId === ALL || ev.class_id === classId)),
-    [events, churchId, serviceId, classId]
+      // an event of ONE class only fits an achievement of at most that class
+      (ev.class_id === null || classIds.length === 0 || (classIds.length === 1 && ev.class_id === classIds[0]))),
+    [events, churchId, serviceId, classIds]
   );
 
   const pickPhoto = (f: File | null) => {
@@ -141,7 +144,6 @@ export default function AchievementFormModal({
     const payload: AchievementInput = {
       church_id: churchId,
       service_id: serviceId === ALL ? null : serviceId,
-      class_id: serviceId === ALL || classId === ALL ? null : classId,
       event_id: eventId || null,
       name: name.trim(),
       description: description.trim() || null,
@@ -157,7 +159,13 @@ export default function AchievementFormModal({
     };
 
     try {
-      const saved = await saveAchievement(supabase, item?.id ?? null, payload, profile?.id);
+      // one achievement per chosen class (none = all classes); editing updates the
+      // existing one to the first class and creates copies for the others
+      const targets = serviceId === ALL ? [null] : classTargets(classIds);
+      const saved = await saveAchievement(supabase, item?.id ?? null, { ...payload, class_id: targets[0] }, profile?.id);
+      for (const cid of targets.slice(1)) {
+        await saveAchievement(supabase, null, { ...payload, class_id: cid }, profile?.id);
+      }
       onSaved(saved);
     } catch (err) {
       setError(achievementErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات'));
@@ -234,20 +242,18 @@ export default function AchievementFormModal({
             <label className="mb-1 block text-xs font-bold text-slate-500">النطاق (كنيسة ← خدمة ← فصل ← مناسبة)</label>
             <div className="grid grid-cols-3 gap-2">
               <select id="achievement-church" className={`input-field !px-2 text-xs font-bold ${churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); setEventId(NONE); }} required>
+                value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassIds([]); setEventId(NONE); }} required>
                 <option value="">الكنيسة</option>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select id="achievement-service" className={`input-field !px-2 text-xs font-bold ${serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassId(ALL); setEventId(NONE); }}>
+                value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassIds([]); setEventId(NONE); }}>
                 <option value={ALL}>كل الخدمات</option>
                 {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select id="achievement-class" className={`input-field !px-2 text-xs font-bold ${classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={classId} onChange={(e) => { setClassId(e.target.value); setEventId(NONE); }} disabled={serviceId === ALL}>
-                <option value={ALL}>كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="achievement-class" className={classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}
+                value={classIds} onChange={(ids) => { setClassIds(ids); setEventId(NONE); }} options={visibleClasses}
+                disabled={serviceId === ALL} />
             </div>
             <select id="achievement-event" className="input-field mt-2 !px-2 text-xs font-bold" value={eventId}
               onChange={(e) => setEventId(e.target.value)} disabled={!churchId}>

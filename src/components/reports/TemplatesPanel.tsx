@@ -13,6 +13,7 @@ import { SOURCE_BY_KEY } from '@/lib/reports/sources';
 import type { ReportSourceKey } from '@/lib/reports/types';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import { Empty, Field } from './ReportBits';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 
 export function TemplatesList({ templates, loading, onUse, onDelete, onEdit, canManage, lookups }: {
   templates: ReportTemplate[]; loading: boolean;
@@ -60,7 +61,8 @@ export function TemplatesList({ templates, loading, onUse, onDelete, onEdit, can
   );
 }
 
-export interface SaveTemplateValues { name: string; description: string; church_id: string | null; service_id: string | null; class_id: string | null; is_default: boolean }
+/** `class_id` is the first chosen class; `more_class_ids` are the others — the page saves one template per class. */
+export interface SaveTemplateValues { name: string; description: string; church_id: string | null; service_id: string | null; class_id: string | null; more_class_ids?: string[]; is_default: boolean }
 
 export function SaveTemplateModal({ initial, existing, onClose, onSave, saving, lookups, canShareAll }: {
   initial: SaveTemplateValues; existing: boolean; onClose: () => void; onSave: (v: SaveTemplateValues) => void; saving: boolean;
@@ -83,18 +85,18 @@ export function SaveTemplateModal({ initial, existing, onClose, onSave, saving, 
           <Field label="وصف (اختياري)"><input className={selectCls} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} /></Field>
           <p className="text-[11px] font-extrabold text-slate-500">من يرى القالب؟</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <select className={selectCls} value={v.church_id ?? ''} onChange={(e) => setV({ ...v, church_id: e.target.value || null, service_id: null, class_id: null })}>
+            <select className={selectCls} value={v.church_id ?? ''} onChange={(e) => setV({ ...v, church_id: e.target.value || null, service_id: null, class_id: null, more_class_ids: [] })}>
               {canShareAll && <option value="">الجميع (مشترك)</option>}
               {lookups.churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <select className={selectCls} value={v.service_id ?? ''} disabled={!v.church_id} onChange={(e) => setV({ ...v, service_id: e.target.value || null, class_id: null })}>
+            <select className={selectCls} value={v.service_id ?? ''} disabled={!v.church_id} onChange={(e) => setV({ ...v, service_id: e.target.value || null, class_id: null, more_class_ids: [] })}>
               <option value="">كل الخدمات</option>
               {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <select className={selectCls} value={v.class_id ?? ''} disabled={!v.service_id} onChange={(e) => setV({ ...v, class_id: e.target.value || null })}>
-              <option value="">كل الفصول</option>
-              {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <MultiClassSelect id="report-template-classes" className="!py-2 !text-sm" disabled={!v.service_id}
+              value={v.class_id ? [v.class_id, ...(v.more_class_ids ?? [])] : []}
+              onChange={(ids) => setV({ ...v, class_id: ids[0] ?? null, more_class_ids: ids.slice(1) })}
+              options={classes} />
           </div>
           <label className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">
             <input type="checkbox" className="h-4 w-4 accent-fuchsia-600" checked={v.is_default} onChange={(e) => setV({ ...v, is_default: e.target.checked })} />

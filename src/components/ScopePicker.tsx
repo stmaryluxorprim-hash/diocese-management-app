@@ -18,6 +18,7 @@ import { useMemo, useState } from 'react';
 import { Plus, X, Star, MapPin, Church as ChurchIcon, Layers, School, Lock } from 'lucide-react';
 import type { Church, Service, ClassRoom, ScopeRef } from '@/lib/types';
 import { scopeKey } from '@/lib/types';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 
 export type ScopeDepth = 'church' | 'service' | 'class';
 
@@ -83,7 +84,8 @@ export default function ScopePicker({
 
   const [churchId, setChurchId] = useState(lockChurch ?? (single ? churches[0]?.id ?? '' : ''));
   const [serviceId, setServiceId] = useState(lockService ?? '');
-  const [classId, setClassId] = useState('');
+  // several classes may be ticked → one place is added per class
+  const [classIds, setClassIds] = useState<string[]>([]);
   const [open, setOpen] = useState(value.length === 0);
 
   // keep the locked / single church in sync when the lookups arrive later
@@ -93,22 +95,26 @@ export default function ScopePicker({
   const services = useMemo(() => lookups.services.filter((s) => s.church_id === effChurch && (!lockService || s.id === lockService)), [lookups.services, effChurch, lockService]);
   const classes = useMemo(() => lookups.classes.filter((c) => c.service_id === effService), [lookups.classes, effService]);
 
-  const candidate: ScopeRef | null = effChurch
-    ? clampScope({ church_id: effChurch, service_id: effService || null, class_id: classId || null }, depth)
-    : null;
-  const candidateKey = candidate ? scopeKey(candidate) : '';
-  const already = !!candidate && value.some((v) => scopeKey(v) === candidateKey);
+  // [] = «no class chosen» → a single service-level place (or the leaf is required)
+  const classTargetIds: (string | null)[] = depth === 'class' && classIds.length ? classIds : [null];
+  const candidates: ScopeRef[] = effChurch
+    ? classTargetIds.map((cid) => clampScope({ church_id: effChurch, service_id: effService || null, class_id: cid }, depth))
+    : [];
+  const fresh = candidates.filter((c) => !value.some((v) => scopeKey(v) === scopeKey(c)));
+  const already = candidates.length > 0 && fresh.length === 0;
   const leafMissing = requireLeaf && (
-    (depth === 'class' && !classId) || (depth === 'service' && !effService)
+    (depth === 'class' && classIds.length === 0) || (depth === 'service' && !effService)
   );
-  const canAdd = !!candidate && !already && !leafMissing && !disabled && (max === undefined || value.length < max);
+  const room = max === undefined ? Infinity : max - value.length;
+  const canAdd = candidates.length > 0 && !already && !leafMissing && !disabled && room > 0;
 
   const add = () => {
-    if (!candidate || !canAdd) return;
-    onChange(dedupeScopes([...value, candidate]));
-    // keep church / service (the usual case: several classes of the same service), reset the class
-    setClassId('');
-    if (value.length + 1 >= (max ?? Infinity)) setOpen(false);
+    if (!canAdd) return;
+    const toAdd = fresh.slice(0, room);
+    onChange(dedupeScopes([...value, ...toAdd]));
+    // keep church / service (the usual case: several classes of the same service), reset the classes
+    setClassIds([]);
+    if (value.length + toAdd.length >= (max ?? Infinity)) setOpen(false);
   };
   const remove = (i: number) => { if (!disabled) onChange(value.filter((_, j) => j !== i)); };
   const makePrimary = (i: number) => {
@@ -172,7 +178,7 @@ export default function ScopePicker({
           <div id={`${idPrefix}-add`} className="space-y-2 rounded-2xl border border-primary-100 bg-primary-50/30 p-3">
             {!(single || lockChurch) && (
               <select id={`${idPrefix}-church`} className={selectCls(false)} value={effChurch}
-                onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}>
+                onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}>
                 <option value="">اختر الكنيسة</option>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -184,22 +190,21 @@ export default function ScopePicker({
             )}
             {depth !== 'church' && (
               <select id={`${idPrefix}-service`} className={selectCls(!!lockService)} value={effService}
-                onChange={(e) => { setServiceId(e.target.value); setClassId(''); }} disabled={!effChurch} tabIndex={lockService ? -1 : 0}>
+                onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }} disabled={!effChurch} tabIndex={lockService ? -1 : 0}>
                 <option value="">{!effChurch ? 'اختر الكنيسة أولاً' : requireLeaf && depth === 'service' ? 'اختر الخدمة' : 'كل الخدمات (بدون تحديد)'}</option>
                 {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             )}
             {depth === 'class' && (
-              <select id={`${idPrefix}-class`} className={selectCls(false)} value={classId}
-                onChange={(e) => setClassId(e.target.value)} disabled={!effService}>
-                <option value="">{!effService ? 'اختر الخدمة أولاً' : requireLeaf ? 'اختر الفصل' : 'كل الفصول (بدون تحديد)'}</option>
-                {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id={`${idPrefix}-class`} value={classIds} onChange={setClassIds} options={classes}
+                showAll={!requireLeaf} disabled={!effService}
+                allLabel={!effService ? 'اختر الخدمة أولاً' : requireLeaf ? 'اختر الفصول' : 'كل الفصول (بدون تحديد)'}
+                className="!py-2 !text-sm" />
             )}
             <div className="flex gap-2">
               <button type="button" id={`${idPrefix}-add-btn`} onClick={add} disabled={!canAdd}
                 className="btn-primary flex flex-1 items-center justify-center gap-1 !py-2 text-sm disabled:opacity-50">
-                <Plus className="h-4 w-4" /> {already ? 'مُضاف بالفعل' : 'إضافة'}
+                <Plus className="h-4 w-4" /> {already ? 'مُضاف بالفعل' : fresh.length > 1 ? `إضافة ${fresh.length} فصول` : 'إضافة'}
               </button>
               {value.length > 0 && (
                 <button type="button" onClick={() => setOpen(false)} className="btn-secondary !px-3 !py-2 text-sm">إغلاق</button>

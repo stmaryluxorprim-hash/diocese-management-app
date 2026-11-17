@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase/client';
 import { fetchEnrollmentsPage, ALL } from '@/lib/queries';
 import type { EnrollmentWithPerson, ClassRoom } from '@/lib/types';
 import { registerParticipant, occasionErrorMessage, REG_STATUS_LABELS, type Occasion, type Participant, type RegistrationStatus } from '@/lib/occasions';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { PersonAvatar, RegStatusBadge } from '@/components/occasions/OccasionBits';
 
 export default function AddParticipantModal({
@@ -25,7 +26,7 @@ export default function AddParticipantModal({
   const [supabase] = useState(() => createClient());
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
-  const [classId, setClassId] = useState<string>(occasion.class_id ?? ALL);
+  const [classIds, setClassIds] = useState<string[]>([]); // [] = كل الفصول
   const [rows, setRows] = useState<EnrollmentWithPerson[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(0);
@@ -48,13 +49,13 @@ export default function AddParticipantModal({
       const res = await fetchEnrollmentsPage(supabase, {
         church: occasion.church_id,
         service: occasion.service_id ?? ALL,
-        class: occasion.class_id ?? classId,
+        classes: occasion.class_id ? [occasion.class_id] : classIds,
       }, { page: pg, pageSize: 60, search: debounced });
       setRows((l) => (append ? [...l, ...res.rows] : res.rows));
       setHasMore(res.hasMore);
       setPage(pg);
     } catch { /* ignore */ } finally { setLoading(false); }
-  }, [supabase, occasion, classId, debounced]);
+  }, [supabase, occasion, classIds, debounced]);
 
   useEffect(() => { load(0, false); }, [load]);
 
@@ -85,10 +86,7 @@ export default function AddParticipantModal({
           </div>
           <div className="flex gap-2">
             {!occasion.class_id && visibleClasses.length > 1 && (
-              <select id="occ-add-class" className="input-field !py-2 !px-2 text-xs font-bold" value={classId} onChange={(e) => setClassId(e.target.value)}>
-                <option value={ALL}>كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="occ-add-class" className="!py-2" value={classIds} onChange={setClassIds} options={visibleClasses} />
             )}
             <div className="grid flex-1 grid-cols-2 gap-1">
               {(['confirmed', 'pending'] as const).map((s) => (

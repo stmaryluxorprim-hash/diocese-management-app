@@ -34,6 +34,7 @@ import {
   DEFAULT_PASSWORD,
 } from '@/lib/types';
 import ScopePicker from '@/components/ScopePicker';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 
 // ---------- Helpers ----------
 
@@ -124,7 +125,8 @@ function useScope(churches: Church[], services: Service[], classes: ClassRoom[])
   const { profile } = useAuth();
   const [churchId, setChurchId] = useState('');
   const [serviceId, setServiceId] = useState('');
-  const [classId, setClassId] = useState('');
+  // several classes may be ticked — the child is enrolled in each (no «all»: a real class is required)
+  const [classIds, setClassIds] = useState<string[]>([]);
 
   // Default from profile scope once data arrives
   useEffect(() => {
@@ -132,7 +134,7 @@ function useScope(churches: Church[], services: Service[], classes: ClassRoom[])
     if (profile.church_id && churches.some((c) => c.id === profile.church_id)) setChurchId(profile.church_id);
     else if (churches.length === 1) setChurchId(churches[0].id);
     if (profile.service_id && services.some((s) => s.id === profile.service_id)) setServiceId(profile.service_id);
-    if (profile.class_id && classes.some((c) => c.id === profile.class_id)) setClassId(profile.class_id);
+    if (profile.class_id && classes.some((c) => c.id === profile.class_id)) setClassIds([profile.class_id]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, churches.length, services.length, classes.length]);
 
@@ -153,15 +155,18 @@ function useScope(churches: Church[], services: Service[], classes: ClassRoom[])
     if (!serviceId && visibleServices.length === 1) setServiceId(visibleServices[0].id);
   }, [visibleServices, serviceId]);
   useEffect(() => {
-    if (!classId && visibleClasses.length === 1) setClassId(visibleClasses[0].id);
-  }, [visibleClasses, classId]);
+    if (classIds.length === 0 && visibleClasses.length === 1) setClassIds([visibleClasses[0].id]);
+  }, [visibleClasses, classIds]);
 
-  const onChurch = (v: string) => { setChurchId(v); setServiceId(''); setClassId(''); };
-  const onService = (v: string) => { setServiceId(v); setClassId(''); };
+  const onChurch = (v: string) => { setChurchId(v); setServiceId(''); setClassIds([]); };
+  const onService = (v: string) => { setServiceId(v); setClassIds([]); };
 
-  const selectedClass = classes.find((c) => c.id === classId) ?? null;
+  // the chosen classes in the order they appear in the list; the FIRST is the «main» one
+  const selectedClasses = useMemo(() => visibleClasses.filter((c) => classIds.includes(c.id)), [visibleClasses, classIds]);
+  const selectedClass = selectedClasses[0] ?? null;
+  const classId = selectedClass?.id ?? '';
 
-  return { churchId, serviceId, classId, visibleServices, visibleClasses, onChurch, onService, setClassId, selectedClass };
+  return { churchId, serviceId, classId, classIds, visibleServices, visibleClasses, onChurch, onService, setClassIds, selectedClass, selectedClasses };
 }
 
 function ScopeSelectors({
@@ -199,18 +204,16 @@ function ScopeSelectors({
         </select>
       </div>
       <div>
-        <label className="mb-1 block text-xs font-bold text-slate-500">الفصل *</label>
-        <select
+        <label className="mb-1 block text-xs font-bold text-slate-500">الفصول *</label>
+        <MultiClassSelect
           id={`${idPrefix}-class`}
-          className="input-field"
-          value={scope.classId}
-          onChange={(e) => scope.setClassId(e.target.value)}
+          value={scope.classIds}
+          onChange={scope.setClassIds}
+          options={scope.visibleClasses}
+          showAll={false}
+          allLabel="اختر الفصول"
           disabled={!scope.serviceId}
-          required
-        >
-          <option value="">اختر الفصل</option>
-          {scope.visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        />
       </div>
     </div>
   );
@@ -421,7 +424,12 @@ function SingleAddTab({
         return;
       }
       const result = data as AddPersonResult;
-      if (result?.already_enrolled && extraClasses.length === 0) {
+      // every ticked class beyond the main one + the «فصول إضافية» picker → one enrollment each
+      const otherClasses: ScopeRef[] = [
+        ...scope.selectedClasses.slice(1).map((c) => ({ church_id: c.church_id, service_id: c.service_id, class_id: c.id })),
+        ...extraClasses.filter((x) => !scope.classIds.includes(x.class_id ?? '')),
+      ];
+      if (result?.already_enrolled && otherClasses.length === 0) {
         setError(`"${name.trim()}" مسجّل بالفعل في هذا الفصل`);
         setSaving(false);
         return;
@@ -429,7 +437,7 @@ function SingleAddTab({
 
       // 0045: the other classes — same person (by code), one enrollment each
       let extraOk = 0; const extraFail: string[] = [];
-      for (const x of extraClasses) {
+      for (const x of otherClasses) {
         if (!x.class_id || !x.service_id || x.class_id === cls.id) continue;
         const { error: xe, data: xd } = await supabase.rpc('add_person_and_enroll', {
           p_church: x.church_id, p_service: x.service_id, p_class: x.class_id,
@@ -446,7 +454,7 @@ function SingleAddTab({
       const total = (result?.already_enrolled ? 0 : 1) + extraOk;
       setSavedName(
         (result?.person_created ? name.trim() : `${name.trim()} (شخص موجود)`)
-        + (extraClasses.length ? ` — سُجّل في ${total} ${total === 1 ? 'فصل' : 'فصول'}` : result?.person_created ? '' : ' — تم تسجيله في الفصل')
+        + (otherClasses.length ? ` — سُجّل في ${total} ${total === 1 ? 'فصل' : 'فصول'}` : result?.person_created ? '' : ' — تم تسجيله في الفصل')
       );
       if (extraFail.length) setError(`تعذر التسجيل في: ${extraFail.join('، ')}`);
       resetForm();
@@ -534,7 +542,7 @@ function SingleAddTab({
             hint="المخدوم شخص واحد — يمكن تسجيله في أكثر من فصل أو خدمة أو كنيسة في نفس الوقت (الفصل أعلاه هو الأساسي)"
             value={extraClasses}
             onChange={setExtraClasses}
-            lookups={{ ...pickerLookups, classes: classes.filter((c) => c.id !== scope.classId) }}
+            lookups={{ ...pickerLookups, classes: classes.filter((c) => !scope.classIds.includes(c.id)) }}
             depth="class"
             requireLeaf
             primaryLabel={null}
@@ -1166,7 +1174,21 @@ function BulkAddTab({
         setStatus('skipped', `الكود ${result.national_id} مسجّل بالفعل في الفصل`);
         skipped++;
       } else {
+        // the other ticked classes: same person (by code), one enrollment each
+        const extraFailNames: string[] = [];
+        for (const c of scope.selectedClasses.slice(1)) {
+          const { error: xe } = await supabase.rpc('add_person_and_enroll', {
+            p_church: c.church_id, p_service: c.service_id, p_class: c.id,
+            p_name: r.name, p_national_id: result?.national_id ?? (codeVal || null),
+            p_gender: r.gender, p_birthdate: r.birthdate,
+            p_phone: phoneDropped ? null : r.phone,
+            p_address: r.address || null, p_notes: r.notes || null,
+            p_points: r.points, p_password: null,
+          });
+          if (xe) extraFailNames.push(c.name);
+        }
         const notes: string[] = [];
+        if (extraFailNames.length) notes.push(`تعذر التسجيل في: ${extraFailNames.join('، ')}`);
         if (phoneDropped) notes.push('حُفظ بدون هاتف (رقم غير صالح)');
         if (dateDropped) notes.push('حُفظ بدون تاريخ ميلاد (صيغة غير مفهومة)');
         if (!result?.person_created) notes.push('شخص موجود — تم تسجيله في الفصل');

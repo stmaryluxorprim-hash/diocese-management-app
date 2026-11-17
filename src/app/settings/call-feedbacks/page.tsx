@@ -12,6 +12,8 @@ import {
   PhoneCall, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Palette, ChevronUp, ChevronDown, Eye,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets, inClassesOrWide } from '@/lib/class-multi';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
@@ -261,7 +263,7 @@ function FeedbackModal({
   const [name, setName] = useState(feedback?.name ?? '');
   const [churchId, setChurchId] = useState(feedback?.church_id ?? (churches.length === 1 ? churches[0].id : ''));
   const [serviceId, setServiceId] = useState(feedback ? (feedback.service_id ?? ALL) : '');
-  const [classId, setClassId] = useState(feedback ? (feedback.class_id ?? ALL) : '');
+  const [classIds, setClassIds] = useState<string[]>(classSel(feedback?.class_id)); // [] = كل الفصول
   const [eventId, setEventId] = useState(feedback ? (feedback.event_id ?? ALL) : ALL);
   const [color, setColor] = useState(feedback?.color ?? CALL_FEEDBACK_COLORS[11]);
   const [icon, setIcon] = useState(feedback?.icon ?? 'phone');
@@ -278,9 +280,10 @@ function FeedbackModal({
       (ev) =>
         ev.church_id === churchId &&
         (serviceId === ALL || !serviceId || ev.service_id === null || ev.service_id === serviceId) &&
-        (classId === ALL || !classId || ev.class_id === null || ev.class_id === classId)
+        // an event of ONE class only fits a form with at most that one class
+        (classIds.length > 1 ? ev.class_id === null : inClassesOrWide(classIds, ev.class_id))
     ),
-    [events, churchId, serviceId, classId]
+    [events, churchId, serviceId, classIds]
   );
   useEffect(() => {
     if (eventId !== ALL && !filteredEvents.some((e) => e.id === eventId)) setEventId(ALL);
@@ -291,7 +294,6 @@ function FeedbackModal({
     setError('');
     if (!churchId) return setError('اختر الكنيسة');
     if (!serviceId) return setError('اختر الخدمة أو «كل الخدمات»');
-    if (serviceId !== ALL && !classId) return setError('اختر الفصل أو «كل الفصول»');
     if (!name.trim()) return setError('اكتب اسم النتيجة');
     if (!isHexColor(color)) return setError('اختر لوناً صحيحاً');
     setSaving(true);
@@ -299,16 +301,26 @@ function FeedbackModal({
     const base = {
       church_id: churchId,
       service_id: serviceId === ALL ? null : serviceId,
-      class_id: serviceId === ALL || classId === ALL ? null : classId,
       event_id: eventId === ALL ? null : eventId,
       name: name.trim(),
       color: color.toLowerCase(),
       icon,
     };
 
-    const { error: err } = mode === 'add'
-      ? await supabase.from('call_feedbacks').insert({ ...base, sort_order: nextOrder, created_by: profile?.id })
-      : await supabase.from('call_feedbacks').update({ ...base, edited_by: profile?.id }).eq('id', feedback!.id);
+    // one record per chosen class (none chosen = one record for all classes).
+    // Editing updates the existing record to the first class, the rest become new copies.
+    const targets = serviceId === ALL ? [null] : classTargets(classIds);
+    let err: { code?: string; message: string } | null = null;
+    if (mode === 'add') {
+      ({ error: err } = await supabase.from('call_feedbacks').insert(
+        targets.map((cid, i) => ({ ...base, class_id: cid, sort_order: nextOrder + i, created_by: profile?.id }))));
+    } else {
+      ({ error: err } = await supabase.from('call_feedbacks').update({ ...base, class_id: targets[0], edited_by: profile?.id }).eq('id', feedback!.id));
+      if (!err && targets.length > 1) {
+        ({ error: err } = await supabase.from('call_feedbacks').insert(
+          targets.slice(1).map((cid, i) => ({ ...base, class_id: cid, sort_order: nextOrder + i, created_by: profile?.id }))));
+      }
+    }
 
     if (err) {
       setError(err.code === '42P01'
@@ -364,7 +376,7 @@ function FeedbackModal({
             <select
               className="input-field"
               value={churchId}
-              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); setEventId(ALL); }}
+              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); setEventId(ALL); }}
               required
             >
               <option value="">اختر الكنيسة</option>
@@ -376,7 +388,7 @@ function FeedbackModal({
             <select
               className="input-field"
               value={serviceId}
-              onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}
+              onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
               required
             >
               <option value="">اختر الخدمة</option>
@@ -386,15 +398,12 @@ function FeedbackModal({
           </div>
           {serviceId && serviceId !== ALL && (
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-500">الفصل *</label>
-              <select className="input-field" value={classId} onChange={(e) => setClassId(e.target.value)} required>
-                <option value="">اختر الفصل</option>
-                <option value={ALL}>✳ كل الفصول</option>
-                {filteredClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+              <MultiClassSelect id="feedback-class" value={classIds} onChange={setClassIds} options={filteredClasses}
+                allLabel="✳ كل الفصول" className="!py-2.5 !text-sm" />
             </div>
           )}
-          {churchId && serviceId && (serviceId === ALL || classId) && (
+          {churchId && serviceId && (
             <div>
               <label className="mb-1 block text-xs font-bold text-slate-500">المناسبة *</label>
               <select id="feedback-event" className="input-field" value={eventId} onChange={(e) => setEventId(e.target.value)}>

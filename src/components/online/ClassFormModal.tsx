@@ -10,6 +10,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Save, Loader2, CalendarClock, Link2, ShieldCheck, Star, GraduationCap, CalendarCheck } from 'lucide-react';
 import InfoTip from '@/components/InfoTip';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { cachedLookup } from '@/lib/queries';
@@ -39,10 +41,12 @@ const strip = (x: OnlineClass): OnlineClassInput => ({
   attendance_points: x.attendance_points,
 });
 
-const covers = (x: { church_id: string; service_id: string | null; class_id: string | null }, f: OnlineClassInput) =>
+// an exam / event fits the form when it covers EVERY chosen class
+// (class-less = covers all; a one-class item only fits when that is the only class chosen)
+const covers = (x: { church_id: string; service_id: string | null; class_id: string | null }, f: OnlineClassInput, classIds: readonly string[]) =>
   x.church_id === f.church_id
   && (x.service_id === null || x.service_id === f.service_id)
-  && (x.class_id === null || x.class_id === f.class_id);
+  && (x.class_id === null || (classIds.length === 1 && x.class_id === classIds[0]));
 
 export default function ClassFormModal({
   cls, churches, services, classes, onClose, onSaved,
@@ -61,6 +65,8 @@ export default function ClassFormModal({
     cls ? strip(cls) : defaultClassInput({ church_id: defaultChurch, service_id: profile?.service_id ?? null, class_id: profile?.class_id ?? null })
   );
   const set = <K extends keyof OnlineClassInput>(k: K, v: OnlineClassInput[K]) => setForm((f) => ({ ...f, [k]: v }));
+  // chosen classes ([] = كل الفصول); one online class is saved per class
+  const [classIds, setClassIds] = useState<string[]>(classSel(cls ? cls.class_id : profile?.class_id));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -87,8 +93,8 @@ export default function ClassFormModal({
     () => classes.filter((c) => c.church_id === form.church_id && !!form.service_id && c.service_id === form.service_id),
     [classes, form.church_id, form.service_id]
   );
-  const visibleExams = useMemo(() => exams.filter((x) => covers(x, form)), [exams, form]);
-  const visibleEvents = useMemo(() => events.filter((e) => covers(e, form)), [events, form]);
+  const visibleExams = useMemo(() => exams.filter((x) => covers(x, form, classIds)), [exams, form, classIds]);
+  const visibleEvents = useMemo(() => events.filter((e) => covers(e, form, classIds)), [events, form, classIds]);
 
   const num = (v: string, min: number, max: number, fallback: number) => {
     const n = Number(v);
@@ -126,13 +132,15 @@ export default function ClassFormModal({
         description: form.description?.trim() || null,
         stream_url: form.stream_url?.trim() || null,
         service_id: form.service_id || null,
-        class_id: form.service_id ? (form.class_id || null) : null,
         exam_id: form.exam_id || null,
         event_id: form.event_id || null,
       };
+      const targets = form.service_id ? classTargets(classIds) : [null];
       const saved = cls
-        ? await updateOnlineClass(supabase, cls.id, payload, user?.id)
-        : await createOnlineClass(supabase, payload, user?.id);
+        ? await updateOnlineClass(supabase, cls.id, { ...payload, class_id: targets[0] }, user?.id)
+        : await createOnlineClass(supabase, { ...payload, class_id: targets[0] }, user?.id);
+      // extra classes → copies of the same online class
+      for (const cid of targets.slice(1)) await createOnlineClass(supabase, { ...payload, class_id: cid }, user?.id);
       onSaved(saved);
     } catch (err) {
       setError(onlineErrorMessage(err, 'تعذر الحفظ'));
@@ -166,20 +174,17 @@ export default function ClassFormModal({
             <p className="mb-1 text-xs font-extrabold text-slate-600">لمن هذا الفصل؟ (كنيسة ← خدمة ← فصل / مرحلة عمرية)</p>
             <div className="grid grid-cols-3 gap-2">
               <select id="oc-church" className="input-field appearance-none !px-2 text-xs font-bold" value={form.church_id} disabled={churchLocked}
-                onChange={(e) => setForm((f) => ({ ...f, church_id: e.target.value, service_id: null, class_id: null, exam_id: null, event_id: null }))}>
+                onChange={(e) => { setClassIds([]); setForm((f) => ({ ...f, church_id: e.target.value, service_id: null, class_id: null, exam_id: null, event_id: null })); }}>
                 <option value="">الكنيسة…</option>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select id="oc-service" className="input-field appearance-none !px-2 text-xs font-bold" value={form.service_id ?? ''} disabled={serviceLocked || !form.church_id}
-                onChange={(e) => setForm((f) => ({ ...f, service_id: e.target.value || null, class_id: null, exam_id: null, event_id: null }))}>
+                onChange={(e) => { setClassIds([]); setForm((f) => ({ ...f, service_id: e.target.value || null, class_id: null, exam_id: null, event_id: null })); }}>
                 <option value="">كل الخدمات</option>
                 {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select id="oc-class" className="input-field appearance-none !px-2 text-xs font-bold" value={form.class_id ?? ''} disabled={classLocked || !form.service_id}
-                onChange={(e) => setForm((f) => ({ ...f, class_id: e.target.value || null, exam_id: null, event_id: null }))}>
-                <option value="">كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="oc-class" value={classIds} disabled={classLocked || !form.service_id} options={visibleClasses}
+                onChange={(ids) => { setClassIds(ids); setForm((f) => ({ ...f, exam_id: null, event_id: null })); }} />
             </div>
           </div>
 

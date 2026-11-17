@@ -13,6 +13,8 @@ import { createClient } from '@/lib/supabase/client';
 import { uploadPhoto } from '@/lib/upload';
 import { useAuth } from '@/lib/auth-context';
 import { saveStoreShop, storeErrorMessage, type StoreShopWithTargets, type ShopTargetInput } from '@/lib/store';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { ShopThumb, targetLabel } from '@/components/store/StoreBits';
 import { compressImage } from '@/components/store/ItemFormModal';
 import type { Church, Service, ClassRoom } from '@/lib/types';
@@ -50,7 +52,7 @@ export default function ShopFormModal({
   // ---- target picker row (church → service → class) ----
   const [tChurch, setTChurch] = useState(defaultChurch || (isOwner ? ALL : ''));
   const [tService, setTService] = useState(profile?.service_id && profile.role !== 'owner' && profile.role !== 'church_manager' ? profile.service_id : ALL);
-  const [tClass, setTClass] = useState(profile?.class_id && profile.role === 'class_servant' ? profile.class_id : ALL);
+  const [tClass, setTClass] = useState<string[]>(classSel(profile?.class_id && profile.role === 'class_servant' ? profile.class_id : null)); // [] = كل الفصول
   const churchLocked = !!profile && profile.role !== 'owner';
   const serviceLocked = !!profile && !!profile.service_id && profile.role !== 'owner' && profile.role !== 'church_manager';
   const classLocked = !!profile && !!profile.class_id && profile.role === 'class_servant';
@@ -64,11 +66,13 @@ export default function ShopFormModal({
   const addTarget = () => {
     setError('');
     if (!tChurch) return setError('اختر الكنيسة');
-    const t: ShopTargetInput = tChurch === ALL
-      ? { church_id: null, service_id: null, class_id: null }
-      : { church_id: tChurch, service_id: tService === ALL ? null : tService, class_id: tService === ALL || tClass === ALL ? null : tClass };
-    if (targets.some((x) => keyOf(x) === keyOf(t))) return setError('هذا المكان مضاف بالفعل');
-    setTargets((l) => [...l, t]);
+    // one place per chosen class (none chosen = the whole service / church)
+    const news: ShopTargetInput[] = tChurch === ALL
+      ? [{ church_id: null, service_id: null, class_id: null }]
+      : (tService === ALL ? [null] : classTargets(tClass)).map((cid) => ({ church_id: tChurch, service_id: tService === ALL ? null : tService, class_id: cid }));
+    const fresh = news.filter((t) => !targets.some((x) => keyOf(x) === keyOf(t)));
+    if (fresh.length === 0) return setError('هذا المكان مضاف بالفعل');
+    setTargets((l) => [...l, ...fresh]);
   };
   const removeTarget = (k: string) => setTargets((l) => l.filter((x) => keyOf(x) !== k));
 
@@ -152,21 +156,18 @@ export default function ShopFormModal({
             <p className="mb-2 flex items-center gap-1 text-xs font-extrabold text-orange-800"><MapPin className="h-4 w-4" /> مرتبط بـ (كنيسة ← خدمة ← فصل) — يمكن إضافة أكثر من مكان</p>
             <div className="grid grid-cols-3 gap-2">
               <select id="shop-t-church" className={`input-field !px-2 text-xs font-bold ${churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={tChurch} onChange={(e) => { setTChurch(e.target.value); setTService(ALL); setTClass(ALL); }}>
+                value={tChurch} onChange={(e) => { setTChurch(e.target.value); setTService(ALL); setTClass([]); }}>
                 {isOwner && <option value={ALL}>الكل — كل الكنائس</option>}
                 {!isOwner && !tChurch && <option value="">الكنيسة</option>}
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select id="shop-t-service" className={`input-field !px-2 text-xs font-bold ${serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={tService} disabled={tChurch === ALL || !tChurch} onChange={(e) => { setTService(e.target.value); setTClass(ALL); }}>
+                value={tService} disabled={tChurch === ALL || !tChurch} onChange={(e) => { setTService(e.target.value); setTClass([]); }}>
                 <option value={ALL}>كل الخدمات</option>
                 {tServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select id="shop-t-class" className={`input-field !px-2 text-xs font-bold ${classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-                value={tClass} disabled={tService === ALL} onChange={(e) => setTClass(e.target.value)}>
-                <option value={ALL}>كل الفصول</option>
-                {tClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="shop-t-class" className={classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}
+                value={tClass} disabled={tService === ALL} onChange={setTClass} options={tClasses} />
             </div>
             <button id="shop-add-target" type="button" onClick={addTarget} className="mt-2 flex w-full items-center justify-center gap-1 rounded-xl border border-orange-300 bg-white py-2 text-xs font-extrabold text-orange-700 hover:bg-orange-50">
               <Plus className="h-4 w-4" /> إضافة هذا المكان

@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { cachedLookup } from '@/lib/queries';
 import { useDebouncedRealtime } from '@/lib/realtime';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import type { CardPrintProfile, CardPrintSettings } from '@/lib/card-types';
 import { normalizePrint, printSettingsEqual, describePrintSettings } from '@/lib/card-types';
@@ -270,7 +272,7 @@ function SaveProfileModal({
     init?.church_id ?? (isOwner ? ALL : churches.length === 1 ? churches[0].id : '')
   );
   const [serviceId, setServiceId] = useState<string>(init?.church_id ? (init.service_id ?? ALL) : ALL);
-  const [classId, setClassId] = useState<string>(init?.service_id ? (init.class_id ?? ALL) : ALL);
+  const [classIds, setClassIds] = useState<string[]>(init?.service_id ? classSel(init.class_id) : []); // [] = كل الفصول
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -286,15 +288,26 @@ function SaveProfileModal({
     if (!n) return setError('اكتب اسم الملف');
     if (!churchId) return setError('اختر النطاق');
     setSaving(true);
-    const row = {
+    const noClass = churchId === ALL || serviceId === ALL;
+    // one profile per chosen class; editing keeps the existing row on the first class
+    const targets = noClass ? [null] : classTargets(classIds);
+    const rowFor = (cid: string | null) => ({
       church_id: churchId === ALL ? null : churchId,
       service_id: churchId === ALL || serviceId === ALL ? null : serviceId,
-      class_id: churchId === ALL || serviceId === ALL || classId === ALL ? null : classId,
+      class_id: cid,
       name: n,
-    };
-    const { error: err } = mode === 'rename' && existing
-      ? await supabase.from('card_print_profiles').update({ ...row, edited_by: profile?.id }).eq('id', existing.id)
-      : await supabase.from('card_print_profiles').insert({ ...row, settings, created_by: profile?.id });
+    });
+    let err: { message: string } | null = null;
+    if (mode === 'rename' && existing) {
+      ({ error: err } = await supabase.from('card_print_profiles').update({ ...rowFor(targets[0]), edited_by: profile?.id }).eq('id', existing.id));
+      if (!err && targets.length > 1) {
+        ({ error: err } = await supabase.from('card_print_profiles').insert(
+          targets.slice(1).map((cid) => ({ ...rowFor(cid), settings: existing.settings, created_by: profile?.id }))));
+      }
+    } else {
+      ({ error: err } = await supabase.from('card_print_profiles').insert(
+        targets.map((cid) => ({ ...rowFor(cid), settings, created_by: profile?.id }))));
+    }
     setSaving(false);
     if (err) {
       setError(/row-level security|permission/i.test(err.message)
@@ -340,7 +353,7 @@ function SaveProfileModal({
             <select
               className="input-field"
               value={churchId}
-              onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }}
+              onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassIds([]); }}
               required
             >
               <option value="">اختر النطاق</option>
@@ -354,7 +367,7 @@ function SaveProfileModal({
               <select
                 className="input-field"
                 value={serviceId}
-                onChange={(e) => { setServiceId(e.target.value); setClassId(ALL); }}
+                onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
               >
                 <option value={ALL}>كل الخدمات</option>
                 {filteredServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -363,11 +376,8 @@ function SaveProfileModal({
           )}
           {churchId && churchId !== ALL && serviceId !== ALL && (
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-500">الفصل</label>
-              <select className="input-field" value={classId} onChange={(e) => setClassId(e.target.value)}>
-                <option value={ALL}>كل الفصول</option>
-                {filteredClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+              <MultiClassSelect id="print-profile-classes" value={classIds} onChange={setClassIds} options={filteredClasses} />
             </div>
           )}
           <p className="text-[11px] font-bold text-slate-400">

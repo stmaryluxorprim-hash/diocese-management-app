@@ -6,6 +6,8 @@ import {
   Award, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Star, Eye, Lock,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
@@ -209,7 +211,7 @@ function CauseModal({
   const [description, setDescription] = useState(cause?.description ?? '');
   const [churchId, setChurchId] = useState(cause?.church_id ?? '');
   const [serviceId, setServiceId] = useState(cause ? (cause.service_id ?? ALL) : '');
-  const [classId, setClassId] = useState(cause ? (cause.class_id ?? ALL) : '');
+  const [classIds, setClassIds] = useState<string[]>(classSel(cause?.class_id)); // [] = كل الفصول
   const [points, setPoints] = useState(String(cause?.points ?? 1));
   const [pointsMode, setPointsMode] = useState<PointsMode>(cause?.points_mode ?? 'fixed');
   const [isDefault, setIsDefault] = useState<boolean>(cause?.is_default ?? false);
@@ -226,14 +228,12 @@ function CauseModal({
     setError('');
     if (!churchId) return setError('اختر الكنيسة');
     if (!serviceId) return setError('اختر الخدمة أو «كل الخدمات»');
-    if (serviceId !== ALL && !classId) return setError('اختر الفصل أو «كل الفصول»');
     const pts = Math.max(0, Math.floor(Number(points) || 0));
     setSaving(true);
 
     const base = {
       church_id: churchId,
       service_id: serviceId === ALL ? null : serviceId,
-      class_id: serviceId === ALL || classId === ALL ? null : classId,
       name: name.trim(),
       description: description.trim() || null,
       points: pts,
@@ -244,9 +244,18 @@ function CauseModal({
     // One default PER SCOPE (0048): the DB trigger switches off the other
     // default of the SAME church / service / class; defaults of other levels
     // are untouched (class default beats service default beats church default).
-    const { error: err } = mode === 'add'
-      ? await supabase.from('causes').insert({ ...base, created_by: profile?.id })
-      : await supabase.from('causes').update({ ...base, edited_by: profile?.id }).eq('id', cause!.id);
+    // one record per chosen class (none chosen / «كل الفصول» = one record with no class).
+    // Editing updates the existing record to the first class, extra classes become new copies.
+    const targets = serviceId === ALL ? [null] : classTargets(classIds);
+    let err: { message: string } | null = null;
+    if (mode === 'add') {
+      ({ error: err } = await supabase.from('causes').insert(targets.map((cid) => ({ ...base, class_id: cid, created_by: profile?.id }))));
+    } else {
+      ({ error: err } = await supabase.from('causes').update({ ...base, class_id: targets[0], edited_by: profile?.id }).eq('id', cause!.id));
+      if (!err && targets.length > 1) {
+        ({ error: err } = await supabase.from('causes').insert(targets.slice(1).map((cid) => ({ ...base, class_id: cid, created_by: profile?.id }))));
+      }
+    }
 
     if (err) {
       setError('تعذر الحفظ، تأكد من الصلاحيات');
@@ -271,7 +280,7 @@ function CauseModal({
             <select
               className="input-field"
               value={churchId}
-              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}
+              onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}
               required
             >
               <option value="">اختر الكنيسة</option>
@@ -285,7 +294,7 @@ function CauseModal({
             <select
               className="input-field"
               value={serviceId}
-              onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}
+              onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
               required
             >
               <option value="">اختر الخدمة</option>
@@ -298,18 +307,14 @@ function CauseModal({
           {serviceId && serviceId !== ALL && (
             <div>
               <label className="mb-1 block text-xs font-bold text-slate-500">الفصل *</label>
-              <select
-                className="input-field"
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-                required
-              >
-                <option value="">اختر الفصل</option>
-                <option value={ALL}>✳ كل الفصول</option>
-                {filteredClasses.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              <MultiClassSelect
+                id="form-class"
+                value={classIds}
+                onChange={setClassIds}
+                options={filteredClasses}
+                allLabel="✳ كل الفصول"
+                className="!py-2.5 !text-sm"
+              />
             </div>
           )}
           <input className="input-field" placeholder="اسم السبب * (مثال: حفظ آية)" value={name}
@@ -367,7 +372,7 @@ function CauseModal({
               {!canSetDefault && <Lock className="h-3.5 w-3.5" />}
               {serviceId === ALL || !serviceId
                 ? 'جعله السبب الافتراضي للكنيسة'
-                : classId === ALL || !classId
+                : classIds.length !== 1
                   ? 'جعله السبب الافتراضي للخدمة'
                   : 'جعله السبب الافتراضي للفصل'}
             </span>

@@ -54,7 +54,8 @@ export interface RuleParams {
   mode?: 'all' | 'any';
   church_id?: string;
   service_id?: string;
-  class_id?: string;
+  class_id?: string;      // legacy single class (still evaluated server-side)
+  class_ids?: string[];   // enrolled_in: any of these classes ([] / undefined = all)
   field?: 'phone' | 'address' | 'notes' | 'image_url' | 'birthdate' | 'name' | 'national_id';
   exam_id?: string;
   achievement_id?: string;
@@ -220,10 +221,12 @@ export function describeRule(rule: Pick<AccessRule, 'kind' | 'params'>, lk: Rule
     case 'gender': return p.value === 'female' ? 'أنثى' : 'ذكر';
     case 'age': return `العمر ${cmpText(p, 'سنة')}`;
     case 'enrolled_in': {
+      const cids = p.class_ids?.length ? p.class_ids : p.class_id ? [p.class_id] : [];
+      const classNames = cids.length ? cids.map((id) => nm(lk.classes, id)).filter(Boolean).join('، ') : 'كل الفصول';
       const parts = [
         p.church_id ? nm(lk.churches, p.church_id) : 'أي كنيسة',
         p.service_id ? nm(lk.services, p.service_id) : 'كل الخدمات',
-        p.class_id ? nm(lk.classes, p.class_id) : 'كل الفصول',
+        classNames,
       ];
       return `مسجّل في ${parts.join(' ← ')}`;
     }
