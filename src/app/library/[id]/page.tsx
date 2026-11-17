@@ -20,6 +20,7 @@ import {
   deleteBook, deleteLecture, libraryErrorMessage, matches, audienceLabel,
   type LibraryBook, type LibraryLecture, type LectureKind,
 } from '@/lib/library';
+import { collapseGroups, type Grouped } from '@/lib/class-groups';
 
 type Tab = 'books' | 'lectures';
 type KindFilter = 'all' | LectureKind;
@@ -32,32 +33,35 @@ export default function SubjectPage() {
   const [q, setQ] = useState('');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [subjectForm, setSubjectForm] = useState(false);
-  const [bookForm, setBookForm] = useState<{ open: boolean; item: LibraryBook | null }>({ open: false, item: null });
-  const [lectureForm, setLectureForm] = useState<{ open: boolean; item: LibraryLecture | null }>({ open: false, item: null });
+  const [bookForm, setBookForm] = useState<{ open: boolean; item: Grouped<LibraryBook> | null }>({ open: false, item: null });
+  const [lectureForm, setLectureForm] = useState<{ open: boolean; item: Grouped<LibraryLecture> | null }>({ open: false, item: null });
   const [playing, setPlaying] = useState<LibraryLecture | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const subject = lib.subjects.find((s) => s.id === id) ?? null;
-  const books = useMemo(() => lib.books.filter((b) => b.subject_id === id && matches(q, b.title, b.author, b.description)), [lib.books, id, q]);
+  // rows sharing a group_id are ONE book / lecture covering several classes
+  const booksAll = useMemo(() => collapseGroups(lib.books), [lib.books]);
+  const lecturesAll = useMemo(() => collapseGroups(lib.lectures), [lib.lectures]);
+  const books = useMemo(() => booksAll.filter((b) => b.subject_id === id && matches(q, b.title, b.author, b.description)), [booksAll, id, q]);
   const lectures = useMemo(
-    () => lib.lectures.filter((l) => l.subject_id === id && (kindFilter === 'all' || l.kind === kindFilter) && matches(q, l.title, l.speaker, l.description)),
-    [lib.lectures, id, q, kindFilter]
+    () => lecturesAll.filter((l) => l.subject_id === id && (kindFilter === 'all' || l.kind === kindFilter) && matches(q, l.title, l.speaker, l.description)),
+    [lecturesAll, id, q, kindFilter]
   );
-  const totalBooks = lib.books.filter((b) => b.subject_id === id).length;
-  const totalLectures = lib.lectures.filter((l) => l.subject_id === id).length;
+  const totalBooks = booksAll.filter((b) => b.subject_id === id).length;
+  const totalLectures = lecturesAll.filter((l) => l.subject_id === id).length;
   const manage = lib.perms.manage;
 
-  const removeBook = async (b: LibraryBook) => {
+  const removeBook = async (b: Grouped<LibraryBook>) => {
     if (!confirm(`حذف الكتاب «${b.title}»؟`)) return;
     setBusy(b.id);
-    try { await deleteBook(supabase, b.id); lib.removeBook(b.id); lib.flash('تم حذف الكتاب'); }
+    try { await Promise.all(b.group_rows.map((r) => deleteBook(supabase, r.id))); b.group_rows.forEach((r) => lib.removeBook(r.id)); lib.flash('تم حذف الكتاب'); }
     catch (e) { lib.flash(libraryErrorMessage(e, 'تعذر الحذف')); }
     finally { setBusy(null); }
   };
-  const removeLecture = async (l: LibraryLecture) => {
+  const removeLecture = async (l: Grouped<LibraryLecture>) => {
     if (!confirm(`حذف المحاضرة «${l.title}»؟`)) return;
     setBusy(l.id);
-    try { await deleteLecture(supabase, l.id); lib.removeLecture(l.id); lib.flash('تم حذف المحاضرة'); }
+    try { await Promise.all(l.group_rows.map((r) => deleteLecture(supabase, r.id))); l.group_rows.forEach((r) => lib.removeLecture(r.id)); lib.flash('تم حذف المحاضرة'); }
     catch (e) { lib.flash(libraryErrorMessage(e, 'تعذر الحذف')); }
     finally { setBusy(null); }
   };
@@ -191,11 +195,11 @@ export default function SubjectPage() {
       )}
       {bookForm.open && (
         <BookFormModal item={bookForm.item} subjectId={subject.id} subjects={lib.subjects} lookups={lib.lookups} onClose={() => setBookForm({ open: false, item: null })}
-          onSaved={(b) => { lib.upsertBook(b); setBookForm({ open: false, item: null }); lib.flash(bookForm.item ? 'تم حفظ التعديلات' : 'تمت إضافة الكتاب'); }} />
+          onSaved={() => { lib.reload(); setBookForm({ open: false, item: null }); lib.flash(bookForm.item ? 'تم حفظ التعديلات' : 'تمت إضافة الكتاب'); }} />
       )}
       {lectureForm.open && (
         <LectureFormModal item={lectureForm.item} subjectId={subject.id} subjects={lib.subjects} lookups={lib.lookups} onClose={() => setLectureForm({ open: false, item: null })}
-          onSaved={(l) => { lib.upsertLecture(l); setLectureForm({ open: false, item: null }); lib.flash(lectureForm.item ? 'تم حفظ التعديلات' : 'تمت إضافة المحاضرة'); }} />
+          onSaved={() => { lib.reload(); setLectureForm({ open: false, item: null }); lib.flash(lectureForm.item ? 'تم حفظ التعديلات' : 'تمت إضافة المحاضرة'); }} />
       )}
       {playing && <MediaPlayerModal title={playing.title} speaker={playing.speaker} kind={playing.kind} url={playing.media_url} onClose={() => setPlaying(null)} />}
       <Toast msg={lib.toast} />

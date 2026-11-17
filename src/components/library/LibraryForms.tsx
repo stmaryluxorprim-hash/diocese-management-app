@@ -11,9 +11,10 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { X, Save, Loader2, Library, BookOpen, Video, Mic, Link as LinkIcon, Globe, Users, Layers, School, Image as ImageIcon } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { saveClassGroup, type Grouped } from '@/lib/class-groups';
 import { useAuth } from '@/lib/auth-context';
 import {
-  saveSubject, saveBook, saveLecture, libraryErrorMessage, isValidUrl, autoThumbnail, AUDIENCE_LABELS, detectProvider, PROVIDER_LABELS,
+  saveSubject, saveBook, saveLecture, deleteBook, deleteLecture, libraryErrorMessage, isValidUrl, autoThumbnail, AUDIENCE_LABELS, detectProvider, PROVIDER_LABELS,
   type Audience, type AudienceFields, type LibrarySubject, type LibraryBook, type LibraryLecture, type LectureKind,
 } from '@/lib/library';
 import { Cover } from '@/components/library/LibraryBits';
@@ -75,13 +76,13 @@ function UrlField({ id, label, value, onChange, required, placeholder, hint }: {
 }
 
 // ---------- audience picker ----------
-export function useAudienceState(init?: AudienceFields | null) {
+export function useAudienceState(init?: (AudienceFields & { class_ids?: string[] }) | null) {
   const { profile } = useAuth();
   const isOwner = profile?.role === 'owner';
   const [audience, setAudience] = useState<Audience>(init?.audience ?? 'everyone');
   const [churchId, setChurchId] = useState(init?.church_id ?? profile?.church_id ?? '');
   const [serviceId, setServiceId] = useState(init?.service_id ?? profile?.service_id ?? '');
-  const [classIds, setClassIds] = useState<string[]>(classSel(init?.class_id ?? profile?.class_id));
+  const [classIds, setClassIds] = useState<string[]>(init ? (init.class_ids ?? classSel(init.class_id)) : classSel(profile?.class_id));
   const churchLocked = !isOwner && !!profile?.church_id;
   const serviceLocked = !isOwner && profile?.role !== 'church_manager' && !!profile?.service_id;
   const classLocked = profile?.role === 'class_servant' && !!profile?.class_id;
@@ -201,7 +202,7 @@ export function SubjectFormModal({ item, lookups, onClose, onSaved }: {
 
 // ---------- BOOK ----------
 export function BookFormModal({ item, subjectId, subjects, lookups, onClose, onSaved }: {
-  item: LibraryBook | null; subjectId: string; subjects: LibrarySubject[]; lookups: Lookups; onClose: () => void; onSaved: (b: LibraryBook) => void;
+  item: Grouped<LibraryBook> | null; subjectId: string; subjects: LibrarySubject[]; lookups: Lookups; onClose: () => void; onSaved: (b: LibraryBook) => void;
 }) {
   const [supabase] = useState(() => createClient());
   const [subject, setSubject] = useState(item?.subject_id ?? subjectId);
@@ -224,14 +225,21 @@ export function BookFormModal({ item, subjectId, subjects, lookups, onClose, onS
     const v = a.validate(); if (v) return setError(v);
     setSaving(true);
     try {
-      const [first, ...rest] = a.fieldsAll();
+      const all = a.fieldsAll();
+      const fieldsFor = (cid: string | null): AudienceFields => ({ ...all[0], class_id: cid });
       const body = {
         subject_id: subject, title: title.trim(), author: author.trim() || null, description: description.trim() || null,
         cover_url: coverUrl.trim() || null, pdf_url: pdfUrl.trim(),
       };
-      const saved = await saveBook(supabase, item?.id ?? null, { ...body, ...first });
-      for (const f of rest) await saveBook(supabase, null, { ...body, ...f });
-      onSaved(saved);
+      // ONE book for all chosen classes: one row per class tied by group_id
+      const saved = await saveClassGroup<LibraryBook>({
+        existing: item?.group_rows,
+        targets: all.map((f) => f.class_id),
+        create: (cid, gid) => saveBook(supabase, null, { ...body, ...fieldsFor(cid) }, gid),
+        update: (row, cid, gid) => saveBook(supabase, row.id, { ...body, ...fieldsFor(cid) }, gid),
+        remove: (row) => deleteBook(supabase, row.id),
+      });
+      onSaved(saved[0]);
     } catch (err) { setError(libraryErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات')); setSaving(false); }
   };
 
@@ -262,7 +270,7 @@ export function BookFormModal({ item, subjectId, subjects, lookups, onClose, onS
 
 // ---------- LECTURE ----------
 export function LectureFormModal({ item, subjectId, subjects, lookups, onClose, onSaved }: {
-  item: LibraryLecture | null; subjectId: string; subjects: LibrarySubject[]; lookups: Lookups; onClose: () => void; onSaved: (l: LibraryLecture) => void;
+  item: Grouped<LibraryLecture> | null; subjectId: string; subjects: LibrarySubject[]; lookups: Lookups; onClose: () => void; onSaved: (l: LibraryLecture) => void;
 }) {
   const [supabase] = useState(() => createClient());
   const [subject, setSubject] = useState(item?.subject_id ?? subjectId);
@@ -288,14 +296,21 @@ export function LectureFormModal({ item, subjectId, subjects, lookups, onClose, 
     const v = a.validate(); if (v) return setError(v);
     setSaving(true);
     try {
-      const [first, ...rest] = a.fieldsAll();
+      const all = a.fieldsAll();
+      const fieldsFor = (cid: string | null): AudienceFields => ({ ...all[0], class_id: cid });
       const body = {
         subject_id: subject, title: title.trim(), speaker: speaker.trim() || null, description: description.trim() || null,
         lecture_date: date || null, kind, media_url: mediaUrl.trim(), thumbnail_url: thumbUrl.trim() || null,
       };
-      const saved = await saveLecture(supabase, item?.id ?? null, { ...body, ...first });
-      for (const f of rest) await saveLecture(supabase, null, { ...body, ...f });
-      onSaved(saved);
+      // ONE lecture for all chosen classes: one row per class tied by group_id
+      const saved = await saveClassGroup<LibraryLecture>({
+        existing: item?.group_rows,
+        targets: all.map((f) => f.class_id),
+        create: (cid, gid) => saveLecture(supabase, null, { ...body, ...fieldsFor(cid) }, gid),
+        update: (row, cid, gid) => saveLecture(supabase, row.id, { ...body, ...fieldsFor(cid) }, gid),
+        remove: (row) => deleteLecture(supabase, row.id),
+      });
+      onSaved(saved[0]);
     } catch (err) { setError(libraryErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات')); setSaving(false); }
   };
 

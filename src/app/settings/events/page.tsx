@@ -6,8 +6,9 @@ import {
   CalendarDays, Plus, ArrowRight, Loader2, X, Pencil, Save, Trash2, Star, Clock, Eye, Lock,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
+import { collapseGroups, deleteClassGroup, saveClassGroup, type Grouped } from '@/lib/class-groups';
 import { MultiClassSelect } from '@/components/MultiClassSelect';
-import { classSel, classTargets } from '@/lib/class-multi';
+import { classTargets } from '@/lib/class-multi';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
@@ -34,7 +35,7 @@ export default function EventsPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [churches, setChurches] = useState<Church[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [editing, setEditing] = useState<AppEvent | null>(null);
+  const [editing, setEditing] = useState<Grouped<AppEvent> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -61,16 +62,19 @@ export default function EventsPage() {
 
   // church → service → class tree + filter (a church-wide event sits under its church)
   const lookups = useMemo(() => toLookups(churches, services, classes), [churches, services, classes]);
+  const grouped = useMemo(() => collapseGroups(events), [events]);
   const { scope, setScope, search, setSearch, visible } = useScopeGroups(
-    events,
+    grouped,
     (ev, q) => ev.name.toLowerCase().includes(q) || (ev.description ?? '').toLowerCase().includes(q),
   );
-  const scopeBadge = (ev: AppEvent) =>
-    ev.service_id === null ? 'كل الخدمات' : ev.class_id === null ? 'كل الفصول' : null;
+  const className = (id: string) => classes.find((c) => c.id === id)?.name ?? '—';
+  const scopeBadge = (ev: Grouped<AppEvent>) =>
+    ev.service_id === null ? 'كل الخدمات' : ev.class_id === null ? 'كل الفصول'
+      : ev.class_ids.length > 1 ? ev.class_ids.map(className).join('، ') : null;
 
   const remove = async (ev: AppEvent) => {
     if (!confirm(`حذف المناسبة «${ev.name}»؟ سجلات الحضور المرتبطة بها ستبقى بدون مناسبة.`)) return;
-    await supabase.from('events').delete().eq('id', ev.id);
+    await deleteClassGroup(supabase, 'events', ev);
     load();
   };
 
@@ -84,7 +88,7 @@ export default function EventsPage() {
           <h2 className="flex items-center gap-2 text-lg font-extrabold">
             <CalendarDays className="h-5 w-5 text-violet-600" />
             المناسبات
-            <span className="badge bg-violet-100 text-violet-700">{events.length}</span>
+            <span className="badge bg-violet-100 text-violet-700">{grouped.length}</span>
           </h2>
         </div>
         {canAdd && (
@@ -118,7 +122,7 @@ export default function EventsPage() {
           lookups={lookups}
           tone="violet"
           itemName={(ev) => ev.name}
-          emptyText={events.length === 0 ? 'لا توجد مناسبات بعد' : 'لا توجد مناسبات مطابقة'}
+          emptyText={grouped.length === 0 ? 'لا توجد مناسبات بعد' : 'لا توجد مناسبات مطابقة'}
           renderItem={(ev) => (
             <li key={ev.id} className="card flex items-start gap-3">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-50 ring-2 ring-violet-100">
@@ -201,7 +205,7 @@ function EventModal({
   mode, event, churches, services, classes, canSetDefault, onClose, onSaved,
 }: {
   mode: 'add' | 'edit';
-  event?: AppEvent;
+  event?: Grouped<AppEvent>;
   churches: Church[];
   services: Service[];
   classes: ClassRoom[];
@@ -216,7 +220,7 @@ function EventModal({
   const [description, setDescription] = useState(event?.description ?? '');
   const [churchId, setChurchId] = useState(event?.church_id ?? '');
   const [serviceId, setServiceId] = useState(event ? (event.service_id ?? ALL) : '');
-  const [classIds, setClassIds] = useState<string[]>(classSel(event?.class_id)); // [] = كل الفصول
+  const [classIds, setClassIds] = useState<string[]>(event ? event.class_ids : []); // [] = كل الفصول
   const [recurrence, setRecurrence] = useState<EventRecurrence>(event?.recurrence ?? 'once');
   const [eventDate, setEventDate] = useState(event?.event_date ?? '');
   const [weekdays, setWeekdays] = useState<number[]>(event?.weekdays ?? []);
@@ -265,18 +269,27 @@ function EventModal({
     // One default PER SCOPE (0048): the DB trigger switches off the other
     // default of the SAME church / service / class; defaults of other levels
     // are untouched (class default beats service default beats church default).
-    // one record per chosen class (none chosen / «كل الفصول» = one record with no class).
-    // Editing updates the existing record to the first class, extra classes become new copies.
+    // ONE event that covers the chosen classes (none chosen / «كل الفصول» = no class).
+    // Stored as one row per class tied by group_id; editing updates / adds / removes rows to match.
     const targets = serviceId === ALL ? [null] : classTargets(classIds);
     let err: { message: string } | null = null;
-    if (mode === 'add') {
-      ({ error: err } = await supabase.from('events').insert(targets.map((cid) => ({ ...base, class_id: cid, created_by: profile?.id }))));
-    } else {
-      ({ error: err } = await supabase.from('events').update({ ...base, class_id: targets[0], edited_by: profile?.id }).eq('id', event!.id));
-      if (!err && targets.length > 1) {
-        ({ error: err } = await supabase.from('events').insert(targets.slice(1).map((cid) => ({ ...base, class_id: cid, created_by: profile?.id }))));
-      }
-    }
+    try {
+      await saveClassGroup<AppEvent>({
+        existing: event?.group_rows,
+        targets,
+        create: async (cid, gid) => {
+          const { data, error } = await supabase.from('events').insert({ ...base, class_id: cid, group_id: gid, created_by: profile?.id }).select('*').single();
+          if (error) throw error;
+          return data as AppEvent;
+        },
+        update: async (row, cid, gid) => {
+          const { data, error } = await supabase.from('events').update({ ...base, class_id: cid, group_id: gid, edited_by: profile?.id }).eq('id', row.id).select('*').single();
+          if (error) throw error;
+          return data as AppEvent;
+        },
+        remove: async (row) => { const { error } = await supabase.from('events').delete().eq('id', row.id); if (error) throw error; },
+      });
+    } catch (e) { err = e as { message: string }; }
 
     if (err) {
       setError('تعذر الحفظ، تأكد من الصلاحيات');

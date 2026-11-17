@@ -364,6 +364,8 @@ export const POINTS_MODE_LABELS: Record<PointsMode, string> = {
 // Attendance is registered AGAINST an event and grants `points`.
 export interface AppEvent {
   id: string;
+  /** ties the per-class rows of ONE record that covers several classes (20261023120000) */
+  group_id?: string | null;
   church_id: string;
   service_id: string | null;
   class_id: string | null;
@@ -387,6 +389,8 @@ export interface AppEvent {
 // (same null = "all" scope semantics as events) with a bound points amount.
 export interface Cause {
   id: string;
+  /** ties the per-class rows of ONE record that covers several classes (20261023120000) */
+  group_id?: string | null;
   church_id: string;
   service_id: string | null;
   class_id: string | null;
@@ -469,6 +473,8 @@ export interface ContactLog {
 // `feedback_id` + `occurrence_on`.
 export interface CallFeedback {
   id: string;
+  /** ties the per-class rows of ONE record that covers several classes (20261023120000) */
+  group_id?: string | null;
   church_id: string;
   service_id: string | null;
   class_id: string | null;

@@ -129,6 +129,8 @@ export type AutomationRecipient = 'student' | 'class_servants';
 
 export interface NotificationAutomation {
   id: string;
+  /** rows sharing a group_id are ONE automation covering several classes */
+  group_id?: string | null;
   church_id: string | null;
   service_id: string | null;
   class_id: string | null;
@@ -332,7 +334,7 @@ export async function fetchAutomations(supabase: SupabaseClient): Promise<Notifi
 }
 
 export type AutomationInput = Pick<NotificationAutomation,
-  'church_id' | 'service_id' | 'class_id' | 'trigger_key' | 'recipient' | 'name' | 'title_template' | 'body_template' | 'image_url' | 'link_url' | 'is_active' | 'config'>;
+  'church_id' | 'service_id' | 'class_id' | 'trigger_key' | 'recipient' | 'name' | 'title_template' | 'body_template' | 'image_url' | 'link_url' | 'is_active' | 'config'> & { group_id?: string | null };
 
 export async function saveAutomation(supabase: SupabaseClient, input: AutomationInput, id?: string, userId?: string): Promise<NotificationAutomation> {
   if (id) {
@@ -345,13 +347,15 @@ export async function saveAutomation(supabase: SupabaseClient, input: Automation
   return data as NotificationAutomation;
 }
 
-export async function toggleAutomation(supabase: SupabaseClient, id: string, active: boolean): Promise<void> {
-  const { error } = await supabase.from('notification_automations').update({ is_active: active }).eq('id', id);
+export async function toggleAutomation(supabase: SupabaseClient, id: string, active: boolean, groupId?: string | null): Promise<void> {
+  const q = supabase.from('notification_automations').update({ is_active: active });
+  const { error } = groupId ? await q.eq('group_id', groupId) : await q.eq('id', id);
   if (error) throw error;
 }
 
-export async function deleteAutomation(supabase: SupabaseClient, id: string): Promise<void> {
-  const { error } = await supabase.from('notification_automations').delete().eq('id', id);
+export async function deleteAutomation(supabase: SupabaseClient, id: string, groupId?: string | null): Promise<void> {
+  const q = supabase.from('notification_automations').delete();
+  const { error } = groupId ? await q.eq('group_id', groupId) : await q.eq('id', id);
   if (error) throw error;
 }
 

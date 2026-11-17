@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { MultiClassSelect } from '@/components/MultiClassSelect';
-import { classSel, classTargets } from '@/lib/class-multi';
+import { classTargets } from '@/lib/class-multi';
+import { collapseGroups, deleteClassGroup, saveClassGroup, type Grouped } from '@/lib/class-groups';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
@@ -33,7 +34,7 @@ export default function CausesPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [churches, setChurches] = useState<Church[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [editing, setEditing] = useState<Cause | null>(null);
+  const [editing, setEditing] = useState<Grouped<Cause> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -60,16 +61,23 @@ export default function CausesPage() {
 
   // church → service → class tree + filter
   const lookups = useMemo(() => toLookups(churches, services, classes), [churches, services, classes]);
+  const grouped = useMemo(() => collapseGroups(causes), [causes]);
   const { scope, setScope, search, setSearch, visible } = useScopeGroups(
-    causes,
+    grouped,
     (ca, q) => ca.name.toLowerCase().includes(q) || (ca.description ?? '').toLowerCase().includes(q),
   );
-  const scopeBadge = (ca: Cause) =>
-    ca.service_id === null ? 'كل الخدمات' : ca.class_id === null ? 'كل الفصول' : null;
+  const scopeBadge = (ca: Grouped<Cause>) => {
+    if (ca.service_id === null) return 'كل الخدمات';
+    if (ca.class_ids.length === 0) return 'كل الفصول';
+    if (ca.class_ids.length > 1) {
+      return ca.class_ids.map((id) => classes.find((c) => c.id === id)?.name).filter(Boolean).join('، ');
+    }
+    return null;
+  };
 
-  const remove = async (ca: Cause) => {
+  const remove = async (ca: Grouped<Cause>) => {
     if (!confirm(`حذف السبب «${ca.name}»؟ سجلات النقاط المرتبطة به ستبقى بدون سبب.`)) return;
-    await supabase.from('causes').delete().eq('id', ca.id);
+    await deleteClassGroup(supabase, 'causes', ca);
     load();
   };
 
@@ -83,7 +91,7 @@ export default function CausesPage() {
           <h2 className="flex items-center gap-2 text-lg font-extrabold">
             <Award className="h-5 w-5 text-amber-600" />
             أسباب النقاط
-            <span className="badge bg-amber-100 text-amber-700">{causes.length}</span>
+            <span className="badge bg-amber-100 text-amber-700">{grouped.length}</span>
           </h2>
         </div>
         {canAdd && (
@@ -116,7 +124,7 @@ export default function CausesPage() {
           lookups={lookups}
           tone="amber"
           itemName={(ca) => ca.name}
-          emptyText={causes.length === 0 ? 'لا توجد أسباب بعد' : 'لا توجد أسباب مطابقة'}
+          emptyText={grouped.length === 0 ? 'لا توجد أسباب بعد' : 'لا توجد أسباب مطابقة'}
           renderItem={(ca) => (
             <li key={ca.id} className="card flex items-start gap-3">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-50 ring-2 ring-amber-100">
@@ -196,7 +204,7 @@ function CauseModal({
   mode, cause, churches, services, classes, canSetDefault, onClose, onSaved,
 }: {
   mode: 'add' | 'edit';
-  cause?: Cause;
+  cause?: Grouped<Cause>;
   churches: Church[];
   services: Service[];
   classes: ClassRoom[];
@@ -211,7 +219,7 @@ function CauseModal({
   const [description, setDescription] = useState(cause?.description ?? '');
   const [churchId, setChurchId] = useState(cause?.church_id ?? '');
   const [serviceId, setServiceId] = useState(cause ? (cause.service_id ?? ALL) : '');
-  const [classIds, setClassIds] = useState<string[]>(classSel(cause?.class_id)); // [] = كل الفصول
+  const [classIds, setClassIds] = useState<string[]>(cause ? cause.class_ids : []); // [] = كل الفصول
   const [points, setPoints] = useState(String(cause?.points ?? 1));
   const [pointsMode, setPointsMode] = useState<PointsMode>(cause?.points_mode ?? 'fixed');
   const [isDefault, setIsDefault] = useState<boolean>(cause?.is_default ?? false);
@@ -248,13 +256,27 @@ function CauseModal({
     // Editing updates the existing record to the first class, extra classes become new copies.
     const targets = serviceId === ALL ? [null] : classTargets(classIds);
     let err: { message: string } | null = null;
-    if (mode === 'add') {
-      ({ error: err } = await supabase.from('causes').insert(targets.map((cid) => ({ ...base, class_id: cid, created_by: profile?.id }))));
-    } else {
-      ({ error: err } = await supabase.from('causes').update({ ...base, class_id: targets[0], edited_by: profile?.id }).eq('id', cause!.id));
-      if (!err && targets.length > 1) {
-        ({ error: err } = await supabase.from('causes').insert(targets.slice(1).map((cid) => ({ ...base, class_id: cid, created_by: profile?.id }))));
-      }
+    try {
+      await saveClassGroup<Cause>({
+        existing: mode === 'edit' ? cause?.group_rows : undefined,
+        targets,
+        create: async (cid, gid) => {
+          const { data, error } = await supabase.from('causes').insert({ ...base, class_id: cid, group_id: gid, created_by: profile?.id }).select('*').single();
+          if (error) throw error;
+          return data as Cause;
+        },
+        update: async (row, cid, gid) => {
+          const { data, error } = await supabase.from('causes').update({ ...base, class_id: cid, group_id: gid, edited_by: profile?.id }).eq('id', row.id).select('*').single();
+          if (error) throw error;
+          return data as Cause;
+        },
+        remove: async (row) => {
+          const { error } = await supabase.from('causes').delete().eq('id', row.id);
+          if (error) throw error;
+        },
+      });
+    } catch (ex) {
+      err = ex as { message: string };
     }
 
     if (err) {

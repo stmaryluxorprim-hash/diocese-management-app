@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { MultiClassSelect } from '@/components/MultiClassSelect';
-import { classSel, classTargets, inClassesOrWide } from '@/lib/class-multi';
+import { classTargets, inClassesOrWide } from '@/lib/class-multi';
+import { collapseGroups, deleteClassGroup, saveClassGroup, updateClassGroup, type Grouped } from '@/lib/class-groups';
 import { useAuth } from '@/lib/auth-context';
 import { usePermissions } from '@/lib/permissions-context';
 import { createClient } from '@/lib/supabase/client';
@@ -44,7 +45,7 @@ export default function CallFeedbacksPage() {
   const [churches, setChurches] = useState<Church[]>([]);
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [editing, setEditing] = useState<CallFeedback | null>(null);
+  const [editing, setEditing] = useState<Grouped<CallFeedback> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -72,30 +73,37 @@ export default function CallFeedbacksPage() {
 
   // church → service → class tree + filter; the event (4th level) stays a badge on the card
   const lookups = useMemo(() => toLookups(churches, services, classes), [churches, services, classes]);
+  const grouped = useMemo(() => collapseGroups(feedbacks), [feedbacks]);
   const { scope, setScope, search, setSearch, visible } = useScopeGroups(
-    feedbacks,
+    grouped,
     (fb, q) => fb.name.toLowerCase().includes(q),
   );
-  const scopeBadge = (fb: CallFeedback) =>
-    fb.service_id === null ? 'كل الخدمات' : fb.class_id === null ? 'كل الفصول' : null;
+  const scopeBadge = (fb: Grouped<CallFeedback>) => {
+    if (fb.service_id === null) return 'كل الخدمات';
+    if (fb.class_ids.length === 0) return 'كل الفصول';
+    if (fb.class_ids.length > 1) {
+      return fb.class_ids.map((id) => classes.find((c) => c.id === id)?.name).filter(Boolean).join('، ');
+    }
+    return null;
+  };
   const eventLabel = (fb: CallFeedback) =>
     fb.event_id === null ? 'كل المناسبات' : (events.find((e) => e.id === fb.event_id)?.name ?? 'مناسبة محذوفة');
 
-  const remove = async (fb: CallFeedback) => {
+  const remove = async (fb: Grouped<CallFeedback>) => {
     if (!confirm(`حذف نتيجة الافتقاد «${fb.name}»؟ المكالمات المسجلة بها ستبقى بدون نتيجة.`)) return;
-    await supabase.from('call_feedbacks').delete().eq('id', fb.id);
+    await deleteClassGroup(supabase, 'call_feedbacks', fb);
     load();
   };
 
   // Reorder within the list (sort_order)
-  const move = async (fb: CallFeedback, dir: -1 | 1) => {
-    const idx = feedbacks.findIndex((f) => f.id === fb.id);
-    const other = feedbacks[idx + dir];
+  const move = async (fb: Grouped<CallFeedback>, dir: -1 | 1) => {
+    const idx = grouped.findIndex((f) => f.id === fb.id);
+    const other = grouped[idx + dir];
     if (!other) return;
     const a = idx, b = idx + dir;
     await Promise.all([
-      supabase.from('call_feedbacks').update({ sort_order: b }).eq('id', fb.id),
-      supabase.from('call_feedbacks').update({ sort_order: a }).eq('id', other.id),
+      updateClassGroup(supabase, 'call_feedbacks', fb, { sort_order: b }),
+      updateClassGroup(supabase, 'call_feedbacks', other, { sort_order: a }),
     ]);
     load();
   };
@@ -110,7 +118,7 @@ export default function CallFeedbacksPage() {
           <h2 className="flex items-center gap-2 text-lg font-extrabold">
             <PhoneCall className="h-5 w-5 text-teal-600" />
             نتائج الافتقاد
-            <span className="badge bg-teal-100 text-teal-700">{feedbacks.length}</span>
+            <span className="badge bg-teal-100 text-teal-700">{grouped.length}</span>
           </h2>
         </div>
         {canAdd && (
@@ -143,8 +151,8 @@ export default function CallFeedbacksPage() {
           lookups={lookups}
           tone="teal"
           itemName={null}
-          emptyText={feedbacks.length === 0 ? 'لا توجد نتائج اتصال بعد' : 'لا توجد نتائج مطابقة'}
-          renderItem={(fb) => { const i = feedbacks.findIndex((f) => f.id === fb.id); return (
+          emptyText={grouped.length === 0 ? 'لا توجد نتائج اتصال بعد' : 'لا توجد نتائج مطابقة'}
+          renderItem={(fb) => { const i = grouped.findIndex((f) => f.id === fb.id); return (
             <li key={fb.id} className="card flex items-start gap-3">
               <div
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl shadow-sm ring-2 ring-black/5"
@@ -200,7 +208,7 @@ export default function CallFeedbacksPage() {
                   </button>
                   <button
                     onClick={() => move(fb, 1)}
-                    disabled={i === feedbacks.length - 1}
+                    disabled={i === grouped.length - 1}
                     aria-label="تحريك لأسفل"
                     className="flex-1 rounded-xl bg-slate-50 p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-30"
                   >
@@ -219,7 +227,7 @@ export default function CallFeedbacksPage() {
       {showAdd && (
         <FeedbackModal
           mode="add"
-          nextOrder={feedbacks.length}
+          nextOrder={grouped.length}
           churches={churches}
           services={services}
           classes={classes}
@@ -232,7 +240,7 @@ export default function CallFeedbacksPage() {
         <FeedbackModal
           mode="edit"
           feedback={editing}
-          nextOrder={feedbacks.length}
+          nextOrder={grouped.length}
           churches={churches}
           services={services}
           classes={classes}
@@ -249,7 +257,7 @@ function FeedbackModal({
   mode, feedback, nextOrder, churches, services, classes, events, onClose, onSaved,
 }: {
   mode: 'add' | 'edit';
-  feedback?: CallFeedback;
+  feedback?: Grouped<CallFeedback>;
   nextOrder: number;
   churches: Church[];
   services: Service[];
@@ -263,7 +271,7 @@ function FeedbackModal({
   const [name, setName] = useState(feedback?.name ?? '');
   const [churchId, setChurchId] = useState(feedback?.church_id ?? (churches.length === 1 ? churches[0].id : ''));
   const [serviceId, setServiceId] = useState(feedback ? (feedback.service_id ?? ALL) : '');
-  const [classIds, setClassIds] = useState<string[]>(classSel(feedback?.class_id)); // [] = كل الفصول
+  const [classIds, setClassIds] = useState<string[]>(feedback ? feedback.class_ids : []); // [] = كل الفصول
   const [eventId, setEventId] = useState(feedback ? (feedback.event_id ?? ALL) : ALL);
   const [color, setColor] = useState(feedback?.color ?? CALL_FEEDBACK_COLORS[11]);
   const [icon, setIcon] = useState(feedback?.icon ?? 'phone');
@@ -311,15 +319,27 @@ function FeedbackModal({
     // Editing updates the existing record to the first class, the rest become new copies.
     const targets = serviceId === ALL ? [null] : classTargets(classIds);
     let err: { code?: string; message: string } | null = null;
-    if (mode === 'add') {
-      ({ error: err } = await supabase.from('call_feedbacks').insert(
-        targets.map((cid, i) => ({ ...base, class_id: cid, sort_order: nextOrder + i, created_by: profile?.id }))));
-    } else {
-      ({ error: err } = await supabase.from('call_feedbacks').update({ ...base, class_id: targets[0], edited_by: profile?.id }).eq('id', feedback!.id));
-      if (!err && targets.length > 1) {
-        ({ error: err } = await supabase.from('call_feedbacks').insert(
-          targets.slice(1).map((cid, i) => ({ ...base, class_id: cid, sort_order: nextOrder + i, created_by: profile?.id }))));
-      }
+    try {
+      await saveClassGroup<CallFeedback>({
+        existing: mode === 'edit' ? feedback?.group_rows : undefined,
+        targets,
+        create: async (cid, gid) => {
+          const { data, error } = await supabase.from('call_feedbacks').insert({ ...base, class_id: cid, group_id: gid, sort_order: nextOrder, created_by: profile?.id }).select('*').single();
+          if (error) throw error;
+          return data as CallFeedback;
+        },
+        update: async (row, cid, gid) => {
+          const { data, error } = await supabase.from('call_feedbacks').update({ ...base, class_id: cid, group_id: gid, edited_by: profile?.id }).eq('id', row.id).select('*').single();
+          if (error) throw error;
+          return data as CallFeedback;
+        },
+        remove: async (row) => {
+          const { error } = await supabase.from('call_feedbacks').delete().eq('id', row.id);
+          if (error) throw error;
+        },
+      });
+    } catch (ex) {
+      err = ex as { code?: string; message: string };
     }
 
     if (err) {

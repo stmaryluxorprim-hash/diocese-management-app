@@ -273,12 +273,13 @@ export function ScopeSelectors({
 
 /** «كنيسة ← خدمة ← فصل» label for an item / order scope */
 export function scopeLabel(
-  x: { church_id: string; service_id: string | null; class_id: string | null },
+  x: { church_id: string; service_id: string | null; class_id: string | null; class_ids?: string[] },
   churches: Church[], services: Service[], classes: ClassRoom[]
 ) {
   const church = churches.find((c) => c.id === x.church_id)?.name ?? '';
   if (x.service_id === null) return `${church} ← كل الخدمات`;
   const service = services.find((s) => s.id === x.service_id)?.name ?? '';
+  if (x.class_ids && x.class_ids.length > 1) return `${church} ← ${service} ← ${x.class_ids.map((id) => classes.find((c) => c.id === id)?.name ?? '').filter(Boolean).join('، ')}`;
   if (x.class_id === null) return `${church} ← ${service} ← كل الفصول`;
   const cls = classes.find((c) => c.id === x.class_id)?.name ?? '';
   return `${church} ← ${service} ← ${cls}`;

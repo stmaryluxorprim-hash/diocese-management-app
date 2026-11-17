@@ -20,6 +20,8 @@ export type AwardSource = 'manual' | 'attendance';
 
 export interface Achievement {
   id: string;
+  /** rows sharing a group_id are ONE achievement covering several classes */
+  group_id?: string | null;
   church_id: string;
   service_id: string | null;   // null = all services
   class_id: string | null;     // null = all classes
@@ -211,25 +213,28 @@ export async function fetchAchievements(
   return rows;
 }
 
-export type AchievementInput = Omit<Achievement, 'id' | 'created_at' | 'created_by' | 'edited_at' | 'edited_by' | 'sort_order'>;
+export type AchievementInput = Omit<Achievement, 'id' | 'group_id' | 'created_at' | 'created_by' | 'edited_at' | 'edited_by' | 'sort_order'>;
 
 export async function saveAchievement(
-  supabase: SupabaseClient, id: string | null, payload: AchievementInput, createdBy?: string
+  supabase: SupabaseClient, id: string | null, payload: AchievementInput, createdBy?: string, groupId?: string | null
 ): Promise<Achievement> {
+  const body = groupId === undefined ? payload : { ...payload, group_id: groupId };
   const res = id
-    ? await supabase.from('achievements').update(payload).eq('id', id).select('*').single()
-    : await supabase.from('achievements').insert({ ...payload, created_by: createdBy }).select('*').single();
+    ? await supabase.from('achievements').update(body).eq('id', id).select('*').single()
+    : await supabase.from('achievements').insert({ ...body, created_by: createdBy }).select('*').single();
   if (res.error) throw res.error;
   return res.data as Achievement;
 }
 
-export async function setAchievementActive(supabase: SupabaseClient, id: string, active: boolean): Promise<void> {
-  const { error } = await supabase.from('achievements').update({ is_active: active }).eq('id', id);
+export async function setAchievementActive(supabase: SupabaseClient, id: string, active: boolean, groupId?: string | null): Promise<void> {
+  const q = supabase.from('achievements').update({ is_active: active });
+  const { error } = groupId ? await q.eq('group_id', groupId) : await q.eq('id', id);
   if (error) throw error;
 }
 
-export async function deleteAchievement(supabase: SupabaseClient, id: string): Promise<void> {
-  const { error, count } = await supabase.from('achievements').delete({ count: 'exact' }).eq('id', id);
+export async function deleteAchievement(supabase: SupabaseClient, id: string, groupId?: string | null): Promise<void> {
+  const q = supabase.from('achievements').delete({ count: 'exact' });
+  const { error, count } = groupId ? await q.eq('group_id', groupId) : await q.eq('id', id);
   if (error) throw error;
   if (count === 0) throw new Error('forbidden');
 }

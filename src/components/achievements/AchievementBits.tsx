@@ -101,7 +101,7 @@ export function fmtDateTime(iso: string) {
 
 /** «كنيسة ← خدمة ← فصل (← مناسبة)» */
 export function scopeLabel(
-  a: Pick<Achievement, 'church_id' | 'service_id' | 'class_id' | 'event_id'>,
+  a: Pick<Achievement, 'church_id' | 'service_id' | 'class_id' | 'event_id'> & { class_ids?: string[] },
   churches: Church[], services: Service[], classes: ClassRoom[], events: AppEvent[] = []
 ) {
   const church = churches.find((c) => c.id === a.church_id)?.name ?? '';
@@ -109,7 +109,8 @@ export function scopeLabel(
   if (a.service_id === null) s = `${church} ← كل الخدمات`;
   else {
     const service = services.find((x) => x.id === a.service_id)?.name ?? '';
-    if (a.class_id === null) s = `${church} ← ${service} ← كل الفصول`;
+    if (a.class_ids && a.class_ids.length > 1) s = `${church} ← ${service} ← ${a.class_ids.map((id) => classes.find((c) => c.id === id)?.name ?? '').filter(Boolean).join('، ')}`;
+    else if (a.class_id === null) s = `${church} ← ${service} ← كل الفصول`;
     else s = `${church} ← ${service} ← ${classes.find((c) => c.id === a.class_id)?.name ?? ''}`;
   }
   if (a.event_id) s += ` ← ${events.find((e) => e.id === a.event_id)?.name ?? 'مناسبة'}`;
