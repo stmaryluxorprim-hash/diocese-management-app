@@ -37,9 +37,12 @@ const defaultScopeOf = <T,>(r: T): ScopedRow => {
 export function filterByScope<T>(rows: T[], sel: ScopeSelection, scopeOf: ScopeOf<T> = defaultScopeOf): T[] {
   return rows.filter((row) => {
     const r = scopeOf(row);
+    // a collapsed class-group item (class_ids) matches when ANY of its classes is selected
+    const many = (row as { class_ids?: string[] }).class_ids;
+    const classOk = many && many.length > 1 ? many.some((cid) => inClassesOrWide(sel.classes, cid)) : inClassesOrWide(sel.classes, r.class_id);
     return (sel.church === ALL || r.church_id === sel.church) &&
       (sel.service === ALL || r.service_id === sel.service || r.service_id === null) &&
-      inClassesOrWide(sel.classes, r.class_id);
+      classOk;
   });
 }
 

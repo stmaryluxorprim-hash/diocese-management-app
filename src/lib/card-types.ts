@@ -317,6 +317,8 @@ export interface CardPrintSettings {
 // (church_id NULL = shared with everyone who can see the module).
 export interface CardPrintProfile {
   id: string;
+  /** rows sharing a group_id are ONE profile covering several classes */
+  group_id?: string | null;
   church_id: string | null;
   service_id: string | null;
   class_id: string | null;
@@ -331,6 +333,8 @@ export interface CardPrintProfile {
 // ----- DB row -----
 export interface CardTemplate {
   id: string;
+  /** rows sharing a group_id are ONE template covering several classes */
+  group_id?: string | null;
   church_id: string;
   service_id: string | null;
   class_id: string | null;

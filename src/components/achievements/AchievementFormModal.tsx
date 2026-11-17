@@ -12,11 +12,12 @@ import { createClient } from '@/lib/supabase/client';
 import { uploadPhoto } from '@/lib/upload';
 import { useAuth } from '@/lib/auth-context';
 import {
-  saveAchievement, achievementErrorMessage, KIND_LABELS, AWARD_MODE_LABELS, RULE_LABELS,
+  saveAchievement, deleteAchievement, achievementErrorMessage, KIND_LABELS, AWARD_MODE_LABELS, RULE_LABELS,
   type Achievement, type AchievementKind, type AwardMode, type AttendanceRule, type AchievementInput,
 } from '@/lib/achievements';
 import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { classSel, classTargets } from '@/lib/class-multi';
+import { saveClassGroup, type Grouped } from '@/lib/class-groups';
 import { AchievementThumb } from '@/components/achievements/AchievementBits';
 import type { Church, Service, ClassRoom, AppEvent } from '@/lib/types';
 
@@ -54,7 +55,7 @@ async function compressImage(file: File): Promise<Blob> {
 export default function AchievementFormModal({
   item, churches, services, classes, events, onClose, onSaved,
 }: {
-  item: Achievement | null;
+  item: Grouped<Achievement> | null;
   churches: Church[]; services: Service[]; classes: ClassRoom[]; events: AppEvent[];
   onClose: () => void;
   onSaved: (saved: Achievement) => void;
@@ -66,7 +67,7 @@ export default function AchievementFormModal({
   const defaultChurch = item?.church_id ?? profile?.church_id ?? (churches.length === 1 ? churches[0].id : '');
   const [churchId, setChurchId] = useState(defaultChurch);
   const [serviceId, setServiceId] = useState(item ? (item.service_id ?? ALL) : (profile?.service_id ?? ALL));
-  const [classIds, setClassIds] = useState<string[]>(classSel(item ? item.class_id : profile?.class_id)); // [] = كل الفصول
+  const [classIds, setClassIds] = useState<string[]>(item ? item.class_ids : classSel(profile?.class_id)); // [] = كل الفصول
   const [eventId, setEventId] = useState(item?.event_id ?? NONE);
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
@@ -162,11 +163,15 @@ export default function AchievementFormModal({
       // one achievement per chosen class (none = all classes); editing updates the
       // existing one to the first class and creates copies for the others
       const targets = serviceId === ALL ? [null] : classTargets(classIds);
-      const saved = await saveAchievement(supabase, item?.id ?? null, { ...payload, class_id: targets[0] }, profile?.id);
-      for (const cid of targets.slice(1)) {
-        await saveAchievement(supabase, null, { ...payload, class_id: cid }, profile?.id);
-      }
-      onSaved(saved);
+      // ONE achievement for all chosen classes: one row per class tied by group_id
+      const saved = await saveClassGroup<Achievement>({
+        existing: item?.group_rows,
+        targets,
+        create: (cid, gid) => saveAchievement(supabase, null, { ...payload, class_id: cid }, profile?.id, gid),
+        update: (row, cid, gid) => saveAchievement(supabase, row.id, { ...payload, class_id: cid }, profile?.id, gid),
+        remove: (row) => deleteAchievement(supabase, row.id),
+      });
+      onSaved(saved[0]);
     } catch (err) {
       setError(achievementErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات'));
       setSaving(false);

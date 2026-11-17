@@ -6,6 +6,7 @@
 // books + lectures). Typing a query replaces the tabs with grouped results.
 // Managers add / edit / delete subjects here.
 
+import { collapseGroups } from '@/lib/class-groups';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Plus, Search, Loader2, Library, Star, BookOpen, Video, X, LayoutGrid } from 'lucide-react';
 import AppShell from '@/components/AppShell';
@@ -42,8 +43,8 @@ export default function LibraryHomePage() {
 
   const counts = useMemo(() => {
     const books = new Map<string, number>(); const lectures = new Map<string, number>();
-    lib.books.forEach((b) => books.set(b.subject_id, (books.get(b.subject_id) ?? 0) + 1));
-    lib.lectures.forEach((l) => lectures.set(l.subject_id, (lectures.get(l.subject_id) ?? 0) + 1));
+    collapseGroups(lib.books).forEach((b) => books.set(b.subject_id, (books.get(b.subject_id) ?? 0) + 1));
+    collapseGroups(lib.lectures).forEach((l) => lectures.set(l.subject_id, (lectures.get(l.subject_id) ?? 0) + 1));
     return { books, lectures };
   }, [lib.books, lib.lectures]);
 
@@ -97,8 +98,8 @@ export default function LibraryHomePage() {
       {/* KPIs */}
       <section className="mb-3 grid grid-cols-3 gap-2">
         <div className="card !p-2 text-center"><p className="text-lg font-extrabold tabular-nums text-lime-700">{lib.subjects.length}</p><p className="text-[10px] font-bold text-slate-400">موضوع</p></div>
-        <div className="card !p-2 text-center"><p className="text-lg font-extrabold tabular-nums text-emerald-600">{lib.books.length}</p><p className="text-[10px] font-bold text-slate-400">كتاب</p></div>
-        <div className="card !p-2 text-center"><p className="text-lg font-extrabold tabular-nums text-rose-600">{lib.lectures.length}</p><p className="text-[10px] font-bold text-slate-400">محاضرة</p></div>
+        <div className="card !p-2 text-center"><p className="text-lg font-extrabold tabular-nums text-emerald-600">{collapseGroups(lib.books).length}</p><p className="text-[10px] font-bold text-slate-400">كتاب</p></div>
+        <div className="card !p-2 text-center"><p className="text-lg font-extrabold tabular-nums text-rose-600">{collapseGroups(lib.lectures).length}</p><p className="text-[10px] font-bold text-slate-400">محاضرة</p></div>
       </section>
 
       {/* search */}

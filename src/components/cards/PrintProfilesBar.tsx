@@ -9,7 +9,8 @@ import { useAuth } from '@/lib/auth-context';
 import { cachedLookup } from '@/lib/queries';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import { MultiClassSelect } from '@/components/MultiClassSelect';
-import { classSel, classTargets } from '@/lib/class-multi';
+import { classTargets } from '@/lib/class-multi';
+import { collapseGroups, deleteClassGroup, saveClassGroup, updateClassGroup, type Grouped } from '@/lib/class-groups';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import type { CardPrintProfile, CardPrintSettings } from '@/lib/card-types';
 import { normalizePrint, printSettingsEqual, describePrintSettings } from '@/lib/card-types';
@@ -45,14 +46,16 @@ export default function PrintProfilesBar({
   const { profile } = useAuth();
   const isOwner = profile?.role === 'owner';
 
-  const [profiles, setProfiles] = useState<CardPrintProfile[]>([]);
+  const [rawProfiles, setProfiles] = useState<CardPrintProfile[]>([]);
+  // rows sharing a group_id are ONE profile covering several classes
+  const profiles = useMemo(() => collapseGroups(rawProfiles), [rawProfiles]);
   const [churches, setChurches] = useState<Church[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false); // migration 0049 not applied
   const [open, setOpen] = useState(false);
-  const [saveModal, setSaveModal] = useState<null | { mode: 'new' } | { mode: 'rename'; p: CardPrintProfile }>(null);
+  const [saveModal, setSaveModal] = useState<null | { mode: 'new' } | { mode: 'rename'; p: Grouped<CardPrintProfile> }>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2200); };
@@ -82,37 +85,38 @@ export default function PrintProfilesBar({
   // the saved profile whose settings equal the current ones (if any)
   const activeProfile = useMemo(() => profiles.find((p) => printSettingsEqual(p.settings, settings)) ?? null, [profiles, settings]);
 
-  const scopeLabel = useCallback((p: { church_id: string | null; service_id: string | null; class_id: string | null }) => {
+  const scopeLabel = useCallback((p: { church_id: string | null; service_id: string | null; class_id: string | null; class_ids?: string[] }) => {
     if (!p.church_id) return 'مشترك — الكل';
     const ch = churches.find((c) => c.id === p.church_id)?.name ?? 'كنيسة';
     if (!p.service_id) return ch;
     const sv = services.find((s) => s.id === p.service_id)?.name ?? 'خدمة';
+    if (p.class_ids && p.class_ids.length > 1) return `${ch} › ${sv} › ${p.class_ids.map((id) => classes.find((c) => c.id === id)?.name).filter(Boolean).join('، ')}`;
     if (!p.class_id) return `${ch} › ${sv}`;
     const cl = classes.find((c) => c.id === p.class_id)?.name ?? 'فصل';
     return `${ch} › ${sv} › ${cl}`;
   }, [churches, services, classes]);
 
   // ---------- actions ----------
-  const apply = (p: CardPrintProfile) => {
+  const apply = (p: Grouped<CardPrintProfile>) => {
     onApply(normalizePrint(p.settings));
     setOpen(false);
     flash(`تم تطبيق «${p.name}»`);
   };
 
-  const overwrite = async (p: CardPrintProfile) => {
+  const overwrite = async (p: Grouped<CardPrintProfile>) => {
     if (!confirm(`استبدال إعدادات «${p.name}» بالإعدادات الحالية؟`)) return;
     setBusyId(p.id);
-    const { error } = await supabase.from('card_print_profiles').update({ settings, edited_by: profile?.id }).eq('id', p.id);
+    const { error } = await updateClassGroup(supabase, 'card_print_profiles', p, { settings, edited_by: profile?.id });
     setBusyId(null);
     if (error) { alert('تعذّر الحفظ: ' + error.message); return; }
     flash('تم تحديث الملف ✓');
     load();
   };
 
-  const remove = async (p: CardPrintProfile) => {
+  const remove = async (p: Grouped<CardPrintProfile>) => {
     if (!confirm(`حذف ملف الطباعة «${p.name}»؟ القوالب التي طُبّق عليها تحتفظ بإعداداتها.`)) return;
     setBusyId(p.id);
-    const { error } = await supabase.from('card_print_profiles').delete().eq('id', p.id);
+    const { error } = await deleteClassGroup(supabase, 'card_print_profiles', p);
     setBusyId(null);
     if (error) { alert('تعذّر الحذف: ' + error.message); return; }
     load();
@@ -254,7 +258,7 @@ function SaveProfileModal({
   mode, existing, settings, churches, services, classes, isOwner, defaultScope, onSaved, onClose,
 }: {
   mode: 'new' | 'rename';
-  existing: CardPrintProfile | null;
+  existing: Grouped<CardPrintProfile> | null;
   settings: CardPrintSettings;
   churches: Church[];
   services: Service[];
@@ -272,7 +276,7 @@ function SaveProfileModal({
     init?.church_id ?? (isOwner ? ALL : churches.length === 1 ? churches[0].id : '')
   );
   const [serviceId, setServiceId] = useState<string>(init?.church_id ? (init.service_id ?? ALL) : ALL);
-  const [classIds, setClassIds] = useState<string[]>(init?.service_id ? classSel(init.class_id) : []); // [] = كل الفصول
+  const [classIds, setClassIds] = useState<string[]>(existing ? existing.class_ids : []); // [] = كل الفصول
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -289,24 +293,37 @@ function SaveProfileModal({
     if (!churchId) return setError('اختر النطاق');
     setSaving(true);
     const noClass = churchId === ALL || serviceId === ALL;
-    // one profile per chosen class; editing keeps the existing row on the first class
+    // ONE profile for all chosen classes (rows tied by group_id)
     const targets = noClass ? [null] : classTargets(classIds);
-    const rowFor = (cid: string | null) => ({
+    const rowFor = (cid: string | null, gid: string | null) => ({
       church_id: churchId === ALL ? null : churchId,
       service_id: churchId === ALL || serviceId === ALL ? null : serviceId,
       class_id: cid,
+      group_id: gid,
       name: n,
     });
     let err: { message: string } | null = null;
-    if (mode === 'rename' && existing) {
-      ({ error: err } = await supabase.from('card_print_profiles').update({ ...rowFor(targets[0]), edited_by: profile?.id }).eq('id', existing.id));
-      if (!err && targets.length > 1) {
-        ({ error: err } = await supabase.from('card_print_profiles').insert(
-          targets.slice(1).map((cid) => ({ ...rowFor(cid), settings: existing.settings, created_by: profile?.id }))));
-      }
-    } else {
-      ({ error: err } = await supabase.from('card_print_profiles').insert(
-        targets.map((cid) => ({ ...rowFor(cid), settings, created_by: profile?.id }))));
+    try {
+      await saveClassGroup<CardPrintProfile>({
+        existing: mode === 'rename' && existing ? existing.group_rows : undefined,
+        targets,
+        create: async (cid, gid) => {
+          const { data, error } = await supabase.from('card_print_profiles').insert({ ...rowFor(cid, gid), settings: existing?.settings ?? settings, created_by: profile?.id }).select('*').single();
+          if (error) throw error;
+          return data as CardPrintProfile;
+        },
+        update: async (row, cid, gid) => {
+          const { data, error } = await supabase.from('card_print_profiles').update({ ...rowFor(cid, gid), edited_by: profile?.id }).eq('id', row.id).select('*').single();
+          if (error) throw error;
+          return data as CardPrintProfile;
+        },
+        remove: async (row) => {
+          const { error } = await supabase.from('card_print_profiles').delete().eq('id', row.id);
+          if (error) throw error;
+        },
+      });
+    } catch (ex) {
+      err = ex as { message: string };
     }
     setSaving(false);
     if (err) {

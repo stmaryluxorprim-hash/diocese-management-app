@@ -13,15 +13,16 @@ import { compressImage } from '@/components/messages/ChatBits';
 import { uploadPhoto } from '@/lib/upload';
 import { ALL } from '@/lib/queries';
 import type { Church, Service, ClassRoom } from '@/lib/types';
+import { saveClassGroup, type Grouped } from '@/lib/class-groups';
 import {
   TRIGGERS, TRIGGER_BY_KEY, RECIPIENT_LABELS, STANDARD_VARS, LINK_PRESETS,
-  saveAutomation, notifErrorMessage, renderPreview,
+  saveAutomation, deleteAutomation, notifErrorMessage, renderPreview,
   type NotificationAutomation, type TriggerKey, type AutomationRecipient, type AutomationInput,
 } from '@/lib/notifications';
 
 export default function AutomationForm({ supabase, initial, churches, services, classes, isOwner, userId, onClose, onSaved }: {
   supabase: SupabaseClient;
-  initial: NotificationAutomation | null;
+  initial: Grouped<NotificationAutomation> | null;
   churches: Church[]; services: Service[]; classes: ClassRoom[];
   isOwner: boolean;
   userId?: string;
@@ -66,7 +67,7 @@ export default function AutomationForm({ supabase, initial, churches, services, 
     if (initial.church_id) scope.setChurch(initial.church_id);
     setTimeout(() => {
       if (initial.service_id) scope.setService(initial.service_id);
-      setTimeout(() => { if (initial.class_id) scope.setClass(initial.class_id); }, 0);
+      setTimeout(() => { if (initial.class_ids.length) scope.setClasses(initial.class_ids); }, 0);
     }, 0);
     setScopeInit(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,10 +110,15 @@ export default function AutomationForm({ supabase, initial, churches, services, 
       // A row holds ONE class. Several chosen classes → the first one updates / creates the row,
       // every other chosen class gets its own copy (one automation per class).
       const classTargets: (string | null)[] = scopeIds.church && scopeIds.service && scopeIds.classes.length > 0 ? scopeIds.classes : [null];
-      await saveAutomation(supabase, { ...baseInput, class_id: classTargets[0] }, initial?.id, userId);
-      for (const c of classTargets.slice(1)) await saveAutomation(supabase, { ...baseInput, class_id: c }, undefined, userId);
-      onSaved(initial ? (classTargets.length > 1 ? `تم حفظ التعديل وإنشاء ${classTargets.length - 1} نسخة للفصول الأخرى ✅` : 'تم حفظ التعديل')
-        : classTargets.length > 1 ? `تم إنشاء ${classTargets.length} إشعارات تلقائية (واحد لكل فصل) ✅` : 'تم إنشاء الإشعار التلقائي ✅');
+      // ONE automation for all chosen classes: one row per class tied by group_id
+      await saveClassGroup<NotificationAutomation>({
+        existing: initial?.group_rows,
+        targets: classTargets,
+        create: (cid, gid) => saveAutomation(supabase, { ...baseInput, class_id: cid, group_id: gid }, undefined, userId),
+        update: (row, cid, gid) => saveAutomation(supabase, { ...baseInput, class_id: cid, group_id: gid }, row.id, userId),
+        remove: (row) => deleteAutomation(supabase, row.id),
+      });
+      onSaved(initial ? 'تم حفظ التعديل' : 'تم إنشاء الإشعار التلقائي ✅');
     } catch (e) { setErr(notifErrorMessage(e, 'تعذر الحفظ')); }
     finally { setBusy(false); }
   };

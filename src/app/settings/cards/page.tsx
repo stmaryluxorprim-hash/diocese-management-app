@@ -9,7 +9,8 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { MultiClassSelect } from '@/components/MultiClassSelect';
-import { classSel, classTargets } from '@/lib/class-multi';
+import { classTargets } from '@/lib/class-multi';
+import { collapseGroups, deleteClassGroup, saveClassGroup, rowsOf, type Grouped } from '@/lib/class-groups';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import type { Church, Service, ClassRoom } from '@/lib/types';
@@ -32,8 +33,8 @@ export default function CardTemplatesPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [rebinding, setRebinding] = useState<CardTemplate | null>(null);
-  const [deleting, setDeleting] = useState<CardTemplate | null>(null);
+  const [rebinding, setRebinding] = useState<Grouped<CardTemplate> | null>(null);
+  const [deleting, setDeleting] = useState<Grouped<CardTemplate> | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('templates');
 
@@ -57,29 +58,39 @@ export default function CardTemplatesPage() {
 
   // church → service → class tree + filter
   const lookups = useMemo(() => toLookups(churches, services, classes), [churches, services, classes]);
+  const grouped = useMemo(() => collapseGroups(templates), [templates]);
   const { scope, setScope, search, setSearch, visible } = useScopeGroups(
-    templates,
+    grouped,
     (t, q) => t.name.toLowerCase().includes(q),
   );
-  const scopeBadge = (t: CardTemplate) =>
-    t.service_id === null ? 'كل الخدمات' : t.class_id === null ? 'كل الفصول' : null;
+  const scopeBadge = (t: Grouped<CardTemplate>) => {
+    if (t.service_id === null) return 'كل الخدمات';
+    if (t.class_ids.length === 0) return 'كل الفصول';
+    if (t.class_ids.length > 1) {
+      return t.class_ids.map((id) => classes.find((c) => c.id === id)?.name).filter(Boolean).join('، ');
+    }
+    return null;
+  };
 
-  const duplicate = async (t: CardTemplate) => {
-    await supabase.from('card_templates').insert({
-      church_id: t.church_id,
-      service_id: t.service_id,
-      class_id: t.class_id,
-      name: `${t.name} (نسخة)`,
-      design: t.design,
-      print_settings: t.print_settings,
+  const duplicate = async (t: Grouped<CardTemplate>) => {
+    const rows = rowsOf<CardTemplate>(t);
+    const gid = rows.length > 1 ? crypto.randomUUID() : null;
+    await supabase.from('card_templates').insert(rows.map((r) => ({
+      church_id: r.church_id,
+      service_id: r.service_id,
+      class_id: r.class_id,
+      group_id: gid,
+      name: `${r.name} (نسخة)`,
+      design: r.design,
+      print_settings: r.print_settings,
       created_by: profile?.id,
-    });
+    })));
     load();
   };
 
   const remove = async () => {
     if (!deleting) return;
-    await supabase.from('card_templates').delete().eq('id', deleting.id);
+    await deleteClassGroup(supabase, 'card_templates', deleting);
     setDeleting(null);
     load();
   };
@@ -94,7 +105,7 @@ export default function CardTemplatesPage() {
           <h2 className="flex items-center gap-2 text-lg font-extrabold">
             <IdCard className="h-5 w-5 text-primary-600" />
             {pageName}
-            <span className="badge bg-primary-100 text-primary-700">{templates.length}</span>
+            <span className="badge bg-primary-100 text-primary-700">{grouped.length}</span>
           </h2>
         </div>
         {tab === 'templates' && (
@@ -138,7 +149,7 @@ export default function CardTemplatesPage() {
           lookups={lookups}
           tone="indigo"
           itemName={(t) => t.name}
-          emptyText={templates.length === 0 ? 'لا توجد قوالب بعد — أنشئ قالبك الأول' : 'لا توجد قوالب مطابقة'}
+          emptyText={grouped.length === 0 ? 'لا توجد قوالب بعد — أنشئ قالبك الأول' : 'لا توجد قوالب مطابقة'}
           renderItem={(t) => (
             <li key={t.id} className="card flex items-center gap-3">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary-50 ring-2 ring-primary-100">
@@ -222,7 +233,7 @@ export default function CardTemplatesPage() {
 function RebindTemplateModal({
   template, churches, services, classes, onSaved, onClose,
 }: {
-  template: CardTemplate;
+  template: Grouped<CardTemplate>;
   churches: Church[];
   services: Service[];
   classes: ClassRoom[];
@@ -233,7 +244,7 @@ function RebindTemplateModal({
   const { profile } = useAuth();
   const [churchId, setChurchId] = useState(template.church_id);
   const [serviceId, setServiceId] = useState(template.service_id ?? ALL);
-  const [classIds, setClassIds] = useState<string[]>(classSel(template.class_id)); // [] = كل الفصول
+  const [classIds, setClassIds] = useState<string[]>(template.class_ids); // [] = كل الفصول
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -248,14 +259,33 @@ function RebindTemplateModal({
     if (!churchId) return setError('اختر الكنيسة');
     if (!serviceId) return setError('اختر الخدمة أو «كل الخدمات»');
     setSaving(true);
-    // first class rebinds this template; each extra class gets a copy of it
+    // one template for all chosen classes (rows tied by group_id; the design is copied to new rows)
     const targets = serviceId === ALL ? [null] : classTargets(classIds);
-    const scopeOf = (cid: string | null) => ({ church_id: churchId, service_id: serviceId === ALL ? null : serviceId, class_id: cid });
-    let { error: err } = await supabase.from('card_templates').update(scopeOf(targets[0])).eq('id', template.id);
-    if (!err && targets.length > 1) {
-      ({ error: err } = await supabase.from('card_templates').insert(targets.slice(1).map((cid) => ({
-        ...scopeOf(cid), name: template.name, design: template.design, print_settings: template.print_settings, created_by: profile?.id,
-      }))));
+    const scopeOf = (cid: string | null, gid: string | null) => ({ church_id: churchId, service_id: serviceId === ALL ? null : serviceId, class_id: cid, group_id: gid });
+    let err: { message: string } | null = null;
+    try {
+      await saveClassGroup<CardTemplate>({
+        existing: template.group_rows,
+        targets,
+        create: async (cid, gid) => {
+          const { data, error } = await supabase.from('card_templates').insert({
+            ...scopeOf(cid, gid), name: template.name, design: template.design, print_settings: template.print_settings, created_by: profile?.id,
+          }).select('*').single();
+          if (error) throw error;
+          return data as CardTemplate;
+        },
+        update: async (row, cid, gid) => {
+          const { data, error } = await supabase.from('card_templates').update(scopeOf(cid, gid)).eq('id', row.id).select('*').single();
+          if (error) throw error;
+          return data as CardTemplate;
+        },
+        remove: async (row) => {
+          const { error } = await supabase.from('card_templates').delete().eq('id', row.id);
+          if (error) throw error;
+        },
+      });
+    } catch (ex) {
+      err = ex as { message: string };
     }
     setSaving(false);
     if (err) { setError('تعذر الحفظ، تأكد من الصلاحيات'); return; }
@@ -350,14 +380,16 @@ function AddTemplateModal({
     if (!serviceId) return setError('اختر الخدمة أو «كل الخدمات»');
     setSaving(true);
 
-    // one template per chosen class; the designer opens on the first
+    // ONE template for all chosen classes (one row per class tied by group_id); the designer opens on the first
     const targets = serviceId === ALL ? [null] : classTargets(classIds);
+    const gid = targets.length > 1 ? crypto.randomUUID() : null;
     const { data, error: err } = await supabase
       .from('card_templates')
       .insert(targets.map((cid) => ({
         church_id: churchId,
         service_id: serviceId === ALL ? null : serviceId,
         class_id: cid,
+        group_id: gid,
         name: name.trim(),
         design: DEFAULT_DESIGN,
         print_settings: DEFAULT_PRINT_SETTINGS,

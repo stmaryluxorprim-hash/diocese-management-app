@@ -87,10 +87,11 @@ export default function CardDesignerPage() {
   const save = async () => {
     if (!template || !design || !print) return;
     setSaving(true);
-    const { error } = await supabase
+    // a template covering several classes is stored as rows tied by group_id — keep them all in sync
+    const upd = supabase
       .from('card_templates')
-      .update({ design, print_settings: print, edited_by: profile?.id })
-      .eq('id', template.id);
+      .update({ design, print_settings: print, edited_by: profile?.id });
+    const { error } = template.group_id ? await upd.eq('group_id', template.group_id) : await upd.eq('id', template.id);
     setSaving(false);
     if (!error) {
       setDirty(false);

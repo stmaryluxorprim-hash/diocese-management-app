@@ -26,6 +26,7 @@ import {
   type Achievement, type AchievementPermissions,
 } from '@/lib/achievements';
 import type { AppEvent } from '@/lib/types';
+import { collapseGroups, type Grouped } from '@/lib/class-groups';
 
 type Filter = 'all' | 'normal' | 'attendance' | 'inactive';
 
@@ -37,15 +38,17 @@ export default function AchievementsPage() {
   const [events, setEvents] = useState<AppEvent[]>([]);
   const scope = useScopeState();
 
-  const [items, setItems] = useState<Achievement[]>([]);
+  const [rawItems, setItems] = useState<Achievement[]>([]);
+  // rows sharing a group_id are ONE achievement covering several classes
+  const items = useMemo(() => collapseGroups(rawItems), [rawItems]);
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const [perms, setPerms] = useState<AchievementPermissions>(NO_PERMISSIONS);
   const [loading, setLoading] = useState(true);
   const [migrationMissing, setMigrationMissing] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [form, setForm] = useState<{ open: boolean; item: Achievement | null }>({ open: false, item: null });
-  const [earnersFor, setEarnersFor] = useState<Achievement | null>(null);
+  const [form, setForm] = useState<{ open: boolean; item: Grouped<Achievement> | null }>({ open: false, item: null });
+  const [earnersFor, setEarnersFor] = useState<Grouped<Achievement> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2500); };
@@ -89,23 +92,26 @@ export default function AchievementsPage() {
     awards: Array.from(counts.values()).reduce((s, n) => s + n, 0),
   }), [items, counts]);
 
-  const patch = (id: string, p: Partial<Achievement>) => setItems((l) => l.map((a) => (a.id === id ? { ...a, ...p } : a)));
+  // awards of an achievement = awards of all its class rows
+  const countOf = (a: Grouped<Achievement>) => a.group_rows.reduce((s, r) => s + (counts.get(r.id) ?? 0), 0);
+  const inGroup = (a: Grouped<Achievement>, x: Achievement) => (a.group_id ? x.group_id === a.group_id : x.id === a.id);
+  const patch = (a: Grouped<Achievement>, p: Partial<Achievement>) => setItems((l) => l.map((x) => (inGroup(a, x) ? { ...x, ...p } : x)));
 
-  const toggleActive = async (a: Achievement) => {
+  const toggleActive = async (a: Grouped<Achievement>) => {
     setBusy(a.id);
-    patch(a.id, { is_active: !a.is_active });
-    try { await setAchievementActive(supabase, a.id, !a.is_active); }
-    catch (e) { patch(a.id, { is_active: a.is_active }); flash(achievementErrorMessage(e, 'تعذر التعديل')); }
+    patch(a, { is_active: !a.is_active });
+    try { await setAchievementActive(supabase, a.id, !a.is_active, a.group_id); }
+    catch (e) { patch(a, { is_active: a.is_active }); flash(achievementErrorMessage(e, 'تعذر التعديل')); }
     finally { setBusy(null); }
   };
 
-  const remove = async (a: Achievement) => {
-    const n = counts.get(a.id) ?? 0;
+  const remove = async (a: Grouped<Achievement>) => {
+    const n = countOf(a);
     if (!confirm(`حذف الإنجاز «${a.name}» نهائياً؟${n ? `\nسيُحذف معه سجل ${n} منحة (النقاط الممنوحة تبقى في أرصدة المخدومين).` : ''}`)) return;
     setBusy(a.id);
     try {
-      await deleteAchievement(supabase, a.id);
-      setItems((l) => l.filter((x) => x.id !== a.id));
+      await deleteAchievement(supabase, a.id, a.group_id);
+      setItems((l) => l.filter((x) => !inGroup(a, x)));
     } catch (e) { flash(achievementErrorMessage(e, 'تعذر الحذف')); }
     finally { setBusy(null); }
   };
@@ -168,7 +174,7 @@ export default function AchievementsPage() {
       ) : (
         <div id="ach-list" className="card !p-0 overflow-hidden divide-y divide-amber-50">
           {visible.map((a) => {
-            const n = counts.get(a.id) ?? 0;
+            const n = countOf(a);
             return (
               <div key={a.id} id={`ach-item-${a.id}`} className={`flex items-start gap-2.5 px-3 py-3 ${!a.is_active ? 'bg-slate-50 opacity-70' : 'bg-white'}`}>
                 <AchievementThumb url={a.image_url} name={a.name} size={56} muted={!a.is_active} />
@@ -217,9 +223,9 @@ export default function AchievementsPage() {
         <AchievementFormModal
           item={form.item} churches={churches} services={services} classes={classes} events={events}
           onClose={() => setForm({ open: false, item: null })}
-          onSaved={(saved) => {
-            setItems((l) => (l.some((x) => x.id === saved.id) ? l.map((x) => (x.id === saved.id ? saved : x)) : [...l, saved]));
+          onSaved={() => {
             setForm({ open: false, item: null });
+            load();
             flash(form.item ? 'تم حفظ التعديلات' : 'تمت إضافة الإنجاز');
           }}
         />

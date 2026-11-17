@@ -13,6 +13,7 @@ import { useStoreLookups, scopeLabel } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
+import { collapseGroups, type Grouped } from '@/lib/class-groups';
 import {
   TRIGGERS, RECIPIENT_LABELS, fetchAutomations, toggleAutomation, deleteAutomation, notifErrorMessage,
   type NotificationAutomation, type TriggerKey,
@@ -23,9 +24,11 @@ export default function AutomationsPage() {
   const [supabase] = useState(() => createClient());
   const approved = profile?.status === 'approved';
   const { churches, services, classes } = useStoreLookups(supabase, approved);
-  const [rows, setRows] = useState<NotificationAutomation[] | null>(null);
-  const [editing, setEditing] = useState<NotificationAutomation | 'new' | null>(null);
-  const [confirmDel, setConfirmDel] = useState<NotificationAutomation | null>(null);
+  const [rawRows, setRows] = useState<NotificationAutomation[] | null>(null);
+  // rows sharing a group_id are ONE automation covering several classes
+  const rows = useMemo(() => (rawRows ? collapseGroups(rawRows) : null), [rawRows]);
+  const [editing, setEditing] = useState<Grouped<NotificationAutomation> | 'new' | null>(null);
+  const [confirmDel, setConfirmDel] = useState<Grouped<NotificationAutomation> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,22 +42,22 @@ export default function AutomationsPage() {
   useEffect(() => { load(); }, [load]);
   useDebouncedRealtime(supabase, 'notif-automations', [{ table: 'notification_automations' }], load, { enabled: approved, delayMs: 700 });
 
-  const toggle = async (a: NotificationAutomation) => {
+  const toggle = async (a: Grouped<NotificationAutomation>) => {
     setBusy(a.id);
-    try { await toggleAutomation(supabase, a.id, !a.is_active); flash(a.is_active ? 'تم إيقاف الإشعار التلقائي' : 'تم تفعيل الإشعار التلقائي'); load(); }
+    try { await toggleAutomation(supabase, a.id, !a.is_active, a.group_id); flash(a.is_active ? 'تم إيقاف الإشعار التلقائي' : 'تم تفعيل الإشعار التلقائي'); load(); }
     catch (e) { flash(notifErrorMessage(e)); }
     finally { setBusy(null); }
   };
   const remove = async () => {
     if (!confirmDel) return;
     setBusy(confirmDel.id);
-    try { await deleteAutomation(supabase, confirmDel.id); flash('تم الحذف'); setConfirmDel(null); load(); }
+    try { await deleteAutomation(supabase, confirmDel.id, confirmDel.group_id); flash('تم الحذف'); setConfirmDel(null); load(); }
     catch (e) { flash(notifErrorMessage(e)); }
     finally { setBusy(null); }
   };
 
   const grouped = useMemo(() => {
-    const m = new Map<TriggerKey, NotificationAutomation[]>();
+    const m = new Map<TriggerKey, Grouped<NotificationAutomation>[]>();
     (rows ?? []).forEach((a) => { const l = m.get(a.trigger_key) ?? []; l.push(a); m.set(a.trigger_key, l); });
     return m;
   }, [rows]);
@@ -109,7 +112,7 @@ export default function AutomationsPage() {
                         </p>
                         {a.body_template && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{a.body_template}</p>}
                         <p className="mt-1 text-[11px] font-bold text-slate-400">
-                          {a.church_id ? scopeLabel({ church_id: a.church_id, service_id: a.service_id, class_id: a.class_id }, churches, services, classes) : 'كل الكنائس'}
+                          {a.church_id ? scopeLabel({ church_id: a.church_id, service_id: a.service_id, class_id: a.class_id, class_ids: a.class_ids }, churches, services, classes) : 'كل الكنائس'}
                           {t.config && a.config?.[t.config.key] !== undefined && ` · ${t.config.label}: ${String(a.config[t.config.key])}`}
                         </p>
                       </div>

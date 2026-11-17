@@ -14,7 +14,7 @@ import { fetchEarners, revokeAchievement, achievementErrorMessage, type Achievem
 import { AchievementThumb, fmtDateTime } from '@/components/achievements/AchievementBits';
 
 export default function EarnersModal({ achievement, onClose, onChanged }: {
-  achievement: Achievement; onClose: () => void; onChanged?: () => void;
+  achievement: Achievement & { group_rows?: Achievement[] }; onClose: () => void; onChanged?: () => void;
 }) {
   const { profile } = useAuth();
   const [supabase] = useState(() => createClient());
@@ -23,9 +23,14 @@ export default function EarnersModal({ achievement, onClose, onChanged }: {
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    try { setRows(await fetchEarners(supabase, achievement.id)); }
+    try {
+      // an achievement covering several classes = several rows; show the earners of all of them
+      const ids = (achievement.group_rows ?? [achievement]).map((r) => r.id);
+      const lists = await Promise.all(ids.map((id) => fetchEarners(supabase, id)));
+      setRows(lists.flat());
+    }
     catch (e) { setError(achievementErrorMessage(e)); setRows([]); }
-  }, [supabase, achievement.id]);
+  }, [supabase, achievement]);
   useEffect(() => { load(); }, [load]);
 
   const isManager = !!profile && ['owner', 'church_manager', 'service_manager'].includes(profile.role);

@@ -21,6 +21,8 @@ export interface AudienceFields {
 
 interface Meta {
   id: string;
+  /** rows sharing a group_id are ONE book / lecture covering several classes */
+  group_id?: string | null;
   sort_order: number;
   created_at: string;
   created_by: string | null;
@@ -87,7 +89,11 @@ export function audienceLabel(
   lookups: { services?: { id: string; name: string }[]; classes?: { id: string; name: string }[] } = {}
 ): string {
   if (x.audience === 'service') return `خدمة: ${lookups.services?.find((s) => s.id === x.service_id)?.name ?? '—'}`;
-  if (x.audience === 'class') return `فصل: ${lookups.classes?.find((c) => c.id === x.class_id)?.name ?? '—'}`;
+  if (x.audience === 'class') {
+    const ids = (x as { class_ids?: string[] }).class_ids;
+    if (ids && ids.length > 1) return `فصول: ${ids.map((id) => lookups.classes?.find((c) => c.id === id)?.name ?? '—').join('، ')}`;
+    return `فصل: ${lookups.classes?.find((c) => c.id === x.class_id)?.name ?? '—'}`;
+  }
   return AUDIENCE_LABELS[x.audience];
 }
 
@@ -210,10 +216,11 @@ export type SubjectInput = Omit<LibrarySubject, keyof Meta>;
 export type BookInput = Omit<LibraryBook, keyof Meta>;
 export type LectureInput = Omit<LibraryLecture, keyof Meta>;
 
-async function saveRow<T>(supabase: SupabaseClient, table: string, id: string | null, payload: object): Promise<T> {
+async function saveRow<T>(supabase: SupabaseClient, table: string, id: string | null, payload: object, groupId?: string | null): Promise<T> {
+  const body = groupId === undefined ? payload : { ...payload, group_id: groupId };
   const res = id
-    ? await supabase.from(table).update(payload).eq('id', id).select('*').single()
-    : await supabase.from(table).insert(payload).select('*').single();
+    ? await supabase.from(table).update(body).eq('id', id).select('*').single()
+    : await supabase.from(table).insert(body).select('*').single();
   if (res.error) throw res.error;
   return res.data as T;
 }
@@ -226,9 +233,9 @@ async function deleteRow(supabase: SupabaseClient, table: string, id: string): P
 
 export const saveSubject = (s: SupabaseClient, id: string | null, p: SubjectInput) => saveRow<LibrarySubject>(s, 'library_subjects', id, p);
 export const deleteSubject = (s: SupabaseClient, id: string) => deleteRow(s, 'library_subjects', id);
-export const saveBook = (s: SupabaseClient, id: string | null, p: BookInput) => saveRow<LibraryBook>(s, 'library_books', id, p);
+export const saveBook = (s: SupabaseClient, id: string | null, p: BookInput, groupId?: string | null) => saveRow<LibraryBook>(s, 'library_books', id, p, groupId);
 export const deleteBook = (s: SupabaseClient, id: string) => deleteRow(s, 'library_books', id);
-export const saveLecture = (s: SupabaseClient, id: string | null, p: LectureInput) => saveRow<LibraryLecture>(s, 'library_lectures', id, p);
+export const saveLecture = (s: SupabaseClient, id: string | null, p: LectureInput, groupId?: string | null) => saveRow<LibraryLecture>(s, 'library_lectures', id, p, groupId);
 export const deleteLecture = (s: SupabaseClient, id: string) => deleteRow(s, 'library_lectures', id);
 
 // ---------- Favorites (servant) ----------
