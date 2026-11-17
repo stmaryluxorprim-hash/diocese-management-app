@@ -141,7 +141,7 @@ export default function AchievementFormModal({
       }
     }
 
-    const payload: AchievementInput = {
+    const payload: Omit<AchievementInput, 'class_id'> = {
       church_id: churchId,
       service_id: serviceId === ALL ? null : serviceId,
       event_id: eventId || null,
