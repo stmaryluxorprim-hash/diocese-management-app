@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { KeyRound } from 'lucide-react';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import ScopePicker, { clampScope, dedupeScopes, type ScopeDepth } from '@/components/ScopePicker';
 import { useAuth } from '@/lib/auth-context';
 import {
@@ -61,7 +62,8 @@ export function useServantScope(approver: ServantEnrollment | null, churches: Ch
   const [role, setRole] = useState<AppRole>('class_servant');
   const [churchId, setChurchId] = useState('');
   const [serviceId, setServiceId] = useState('');
-  const [classId, setClassId] = useState('');
+  // several classes may be ticked: each becomes its own place (the first is the primary one)
+  const [classIds, setClassIds] = useState<string[]>([]);
   // 0045: ADDITIONAL places besides the primary one above
   const [extraScopes, setExtraScopes] = useState<ScopeRef[]>([]);
   const { scopes: approverScopes } = useAuth();
@@ -86,12 +88,12 @@ export function useServantScope(approver: ServantEnrollment | null, churches: Ch
   const needService = role !== 'church_manager';
   const needClass = role === 'class_servant';
 
-  const onChurch = (v: string) => { setChurchId(v); setServiceId(''); setClassId(''); };
-  const onService = (v: string) => { setServiceId(v); setClassId(''); };
+  const onChurch = (v: string) => { setChurchId(v); setServiceId(''); setClassIds([]); };
+  const onService = (v: string) => { setServiceId(v); setClassIds([]); };
   const onRole = (r: AppRole) => {
     setRole(r);
-    if (r === 'church_manager') { if (!serviceLocked) setServiceId(''); setClassId(''); }
-    if (r === 'service_manager') setClassId('');
+    if (r === 'church_manager') { if (!serviceLocked) setServiceId(''); setClassIds([]); }
+    if (r === 'service_manager') setClassIds([]);
     setExtraScopes((xs) => dedupeScopes(xs.map((x) => clampScope(x, depthOf(r)))));
   };
 
@@ -102,14 +104,23 @@ export function useServantScope(approver: ServantEnrollment | null, churches: Ch
     return null;
   };
 
+  // the chosen classes in list order; the first one is the primary place / drives the code
+  const pickedClasses = visibleClasses.filter((c) => classIds.includes(c.id));
+  const classId = needClass ? (pickedClasses[0]?.id ?? '') : '';
+
   const primary: ScopeRef | null = churchId ? {
     church_id: churchId,
     service_id: needService ? (serviceId || null) : null,
     class_id: needClass ? (classId || null) : null,
   } : null;
-  // every place, primary first, without duplicates of the primary
+  // one place per ticked class (beyond the primary)
+  const classScopes: ScopeRef[] = primary && needClass
+    ? pickedClasses.slice(1).map((c) => ({ church_id: churchId, service_id: serviceId || null, class_id: c.id }))
+    : [];
+  // every place, primary first, without duplicates
   const allScopes: ScopeRef[] = primary
-    ? [primary, ...extraScopes.map((x) => clampScope(x, depthOf(role))).filter((x) => scopeKey(x) !== scopeKey(primary))]
+    ? [primary, ...[...classScopes, ...extraScopes.map((x) => clampScope(x, depthOf(role)))].filter((x, i, arr) =>
+        scopeKey(x) !== scopeKey(primary) && arr.findIndex((y) => scopeKey(y) === scopeKey(x)) === i)]
     : [];
 
   // churches / services the approver may grant (mirror of SQL scope_grantable)
@@ -120,8 +131,8 @@ export function useServantScope(approver: ServantEnrollment | null, churches: Ch
   const lockServiceExtra = approver?.role === 'service_manager' && !wholeChurch && approver.service_id ? approver.service_id : null;
 
   return {
-    role, churchId, serviceId, classId,
-    setRole: onRole, onChurch, onService, setClassId,
+    role, churchId, serviceId, classId, classIds,
+    setRole: onRole, onChurch, onService, setClassIds,
     churchLocked, serviceLocked, visibleServices, visibleClasses, needService, needClass, validate,
     payloadScope: {
       church_id: churchId,
@@ -171,12 +182,10 @@ export function RoleScopeFields({
       )}
       {scope.needClass && (
         <div>
-          <label className="mb-1 block text-xs font-bold text-slate-500">الفصل</label>
-          <select id={`${idPrefix}-class`} className="input-field" value={scope.classId}
-            onChange={(e) => scope.setClassId(e.target.value)} disabled={!scope.serviceId}>
-            <option value="">{scope.serviceId ? 'كل الفصول (بدون تحديد)' : 'اختر الخدمة أولاً'}</option>
-            {scope.visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <label className="mb-1 block text-xs font-bold text-slate-500">الفصول</label>
+          <MultiClassSelect id={`${idPrefix}-class`} value={scope.classIds} onChange={scope.setClassIds}
+            options={scope.visibleClasses} allLabel={scope.serviceId ? 'كل الفصول (بدون تحديد)' : 'اختر الخدمة أولاً'}
+            disabled={!scope.serviceId} />
         </div>
       )}
       {/* 0045: more places (the selects above = the primary place) */}

@@ -24,6 +24,7 @@ import QrScanner from '@/components/store/QrScanner';
 import PhotoCropModal from '@/components/PhotoCropModal';
 import { useCodeGenerator } from '@/lib/customization-context';
 import { cachedLookup } from '@/lib/queries';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { uploadPhoto } from '@/lib/upload';
 import { PHONE_LOCAL_LENGTH, PHONE_PREFIX, GENDER_LABELS, type Church, type Service, type ClassRoom, type Gender } from '@/lib/types';
 import {
@@ -346,10 +347,13 @@ function NewMemberForm({
   // place (optional)
   const [churchId, setChurchId] = useState(lookups.churches.length === 1 ? lookups.churches[0].id : '');
   const [serviceId, setServiceId] = useState('');
-  const [classId, setClassId] = useState('');
+  // several classes may be ticked: the first goes with the family RPC, the others enroll the same person
+  const [classIds, setClassIds] = useState<string[]>([]);
   useEffect(() => { if (!churchId && lookups.churches.length === 1) setChurchId(lookups.churches[0].id); }, [lookups.churches, churchId]);
   const visibleServices = lookups.services.filter((s) => s.church_id === churchId);
   const visibleClasses = lookups.classes.filter((c) => c.service_id === serviceId);
+  const pickedClasses = visibleClasses.filter((c) => classIds.includes(c.id));
+  const classId = pickedClasses[0]?.id ?? '';
 
   // code
   const [code, setCode] = useState('');
@@ -381,14 +385,14 @@ function NewMemberForm({
   const reset = () => {
     setCode(''); setName(''); setGender(''); setPhoneLocal(''); setBDay(''); setBMonth(''); setBYear('');
     setAddress(''); setNotes(''); setPhotoBlob(null); if (photoPreview) URL.revokeObjectURL(photoPreview); setPhotoPreview('');
-    setClassId('');
+    setClassIds([]);
   };
 
   const submit = async (move = false) => {
     setError('');
     if (!name.trim()) { setError('اكتب الاسم'); return; }
     if (phoneLocal && phoneLocal.length !== PHONE_LOCAL_LENGTH) { setError(`رقم الهاتف يجب أن يكون ${PHONE_LOCAL_LENGTH} رقماً بعد ${PHONE_PREFIX}`); return; }
-    if ((serviceId || classId) && !(churchId && serviceId && classId)) { setError('أكمل الكنيسة والخدمة والفصل — أو اترك المكان فارغاً'); return; }
+    if ((serviceId || pickedClasses.length) && !(churchId && serviceId && pickedClasses.length)) { setError('أكمل الكنيسة والخدمة والفصل — أو اترك المكان فارغاً'); return; }
     if (!classId && !code.trim()) { setError('الكود مطلوب عندما لا يُسجَّل الفرد في فصل — اكتبه أو امسحه أو ولّده'); return; }
     setBusy(true);
     try {
@@ -416,8 +420,25 @@ function NewMemberForm({
         return;
       }
       const r = out.result;
-      const cls = lookups.classes.find((c) => c.id === classId)?.name;
+      // the other ticked classes: same person (by his code), one enrollment each
+      const failed: string[] = [];
+      let extraOk = 0;
+      for (const c of pickedClasses.slice(1)) {
+        const { error: xe, data: xd } = await supabase.rpc('add_person_and_enroll', {
+          p_church: c.church_id, p_service: c.service_id, p_class: c.id,
+          p_name: input.name, p_national_id: r.person?.national_id ?? input.code,
+          p_gender: input.gender, p_birthdate: input.birthdate, p_phone: input.phone,
+          p_address: input.address, p_notes: input.notes, p_image_url: input.image_url,
+          p_points: 0, p_password: null,
+        });
+        if (xe) failed.push(c.name);
+        else if (!(xd as { already_enrolled?: boolean } | null)?.already_enrolled) extraOk++;
+      }
+      const cls = pickedClasses.length > 1
+        ? `${pickedClasses[0].name}${extraOk ? ` + ${extraOk} ${extraOk === 1 ? 'فصل' : 'فصول'}` : ''}`
+        : pickedClasses[0]?.name;
       onDone(r, r.person_created ? (cls ? `شخص جديد · سُجّل في ${cls}` : 'شخص جديد') : (cls && !r.already_enrolled ? `شخص موجود · سُجّل في ${cls}` : 'شخص موجود'));
+      if (failed.length) setError(`تعذر التسجيل في: ${failed.join('، ')}`);
       reset();
     } catch {
       setError('حدث خطأ أثناء رفع الصورة أو الحفظ');
@@ -523,16 +544,15 @@ function NewMemberForm({
 
       {/* optional place */}
       <div className="card space-y-2">
-        <p className="flex items-center gap-1 text-xs font-extrabold text-slate-600"><School className="h-4 w-4 text-primary-500" /> تسجيله في فصل (اختياري)</p>
-        <select id="family-new-church" className="input-field appearance-none text-sm" value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}>
+        <p className="flex items-center gap-1 text-xs font-extrabold text-slate-600"><School className="h-4 w-4 text-primary-500" /> تسجيله في فصل أو أكثر (اختياري)</p>
+        <select id="family-new-church" className="input-field appearance-none text-sm" value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}>
           <option value="">الكنيسة</option>{lookups.churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select id="family-new-service" className="input-field appearance-none text-sm" value={serviceId} disabled={!churchId} onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}>
+        <select id="family-new-service" className="input-field appearance-none text-sm" value={serviceId} disabled={!churchId} onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}>
           <option value="">الخدمة</option>{visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select id="family-new-class" className="input-field appearance-none text-sm" value={classId} disabled={!serviceId} onChange={(e) => setClassId(e.target.value)}>
-          <option value="">الفصل — بدون تسجيل</option>{visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <MultiClassSelect id="family-new-class" value={classIds} onChange={setClassIds} options={visibleClasses}
+          showAll={false} allLabel="الفصول — بدون تسجيل" disabled={!serviceId} />
       </div>
 
       {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600">{error}</p>}

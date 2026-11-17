@@ -70,3 +70,17 @@ export function classRpcArgs(scope: { class?: string | null; classes?: readonly 
   const ids = classIdsOf(scope);
   return { p_class: ids.length === 1 ? ids[0] : null, p_classes: ids.length > 1 ? ids : null };
 }
+
+/**
+ * Class targets for a FORM that saves one record per class.
+ * Empty selection → [null] (a single record with no class = «كل الفصول»),
+ * otherwise one entry per chosen class id.
+ */
+export function classTargets(sel: readonly string[] | null | undefined): (string | null)[] {
+  return sel && sel.length > 0 ? [...sel] : [null];
+}
+
+/** initial form selection from a record's single class id (null / ALL / '' → []) */
+export function classSel(id: string | null | undefined): string[] {
+  return id && id !== 'all' ? [id] : [];
+}

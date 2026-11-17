@@ -17,6 +17,8 @@ import {
   type Audience, type AudienceFields, type LibrarySubject, type LibraryBook, type LibraryLecture, type LectureKind,
 } from '@/lib/library';
 import { Cover } from '@/components/library/LibraryBits';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel } from '@/lib/class-multi';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 
 // ---------- shared bits ----------
@@ -79,7 +81,7 @@ export function useAudienceState(init?: AudienceFields | null) {
   const [audience, setAudience] = useState<Audience>(init?.audience ?? 'everyone');
   const [churchId, setChurchId] = useState(init?.church_id ?? profile?.church_id ?? '');
   const [serviceId, setServiceId] = useState(init?.service_id ?? profile?.service_id ?? '');
-  const [classId, setClassId] = useState(init?.class_id ?? profile?.class_id ?? '');
+  const [classIds, setClassIds] = useState<string[]>(classSel(init?.class_id ?? profile?.class_id));
   const churchLocked = !isOwner && !!profile?.church_id;
   const serviceLocked = !isOwner && profile?.role !== 'church_manager' && !!profile?.service_id;
   const classLocked = profile?.role === 'class_servant' && !!profile?.class_id;
@@ -88,14 +90,17 @@ export function useAudienceState(init?: AudienceFields | null) {
     audience,
     church_id: scoped ? churchId || null : null,
     service_id: scoped ? serviceId || null : null,
-    class_id: audience === 'class' ? classId || null : null,
+    class_id: audience === 'class' ? classIds[0] ?? null : null,
   });
+  // one entry per chosen class (audience «فصل»); a single entry otherwise
+  const fieldsAll = (): AudienceFields[] =>
+    audience === 'class' && classIds.length > 1 ? classIds.map((cid) => ({ ...fields(), class_id: cid })) : [fields()];
   const validate = (): string | null => {
     if (scoped && (!churchId || !serviceId)) return 'اختر الكنيسة والخدمة';
-    if (audience === 'class' && !classId) return 'اختر الفصل';
+    if (audience === 'class' && classIds.length === 0) return 'اختر فصلاً واحداً على الأقل';
     return null;
   };
-  return { audience, setAudience, churchId, setChurchId, serviceId, setServiceId, classId, setClassId, churchLocked, serviceLocked, classLocked, fields, validate };
+  return { audience, setAudience, churchId, setChurchId, serviceId, setServiceId, classIds, setClassIds, churchLocked, serviceLocked, classLocked, fields, fieldsAll, validate };
 }
 
 export function AudiencePicker({ a, churches, services, classes, idPrefix }: {
@@ -116,20 +121,18 @@ export function AudiencePicker({ a, churches, services, classes, idPrefix }: {
       {scoped && (
         <div className="mt-2 grid grid-cols-3 gap-2">
           <select id={`${idPrefix}-church`} className={`input-field !px-2 text-xs font-bold ${a.churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-            value={a.churchId} onChange={(e) => { a.setChurchId(e.target.value); a.setServiceId(''); a.setClassId(''); }}>
+            value={a.churchId} onChange={(e) => { a.setChurchId(e.target.value); a.setServiceId(''); a.setClassIds([]); }}>
             <option value="">الكنيسة</option>
             {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <select id={`${idPrefix}-service`} className={`input-field !px-2 text-xs font-bold ${a.serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-            value={a.serviceId} onChange={(e) => { a.setServiceId(e.target.value); a.setClassId(''); }} disabled={!a.churchId}>
+            value={a.serviceId} onChange={(e) => { a.setServiceId(e.target.value); a.setClassIds([]); }} disabled={!a.churchId}>
             <option value="">الخدمة</option>
             {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select id={`${idPrefix}-class`} className={`input-field !px-2 text-xs font-bold ${a.classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-            value={a.classId} onChange={(e) => a.setClassId(e.target.value)} disabled={a.audience !== 'class' || !a.serviceId}>
-            <option value="">{a.audience === 'class' ? 'الفصل' : '—'}</option>
-            {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <MultiClassSelect id={`${idPrefix}-class`} className={a.classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}
+            value={a.classIds} onChange={a.setClassIds} options={visibleClasses} showAll={false}
+            allLabel={a.audience === 'class' ? 'الفصول' : '—'} disabled={a.audience !== 'class' || !a.serviceId} />
         </div>
       )}
       <p className="mt-1 text-[11px] font-bold text-slate-400">
@@ -171,9 +174,11 @@ export function SubjectFormModal({ item, lookups, onClose, onSaved }: {
     const v = a.validate(); if (v) return setError(v);
     setSaving(true);
     try {
-      onSaved(await saveSubject(supabase, item?.id ?? null, {
-        name: name.trim(), description: description.trim() || null, image_url: imageUrl.trim() || null, ...a.fields(),
-      }));
+      const [first, ...rest] = a.fieldsAll();
+      const body = { name: name.trim(), description: description.trim() || null, image_url: imageUrl.trim() || null };
+      const saved = await saveSubject(supabase, item?.id ?? null, { ...body, ...first });
+      for (const f of rest) await saveSubject(supabase, null, { ...body, ...f });
+      onSaved(saved);
     } catch (err) { setError(libraryErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات')); setSaving(false); }
   };
 
@@ -219,10 +224,14 @@ export function BookFormModal({ item, subjectId, subjects, lookups, onClose, onS
     const v = a.validate(); if (v) return setError(v);
     setSaving(true);
     try {
-      onSaved(await saveBook(supabase, item?.id ?? null, {
+      const [first, ...rest] = a.fieldsAll();
+      const body = {
         subject_id: subject, title: title.trim(), author: author.trim() || null, description: description.trim() || null,
-        cover_url: coverUrl.trim() || null, pdf_url: pdfUrl.trim(), ...a.fields(),
-      }));
+        cover_url: coverUrl.trim() || null, pdf_url: pdfUrl.trim(),
+      };
+      const saved = await saveBook(supabase, item?.id ?? null, { ...body, ...first });
+      for (const f of rest) await saveBook(supabase, null, { ...body, ...f });
+      onSaved(saved);
     } catch (err) { setError(libraryErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات')); setSaving(false); }
   };
 
@@ -279,10 +288,14 @@ export function LectureFormModal({ item, subjectId, subjects, lookups, onClose, 
     const v = a.validate(); if (v) return setError(v);
     setSaving(true);
     try {
-      onSaved(await saveLecture(supabase, item?.id ?? null, {
+      const [first, ...rest] = a.fieldsAll();
+      const body = {
         subject_id: subject, title: title.trim(), speaker: speaker.trim() || null, description: description.trim() || null,
-        lecture_date: date || null, kind, media_url: mediaUrl.trim(), thumbnail_url: thumbUrl.trim() || null, ...a.fields(),
-      }));
+        lecture_date: date || null, kind, media_url: mediaUrl.trim(), thumbnail_url: thumbUrl.trim() || null,
+      };
+      const saved = await saveLecture(supabase, item?.id ?? null, { ...body, ...first });
+      for (const f of rest) await saveLecture(supabase, null, { ...body, ...f });
+      onSaved(saved);
     } catch (err) { setError(libraryErrorMessage(err, 'تعذر الحفظ، تأكد من الصلاحيات')); setSaving(false); }
   };
 

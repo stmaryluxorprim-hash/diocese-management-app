@@ -15,6 +15,8 @@ import { Save, Loader2, TrendingUp, TrendingDown, Tag, PenLine, Wallet, Search, 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { ModalFrame } from '@/components/PersonDataModals';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import {
   saveFinanceEntry, saveFinanceCause, saveFinanceBudget, addBudgetMembers, fetchBudgetCandidates, causesFor, financeErrorMessage,
@@ -44,34 +46,33 @@ function useScopeState(lookups: ScopeLookups, initial?: { church_id: string; ser
   const defaultChurch = initial?.church_id ?? profile?.church_id ?? (churches.length === 1 ? churches[0].id : '');
   const [churchId, setChurchId] = useState(defaultChurch);
   const [serviceId, setServiceId] = useState(initial ? (initial.service_id ?? ALL) : (profile?.service_id ?? ALL));
-  const [classId, setClassId] = useState(initial ? (initial.class_id ?? ALL) : (profile?.class_id ?? ALL));
+  const [classIds, setClassIds] = useState<string[]>(classSel(initial ? initial.class_id : profile?.class_id)); // [] = كل الفصول
   const churchLocked = !!profile && profile.role !== 'owner';
   const serviceLocked = !!profile && !!profile.service_id && profile.role !== 'owner' && profile.role !== 'church_manager';
   const classLocked = !!profile && !!profile.class_id && profile.role === 'class_servant';
   const visibleServices = useMemo(() => services.filter((s) => s.church_id === churchId), [services, churchId]);
   const visibleClasses = useMemo(() => classes.filter((c) => c.church_id === churchId && (serviceId === ALL || c.service_id === serviceId)), [classes, churchId, serviceId]);
-  const scope = { church_id: churchId, service_id: serviceId === ALL ? null : serviceId, class_id: serviceId === ALL || classId === ALL ? null : classId };
-  return { churchId, setChurchId, serviceId, setServiceId, classId, setClassId, churchLocked, serviceLocked, classLocked, visibleServices, visibleClasses, scope, churches };
+  const scope = { church_id: churchId, service_id: serviceId === ALL ? null : serviceId, class_id: serviceId === ALL ? null : (classIds[0] ?? null) };
+  // one entry per chosen class (none chosen = a single class-less scope)
+  const scopes = serviceId === ALL ? [scope] : classTargets(classIds).map((cid) => ({ ...scope, class_id: cid }));
+  return { churchId, setChurchId, serviceId, setServiceId, classIds, setClassIds, scopes, churchLocked, serviceLocked, classLocked, visibleServices, visibleClasses, scope, churches };
 }
 
 function ScopeSelects({ id, s }: { id: string; s: ReturnType<typeof useScopeState> }) {
   return (
     <div className="grid grid-cols-3 gap-2">
       <select id={`${id}-church`} className={`input-field !px-2 text-xs font-bold ${s.churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-        value={s.churchId} onChange={(e) => { s.setChurchId(e.target.value); s.setServiceId(ALL); s.setClassId(ALL); }} required>
+        value={s.churchId} onChange={(e) => { s.setChurchId(e.target.value); s.setServiceId(ALL); s.setClassIds([]); }} required>
         <option value="">الكنيسة</option>
         {s.churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
       <select id={`${id}-service`} className={`input-field !px-2 text-xs font-bold ${s.serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-        value={s.serviceId} onChange={(e) => { s.setServiceId(e.target.value); s.setClassId(ALL); }}>
+        value={s.serviceId} onChange={(e) => { s.setServiceId(e.target.value); s.setClassIds([]); }}>
         <option value={ALL}>كل الخدمات</option>
         {s.visibleServices.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </select>
-      <select id={`${id}-class`} className={`input-field !px-2 text-xs font-bold ${s.classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-        value={s.classId} onChange={(e) => s.setClassId(e.target.value)} disabled={s.serviceId === ALL}>
-        <option value={ALL}>كل الفصول</option>
-        {s.visibleClasses.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-      </select>
+      <MultiClassSelect id={`${id}-class`} className={s.classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}
+        value={s.classIds} onChange={s.setClassIds} options={s.visibleClasses} disabled={s.serviceId === ALL} />
     </div>
   );
 }
@@ -302,14 +303,17 @@ export function BudgetFormModal({
     if (!allScope && !s.scope.church_id) return setError('اختر الكنيسة أو «الكل»');
     setSaving(true);
     try {
+      // one budget per chosen class (none = whole service / church); editing updates
+      // the existing budget to the first class and creates copies for the others
+      const targets = allScope ? [{ church_id: null, service_id: null, class_id: null }] : s.scopes;
+      const body = { name: name.trim(), description: description.trim() || null, is_active: active };
       const saved = await saveFinanceBudget(supabase, {
-        name: name.trim(),
-        description: description.trim() || null,
-        church_id: allScope ? null : s.scope.church_id,
-        service_id: allScope ? null : s.scope.service_id,
-        class_id: allScope ? null : s.scope.class_id,
-        is_active: active,
+        ...body,
+        church_id: targets[0].church_id, service_id: targets[0].service_id, class_id: targets[0].class_id,
       }, item?.id);
+      for (const t of targets.slice(1)) {
+        await saveFinanceBudget(supabase, { ...body, church_id: t.church_id, service_id: t.service_id, class_id: t.class_id });
+      }
       onSaved(saved, !item);
     } catch (err) {
       setError(financeErrorMessage(err));

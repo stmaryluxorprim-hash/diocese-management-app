@@ -229,7 +229,12 @@ function ReportsInner() {
   const onSaveTemplate = async (v: SaveTemplateValues) => {
     setSaving(true);
     try {
-      const t = await saveTemplate(supabase, templateId, { ...v, description: v.description || null, definition: def }, profile?.id);
+      const { more_class_ids, ...base } = v;
+      const t = await saveTemplate(supabase, templateId, { ...base, description: v.description || null, definition: def }, profile?.id);
+      // extra classes → one more template each (same definition)
+      for (const cid of more_class_ids ?? []) {
+        await saveTemplate(supabase, null, { ...base, class_id: cid, description: v.description || null, definition: def }, profile?.id);
+      }
       setTemplateId(t.id);
       setSaveOpen(false);
       flash(templateId ? 'تم تحديث القالب' : 'تم حفظ القالب');
@@ -255,7 +260,8 @@ function ReportsInner() {
     description: editingTemplate?.description ?? '',
     church_id: editingTemplate ? editingTemplate.church_id : (def.query.scope.church || profile?.church_id || (lookups.churches.length === 1 ? lookups.churches[0].id : null)),
     service_id: editingTemplate ? editingTemplate.service_id : (def.query.scope.service || null),
-    class_id: editingTemplate ? editingTemplate.class_id : (singleClass(reportClassIds(def.query.scope)) || null),
+    class_id: editingTemplate ? editingTemplate.class_id : (reportClassIds(def.query.scope)[0] || null),
+    more_class_ids: editingTemplate ? [] : reportClassIds(def.query.scope).slice(1),
     is_default: editingTemplate?.is_default ?? false,
   };
 

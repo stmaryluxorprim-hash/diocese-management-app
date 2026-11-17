@@ -11,6 +11,8 @@ import { Save, Loader2, DoorOpen, ListChecks, Layers, Trash2 } from 'lucide-reac
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
 import { ModalFrame } from '@/components/PersonDataModals';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import type { Church, Service, ClassRoom } from '@/lib/types';
 import {
   saveAccessEvent, saveAccessRule, saveRuleGroup, deleteRuleGroup,
@@ -66,7 +68,7 @@ export function EventFormModal({ item, lookups, onSaved, onClose }: { item: Acce
   const defaultChurch = item?.church_id ?? profile?.church_id ?? (churches.length === 1 ? churches[0].id : '');
   const [churchId, setChurchId] = useState(defaultChurch);
   const [serviceId, setServiceId] = useState(item ? (item.service_id ?? ALL) : (profile?.service_id ?? ALL));
-  const [classId, setClassId] = useState(item ? (item.class_id ?? ALL) : (profile?.class_id ?? ALL));
+  const [classIds, setClassIds] = useState<string[]>(classSel(item ? item.class_id : profile?.class_id)); // [] = كل الفصول
   const [name, setName] = useState(item?.name ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
   const [isActive, setIsActive] = useState(item?.is_active ?? true);
@@ -91,10 +93,9 @@ export function EventFormModal({ item, lookups, onSaved, onClose }: { item: Acce
     if (!name.trim()) return setError('اسم بوابة الدخول مطلوب');
     setSaving(true);
     try {
-      const saved = await saveAccessEvent(supabase, {
+      const body = {
         church_id: churchId,
         service_id: serviceId === ALL ? null : serviceId,
-        class_id: serviceId === ALL || classId === ALL ? null : classId,
         name: name.trim(),
         description: description.trim() || null,
         is_active: isActive,
@@ -102,7 +103,12 @@ export function EventFormModal({ item, lookups, onSaved, onClose }: { item: Acce
         root_op: rootOp,
         starts_at: fromLocalInput(startsAt),
         ends_at: fromLocalInput(endsAt),
-      }, item?.id);
+      };
+      // one gate per chosen class (none = whole service / church); editing updates the
+      // existing gate to the first class and creates copies for the others
+      const targets = serviceId === ALL ? [null] : classTargets(classIds);
+      const saved = await saveAccessEvent(supabase, { ...body, class_id: targets[0] }, item?.id);
+      for (const cid of targets.slice(1)) await saveAccessEvent(supabase, { ...body, class_id: cid });
       onSaved(saved);
     } catch (err) {
       const msg = (err as { message?: string }).message ?? '';
@@ -124,20 +130,17 @@ export function EventFormModal({ item, lookups, onSaved, onClose }: { item: Acce
         <Field label="نطاق البوابة (كنيسة ← خدمة ← فصل)" hint="يحدد من يرى البوابة من الخدام، وأي تسجيلات الشخص تُحسب نقاطها وحضورها. اترك «الكل» لبوابة على مستوى الكنيسة أو الخدمة.">
           <div className="grid grid-cols-3 gap-2">
             <select id="access-event-church" className={`input-field !px-2 text-xs font-bold ${churchLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-              value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassId(ALL); }} required>
+              value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(ALL); setClassIds([]); }} required>
               <option value="">الكنيسة</option>
               {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             <select id="access-event-service" className={`input-field !px-2 text-xs font-bold ${serviceLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-              value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassId(ALL); }}>
+              value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}>
               <option value={ALL}>كل الخدمات</option>
               {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <select id="access-event-class" className={`input-field !px-2 text-xs font-bold ${classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}`}
-              value={classId} onChange={(e) => setClassId(e.target.value)} disabled={serviceId === ALL}>
-              <option value={ALL}>كل الفصول</option>
-              {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <MultiClassSelect id="access-event-class" className={classLocked ? 'pointer-events-none bg-primary-50 opacity-80' : ''}
+              value={classIds} onChange={setClassIds} options={visibleClasses} disabled={serviceId === ALL} />
           </div>
         </Field>
         <Field label="ربط القواعد في المستوى الأعلى">
@@ -201,7 +204,7 @@ export function RuleFormModal({
       attended_events: { event_ids: [], mode: 'all' },
       gender: { value: 'male' },
       age: { op: 'between', value: 6, value2: 12 },
-      enrolled_in: { church_id: event.church_id, service_id: event.service_id ?? undefined, class_id: event.class_id ?? undefined },
+      enrolled_in: { church_id: event.church_id, service_id: event.service_id ?? undefined, class_ids: event.class_id ? [event.class_id] : undefined },
       person_field: { field: 'phone', op: 'present' },
       exam_passed: { exam_id: lookups.exams?.[0]?.id },
       achievement: { achievement_id: lookups.achievements?.[0]?.id },
@@ -333,18 +336,18 @@ export function RuleFormModal({
         {kind === 'enrolled_in' && (
           <Field label="المكان (كنيسة ← خدمة ← فصل)">
             <div className="grid grid-cols-3 gap-2">
-              <select className="input-field !px-2 text-xs font-bold" value={params.church_id ?? ''} onChange={(e) => set({ church_id: e.target.value || undefined, service_id: undefined, class_id: undefined })}>
+              <select className="input-field !px-2 text-xs font-bold" value={params.church_id ?? ''} onChange={(e) => set({ church_id: e.target.value || undefined, service_id: undefined, class_id: undefined, class_ids: undefined })}>
                 <option value="">أي كنيسة</option>
                 {scope.churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-              <select className="input-field !px-2 text-xs font-bold" value={params.service_id ?? ''} onChange={(e) => set({ service_id: e.target.value || undefined, class_id: undefined })}>
+              <select className="input-field !px-2 text-xs font-bold" value={params.service_id ?? ''} onChange={(e) => set({ service_id: e.target.value || undefined, class_id: undefined, class_ids: undefined })}>
                 <option value="">كل الخدمات</option>
                 {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select className="input-field !px-2 text-xs font-bold" value={params.class_id ?? ''} onChange={(e) => set({ class_id: e.target.value || undefined })} disabled={!params.service_id}>
-                <option value="">كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="access-rule-classes" className={!params.service_id ? 'pointer-events-none opacity-60' : ''}
+                value={params.class_ids?.length ? params.class_ids : classSel(params.class_id)}
+                onChange={(ids) => set({ class_ids: ids.length ? ids : undefined, class_id: undefined })}
+                options={visibleClasses} disabled={!params.service_id} />
             </div>
           </Field>
         )}

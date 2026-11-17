@@ -9,6 +9,8 @@
 // (الصلاحية · الاستخدامات · الملاحظة · إعادة التفعيل) وإلغاؤها وحذفها.
 
 import { cachedLookup } from '@/lib/queries';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import {
@@ -49,7 +51,7 @@ export default function SignupInvitePanel({ kind, hideScope = false }: Props) {
 
   const [churchId, setChurchId] = useState('');
   const [serviceId, setServiceId] = useState('');
-  const [classId, setClassId] = useState('');
+  const [classIds, setClassIds] = useState<string[]>([]); // [] = بدون تحديد فصل
   const [days, setDays] = useState(7);
   const [maxUses, setMaxUses] = useState<number | null>(kind === 'priest' ? 1 : 20);
   const [note, setNote] = useState('');
@@ -77,7 +79,7 @@ export default function SignupInvitePanel({ kind, hideScope = false }: Props) {
     if (!profile) return;
     setChurchId(profile.church_id ?? '');
     setServiceId(profile.service_id ?? '');
-    setClassId(profile.class_id ?? '');
+    setClassIds(classSel(profile.class_id));
   }, [profile]);
 
   useEffect(() => {
@@ -119,19 +121,25 @@ export default function SignupInvitePanel({ kind, hideScope = false }: Props) {
   const generate = async () => {
     setGenerating(true); setError('');
     try {
-      const r = await createSignupInvite(
-        supabase, kind,
-        hideScope ? {} : { church_id: churchId || null, service_id: serviceId || null, class_id: classId || null },
-        { days, max_uses: maxUses, note: note.trim() || null },
-      );
+      // one invite (own link + QR) per chosen class; none chosen = a single un-scoped invite
+      const targets = hideScope ? [null] : classTargets(classIds);
+      const made: SignupInvite[] = [];
+      for (const cid of targets) {
+        const r = await createSignupInvite(
+          supabase, kind,
+          hideScope ? {} : { church_id: churchId || null, service_id: serviceId || null, class_id: cid },
+          { days, max_uses: maxUses, note: note.trim() || null },
+        );
+        made.push({
+          id: r.id, kind, church_id: hideScope ? null : churchId || null, service_id: hideScope ? null : serviceId || null,
+          class_id: hideScope ? null : cid, created_by: profile?.id ?? null, created_at: new Date().toISOString(),
+          expires_at: r.expires_at, max_uses: maxUses, uses: 0, revoked_at: null, note: note.trim() || null, token: r.token,
+        });
+      }
       // show immediately (the list refresh brings the stored token too)
-      const optimistic: SignupInvite = {
-        id: r.id, kind, church_id: hideScope ? null : churchId || null, service_id: hideScope ? null : serviceId || null,
-        class_id: hideScope ? null : classId || null, created_by: profile?.id ?? null, created_at: new Date().toISOString(),
-        expires_at: r.expires_at, max_uses: maxUses, uses: 0, revoked_at: null, note: note.trim() || null, token: r.token,
-      };
-      setInvites((prev) => [optimistic, ...prev.filter((i) => i.id !== r.id)]);
-      setShownId(r.id);
+      const madeIds = new Set(made.map((m) => m.id));
+      setInvites((prev) => [...made, ...prev.filter((i) => !madeIds.has(i.id))]);
+      setShownId(made[0].id);
       setNote('');
       loadInvites();
     } catch (e) {
@@ -203,7 +211,7 @@ export default function SignupInvitePanel({ kind, hideScope = false }: Props) {
           </p>
           <div>
             <label className="mb-1 block text-xs font-bold text-gray-500">الكنيسة</label>
-            <select value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}
+            <select value={churchId} onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}
               className={selectCls(!canPickChurch)} aria-disabled={!canPickChurch}>
               <option value="">كل الكنائس (بدون تحديد)</option>
               {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -211,19 +219,16 @@ export default function SignupInvitePanel({ kind, hideScope = false }: Props) {
           </div>
           <div>
             <label className="mb-1 block text-xs font-bold text-gray-500">الخدمة</label>
-            <select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}
+            <select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}
               className={selectCls(!canPickService)} aria-disabled={!canPickService}>
               <option value="">كل الخدمات (بدون تحديد)</option>
               {filteredServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-bold text-gray-500">الفصل</label>
-            <select value={classId} onChange={(e) => setClassId(e.target.value)}
-              className={selectCls(!canPickClass)} aria-disabled={!canPickClass}>
-              <option value="">كل الفصول (بدون تحديد)</option>
-              {filteredClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <label className="mb-1 block text-xs font-bold text-gray-500">الفصول</label>
+            <MultiClassSelect id="invite-classes" value={classIds} onChange={setClassIds} options={filteredClasses}
+              allLabel="كل الفصول (بدون تحديد)" disabled={!canPickClass} className={canPickClass ? '' : 'pointer-events-none opacity-80'} />
           </div>
         </section>
       )}

@@ -10,6 +10,8 @@ import { useMemo, useState } from 'react';
 import { X, Save, Loader2, Clock, Star, Trophy, ListChecks, CalendarClock } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth-context';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
+import { classSel, classTargets } from '@/lib/class-multi';
 import {
   createExam, updateExam, examErrorMessage, defaultExamInput, toLocalInput, fromLocalInput,
   type Exam, type ExamInput,
@@ -73,6 +75,8 @@ export default function ExamFormModal({
         })
   );
   const set = <K extends keyof ExamInput>(k: K, v: ExamInput[K]) => setForm((f) => ({ ...f, [k]: v }));
+  // chosen classes ([] = كل الفصول); one exam is saved per class
+  const [classIds, setClassIds] = useState<string[]>(classSel(exam ? exam.class_id : profile?.class_id));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -107,11 +111,13 @@ export default function ExamFormModal({
         title: form.title.trim(),
         description: form.description?.trim() || null,
         service_id: form.service_id || null,
-        class_id: form.service_id ? (form.class_id || null) : null,
       };
+      const targets = form.service_id ? classTargets(classIds) : [null];
       const saved = exam
-        ? await updateExam(supabase, exam.id, payload, user?.id)
-        : await createExam(supabase, payload, user?.id);
+        ? await updateExam(supabase, exam.id, { ...payload, class_id: targets[0] }, user?.id)
+        : await createExam(supabase, { ...payload, class_id: targets[0] }, user?.id);
+      // extra classes → copies of the same exam
+      for (const cid of targets.slice(1)) await createExam(supabase, { ...payload, class_id: cid }, user?.id);
       onSaved(saved);
     } catch (err) {
       setError(examErrorMessage(err, 'تعذر الحفظ'));
@@ -145,20 +151,17 @@ export default function ExamFormModal({
             <p className="mb-1 text-xs font-extrabold text-slate-600">لمن هذا الامتحان؟</p>
             <div className="grid grid-cols-3 gap-2">
               <select id="exam-church" className="input-field appearance-none !px-2 text-xs font-bold" value={form.church_id} disabled={churchLocked}
-                onChange={(e) => { setForm((f) => ({ ...f, church_id: e.target.value, service_id: null, class_id: null })); }}>
+                onChange={(e) => { setClassIds([]); setForm((f) => ({ ...f, church_id: e.target.value, service_id: null, class_id: null })); }}>
                 <option value="">الكنيسة…</option>
                 {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select id="exam-service" className="input-field appearance-none !px-2 text-xs font-bold" value={form.service_id ?? ALL} disabled={serviceLocked || !form.church_id}
-                onChange={(e) => { const v = e.target.value === ALL ? null : e.target.value; setForm((f) => ({ ...f, service_id: v, class_id: null })); }}>
+                onChange={(e) => { const v = e.target.value === ALL ? null : e.target.value; setClassIds([]); setForm((f) => ({ ...f, service_id: v, class_id: null })); }}>
                 <option value={ALL}>كل الخدمات</option>
                 {visibleServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select id="exam-class" className="input-field appearance-none !px-2 text-xs font-bold" value={form.class_id ?? ALL} disabled={classLocked || !form.service_id}
-                onChange={(e) => set('class_id', e.target.value === ALL ? null : e.target.value)}>
-                <option value={ALL}>كل الفصول</option>
-                {visibleClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <MultiClassSelect id="exam-class" value={classIds} onChange={setClassIds} options={visibleClasses}
+                disabled={classLocked || !form.service_id} />
             </div>
           </div>
 

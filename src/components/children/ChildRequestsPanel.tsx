@@ -14,6 +14,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
+import { MultiClassSelect } from '@/components/MultiClassSelect';
 import { ScopeGroups, ScopeGroupFilters, useScopeGroups, toLookups } from '@/components/ScopeGroups';
 import type { Church, Service, ClassRoom, ChildJoinRequest } from '@/lib/types';
 import { GENDER_LABELS, CHILD_JOIN_REQUEST_STATUS_LABELS } from '@/lib/types';
@@ -162,7 +163,8 @@ function RequestCard({
 
   const [churchId, setChurchId] = useState(request.church_id ?? '');
   const [serviceId, setServiceId] = useState(request.service_id ?? '');
-  const [classId, setClassId] = useState(request.class_id ?? '');
+  // several classes may be ticked: the first approves the request, the others enroll the same child
+  const [classIds, setClassIds] = useState<string[]>(request.class_id ? [request.class_id] : []);
 
   const canPickChurch = profile?.role === 'owner';
   const canPickService = profile?.role === 'owner' || profile?.role === 'church_manager';
@@ -170,6 +172,7 @@ function RequestCard({
 
   const scopedServices = services.filter((s) => !churchId || s.church_id === churchId);
   const scopedClasses = classes.filter((c) => !serviceId || c.service_id === serviceId);
+  const pickedClasses = scopedClasses.filter((c) => classIds.includes(c.id));
 
   const mapError = (m: string) =>
     m.includes('forbidden') ? 'ليس لديك صلاحية على هذا الفصل'
@@ -181,7 +184,8 @@ function RequestCard({
 
   const approve = async () => {
     setError('');
-    if (!churchId || !serviceId || !classId) return setError('اختر الكنيسة والخدمة والفصل');
+    if (!churchId || !serviceId || pickedClasses.length === 0) return setError('اختر الكنيسة والخدمة والفصل');
+    const [main, ...others] = pickedClasses;
     setBusy(true);
     const { error: err } = await supabase.rpc('review_child_join_request', {
       p_request: request.id,
@@ -189,10 +193,22 @@ function RequestCard({
       p_note: null,
       p_church: churchId,
       p_service: serviceId,
-      p_class: classId,
+      p_class: main.id,
     });
+    if (err) { setBusy(false); return setError(mapError(err.message ?? '')); }
+    // the other ticked classes: same child (by his code), one enrollment each
+    const failed: string[] = [];
+    for (const c of others) {
+      const { error: xe } = await supabase.rpc('add_person_and_enroll', {
+        p_church: c.church_id, p_service: c.service_id, p_class: c.id,
+        p_name: request.name, p_national_id: request.code, p_gender: request.gender,
+        p_birthdate: request.birthdate, p_phone: request.phone, p_address: request.address,
+        p_notes: request.notes, p_image_url: request.image_url, p_points: 0, p_password: null,
+      });
+      if (xe) failed.push(c.name);
+    }
     setBusy(false);
-    if (err) return setError(mapError(err.message ?? ''));
+    if (failed.length) return setError(`تمت الموافقة، لكن تعذر التسجيل في: ${failed.join('، ')}`);
     onDone();
   };
 
@@ -242,19 +258,17 @@ function RequestCard({
 
       <div className="mb-3 space-y-2">
         <select className="input-field" value={churchId} disabled={!canPickChurch}
-          onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassId(''); }}>
+          onChange={(e) => { setChurchId(e.target.value); setServiceId(''); setClassIds([]); }}>
           <option value="">اختر الكنيسة</option>
           {churches.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <select className="input-field" value={serviceId} disabled={!canPickService}
-          onChange={(e) => { setServiceId(e.target.value); setClassId(''); }}>
+          onChange={(e) => { setServiceId(e.target.value); setClassIds([]); }}>
           <option value="">اختر الخدمة</option>
           {scopedServices.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select className="input-field" value={classId} disabled={!canPickClass} onChange={(e) => setClassId(e.target.value)}>
-          <option value="">اختر الفصل</option>
-          {scopedClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <MultiClassSelect id="child-request-class" value={classIds} onChange={setClassIds} options={scopedClasses}
+          showAll={false} allLabel="اختر الفصول" disabled={!canPickClass} />
       </div>
 
       {rejecting && (
