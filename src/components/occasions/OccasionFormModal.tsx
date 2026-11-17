@@ -148,7 +148,7 @@ export default function OccasionFormModal({
       }
     }
 
-    const payload: OccasionInput = {
+    const payload: Omit<OccasionInput, 'class_id'> = {
       church_id: churchId,
       service_id: serviceId === ALL ? null : serviceId,
       title: title.trim(),
