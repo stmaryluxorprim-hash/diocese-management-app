@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { requireSupabaseEnv } from '@/lib/supabase/env';
 
 // /child/* is the child portal and /priest/* the priest portal — no Supabase
 // auth account, a session token (code + password) is checked client-side +
@@ -23,9 +24,10 @@ const PUBLIC_PATHS = ['/login', '/signup', '/pending', '/child', '/priest'];
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  const { url: supabaseUrl, anonKey } = requireSupabaseEnv();
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    anonKey,
     {
       cookies: {
         getAll() {

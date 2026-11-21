@@ -25,6 +25,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { createClient as createSessionClient } from '@/lib/supabase/server';
 import { codeToUserId, userIdToEmail, SERVANTS_TABLE } from '@/lib/types';
 import type { AddServantInput, AddServantOutcome, AddServantError, AppRole } from '@/lib/types';
+import { supabaseUrl } from '@/lib/supabase/env';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -34,7 +35,7 @@ const ROLES: AppRole[] = ['church_manager', 'service_manager', 'class_servant'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function adminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = supabaseUrl();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createAdminClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });

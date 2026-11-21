@@ -26,37 +26,23 @@ for (const f of ['.env.production.local', '.env.local', '.env.production', '.env
   }
 }
 
-const REQUIRED = ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'];
+// Supabase URL / anon key are now read at RUNTIME (SUPABASE_URL, SUPABASE_ANON_KEY —
+// set them as runtime Secrets, no rebuild needed to change them), so the build
+// no longer requires them. Legacy NEXT_PUBLIC_SUPABASE_* names still work.
 const RECOMMENDED = ['NEXT_PUBLIC_VAPID_PUBLIC_KEY'];
-
-const missing = REQUIRED.filter((k) => !(process.env[k] ?? '').trim());
 const missingRec = RECOMMENDED.filter((k) => !(process.env[k] ?? '').trim());
 
 if (missingRec.length) {
   console.warn(`\n[cf:build] ⚠ optional build variable(s) not set: ${missingRec.join(', ')} (push notifications will use the runtime fallback /api/notifications/vapid)\n`);
 }
 
-if (missing.length) {
-  console.error(`
-[cf:build] ✘ Missing required BUILD variable(s): ${missing.join(', ')}
-
-NEXT_PUBLIC_* values are baked into the bundle during \`next build\`, so they
-must be available while Cloudflare builds the project (not only at runtime).
-
-Fix (Cloudflare dashboard):
-  Workers & Pages → this Worker → Settings → Build → Variables and secrets
-    → add ${REQUIRED.join(' and ')}
-      (copy the values from Vercel → Settings → Environment Variables)
-  Also make sure:
-    Build command  = npm run cf:build
-    Deploy command = npx wrangler deploy
-  Then Settings → Variables and Secrets (RUNTIME) → add the same NEXT_PUBLIC_*
-  plus SUPABASE_SERVICE_ROLE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY,
-  VAPID_SUBJECT, CRON_SECRET.
-
-Local: copy .env.example → .env.local and fill it in.
-`);
-  process.exit(1);
+const hasBuildSupabase =
+  (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+  (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+if (!hasBuildSupabase) {
+  console.log(`[cf:build] ℹ Supabase variables not present at build time — fine.
+          Set SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY as RUNTIME
+          Secrets (Workers → Settings → Variables and Secrets) before the app is used.`);
+} else {
+  console.log('[cf:build] ✓ build variables present');
 }
-
-console.log('[cf:build] ✓ build variables present');

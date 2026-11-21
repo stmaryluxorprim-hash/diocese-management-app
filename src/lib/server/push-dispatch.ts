@@ -12,6 +12,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { appIcon } from '@/lib/branding';
 import webpush from 'web-push';
+import { supabaseUrl } from '@/lib/supabase/env';
 
 export interface QueueItem {
   recipient_id: string;
@@ -44,7 +45,7 @@ export function vapidPublicKey(): string | null {
 }
 
 function adminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = supabaseUrl();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });

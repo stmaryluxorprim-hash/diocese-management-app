@@ -690,7 +690,7 @@ npm run dev
 
 ### 3. Deploy to Vercel
 1. vercel.com → New Project → import this GitHub repo
-2. Add env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+2. Add env vars: `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the legacy `NEXT_PUBLIC_SUPABASE_*` names still work)
 3. (Optional) add the **PWA branding** variables below
 4. Deploy — done. PWA is installable from the browser.
 
@@ -729,9 +729,9 @@ version without activating it).
    - **Build command**: `npm run cf:build`
    - **Deploy command**: `npx wrangler deploy`
    - Root directory: `/` · Node version: 20+ (default is fine)
-3. **Build variables** (Settings → Build → Variables and Secrets) — needed because `NEXT_PUBLIC_*` are inlined at build time:
-   `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and the optional `NEXT_PUBLIC_*` branding variables (§ 4).
-4. **Runtime variables & secrets** (Settings → Variables and Secrets): the same `NEXT_PUBLIC_*` again plus the server secrets
+3. **Build variables** (Settings → Build → Variables and Secrets) — only the `NEXT_PUBLIC_*` values that are inlined at build time:
+   `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and the optional `NEXT_PUBLIC_*` branding variables (§ 4). **Supabase URL / anon key are NOT needed at build time any more.**
+4. **Runtime variables & secrets** (Settings → Variables and Secrets): `SUPABASE_URL` and `SUPABASE_ANON_KEY` (no `NEXT_PUBLIC_` prefix → can be saved as *Secret* and edited at any time without a rebuild; the browser receives them at runtime from `/api/runtime-config`; they are public-by-design, RLS protects the data) plus the server secrets
    `SUPABASE_SERVICE_ROLE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `CRON_SECRET` (optional, protects the cron routes — the scheduled handler sends it as `Authorization: Bearer`).
 5. Save & deploy. The Worker is served at `https://diocese-management.<account>.workers.dev`; add a custom domain under Settings → Domains & Routes.
 6. Production branch = `main` → both Vercel and Cloudflare redeploy on every merge. (Use only one of them for the crons if you don't want the daily jobs to run twice — remove `triggers.crons` from `wrangler.jsonc` or the `crons` from `vercel.json`. Both jobs are idempotent, so running twice is harmless, just redundant.)

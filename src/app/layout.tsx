@@ -57,6 +57,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         {/* Rendered by hand: `metadata.manifest` drops the ?v= cache-buster. */}
         <link rel="manifest" href={manifestUrl()} />
+        {/* Runtime Supabase URL/anon key (SUPABASE_URL / SUPABASE_ANON_KEY) —
+            a blocking classic script on purpose: it must run before hydration. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/api/runtime-config" />
         <link rel="apple-touch-icon" href={appIcon(180)} />
       </head>
       <body className="font-arabic bg-gradient-to-b from-slate-50 to-indigo-50/40 min-h-screen text-slate-800 antialiased">
