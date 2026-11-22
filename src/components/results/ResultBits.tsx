@@ -232,7 +232,7 @@ export function Avatar({ name, url, size = 36 }: { name: string; url: string | n
     <div className="relative shrink-0 overflow-hidden rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white" style={{ width: size, height: size }}>
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={name} className="h-full w-full object-cover" />
+        <img src={url} alt={name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
       ) : (
         <span className="absolute inset-0 flex items-center justify-center font-extrabold" style={{ fontSize: size * 0.42 }}>{name.trim().charAt(0) || '؟'}</span>
       )}

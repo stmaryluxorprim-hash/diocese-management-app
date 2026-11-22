@@ -2533,3 +2533,13 @@ Vercel if they were added.
 - **Platform**: Vercel + Supabase
 - **Status**: ✅ Code complete for Phase 1 + performance/scale hardening (0019) + statistics tab (0020) + child portal & data change requests (0021) + event as 4th scope level with status badge (0022) + call-feedback badge & إدارة نتائج الافتقاد (0023) + owner module & per-scope module visibility (0024) + shepherds module الأشابين & «مجموعتي» (0025) + points store module إستبدال النقاط (0026) + exams module الامتحانات (0027) + birthdays module أعياد الميلاد (0028) + messages module الرسائل (0029) + online classes module الفصول الأونلاين (0030) + achievements module الإنجازات (0031) + occasions module الفعاليات (0032/0033) + notifications module الإشعارات (0034) + app customization تخصيص التطبيق — taskbar & header (0035) + home widgets & custom page names (0036) — awaiting Supabase project + Vercel connect
 - **Last Updated**: 2026-09-12
+
+## Reducing Supabase «Cached Egress»
+
+Cause: raw phone photos (up to 4 MB) were uploaded as-is to the public `photos` bucket and shown in 48–160 px avatars.
+
+- **New uploads** — `uploadPhoto()` (`src/lib/upload.ts`) is the single choke-point: it downsizes per folder (avatars 640 px, store/classes/services 800, messages/occasions/etc. 1280, cards 1600) and re-encodes WebP via `src/lib/image-compress.ts`. Small files (≤ 80 KB), GIF/SVG/HEIC and any failure fall back to the original file. Church logos use `uploadChurchLogo()` (512 px).
+- **Existing files** — `scripts/compress-existing-photos.mjs` (dry-run by default; `--apply` uploads compressed copies under NEW paths and writes `photo-url-migration.sql`; `--delete-old` removes the originals later). Local estimate on the current bucket: 43.8 MB → 4.8 MB (−89 %).
+- **Branding icon/logo** — `/branding/{icon|logo}/{size}` now proxies the configured image through the Worker and the Cloudflare edge cache instead of redirecting every client to Supabase.
+- **List images** — plain `<img>` avatars in stats/results are `loading="lazy"`.
+- Tests: `npm test` (includes `src/lib/__tests__/image-compress.test.ts`).

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PHOTOS_BUCKET } from '@/lib/types';
+import { compressImageFile, extensionFor, maxDimFor } from '@/lib/image-compress';
 
 /**
  * Cache-Control for uploaded files (20261011120000).
@@ -27,12 +28,42 @@ export async function uploadPhoto(
   file: File | Blob,
   name?: string
 ): Promise<string> {
+  // ONE compression choke-point for every photo upload (≈ 30 call sites):
+  // downscale to the folder's max size + WebP. Falls back to the original
+  // file on any problem, so an upload can never fail because of compression.
+  const body = await compressImageFile(file, { maxDim: maxDimFor(folder) });
   const rawName = name ?? (file instanceof File ? file.name : 'photo.webp');
-  const path = `${folder}/${Date.now()}-${rawName.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-  const { error } = await supabase.storage.from(PHOTOS_BUCKET).upload(path, file, {
-    contentType: file.type || undefined,
+  let safeName = rawName.replace(/[^a-zA-Z0-9.]/g, '_');
+  if (body !== file) {
+    // keep the extension in line with the re-encoded bytes (png → webp / jpg)
+    const ext = extensionFor(body.type);
+    if (ext) safeName = safeName.replace(/\.[a-zA-Z0-9]+$/, '') + '.' + ext;
+  }
+  const path = `${folder}/${Date.now()}-${safeName}`;
+  const { error } = await supabase.storage.from(PHOTOS_BUCKET).upload(path, body, {
+    contentType: body.type || undefined,
     cacheControl: IMMUTABLE_CACHE_SECONDS,
   });
   if (error) throw error;
   return supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+/**
+ * Upload a church logo to the `church-logos` bucket (compressed, immutable
+ * cache) and return its public URL.
+ */
+export async function uploadChurchLogo(supabase: SupabaseClient, file: File): Promise<string> {
+  const body = await compressImageFile(file, { maxDim: 512 });
+  let safeName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+  if (body !== file) {
+    const ext = extensionFor(body.type);
+    if (ext) safeName = safeName.replace(/\.[a-zA-Z0-9]+$/, '') + '.' + ext;
+  }
+  const path = `${Date.now()}-${safeName}`;
+  const { error } = await supabase.storage.from('church-logos').upload(path, body, {
+    contentType: body.type || undefined,
+    cacheControl: IMMUTABLE_CACHE_SECONDS,
+  });
+  if (error) throw error;
+  return supabase.storage.from('church-logos').getPublicUrl(path).data.publicUrl;
 }

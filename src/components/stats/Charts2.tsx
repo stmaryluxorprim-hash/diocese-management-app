@@ -383,7 +383,7 @@ export function Avatar({ url, name, size = 36, tone = 'from-primary-600 to-accen
   const s = { width: size, height: size };
   if (url) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt="" className="shrink-0 rounded-xl object-cover" style={s} />;
+    return <img src={url} alt="" loading="lazy" decoding="async" className="shrink-0 rounded-xl object-cover" style={s} />;
   }
   const initial = (name || '').trim().charAt(0);
   return (

@@ -72,6 +72,33 @@ export async function GET(req: NextRequest, { params }: Params) {
     // No native image library in this runtime (Cloudflare Workers): hand the
     // original image to the browser. Cached like the rendered variant — the
     // URL carries the branding hash so a change still busts every cache.
+    // EGRESS: a redirect makes every browser download the original from
+    // Supabase Storage (counted as «Cached Egress» on every cache hit). Proxy
+    // it through this Worker instead and keep it in Cloudflare's own cache, so
+    // Supabase is hit about once per edge location per branding change.
+    // Any failure falls back to the old redirect.
+    try {
+      const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+      const cacheKey = new Request(req.nextUrl.toString(), { method: 'GET' });
+      const hit = await cache?.match(cacheKey);
+      if (hit) return hit;
+      const up = await fetch(src, { signal: AbortSignal.timeout(8000) });
+      const type = up.headers.get('content-type') || '';
+      if (up.ok && type.startsWith('image/')) {
+        const body = await up.arrayBuffer();
+        // Skip proxying very large originals (Worker memory) — redirect instead.
+        if (body.byteLength <= 2_000_000) {
+          const res = new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': type, 'Content-Length': String(body.byteLength), ...CACHE_HEADERS },
+          });
+          if (cache) await cache.put(cacheKey, res.clone());
+          return res;
+        }
+      }
+    } catch {
+      /* fall through to the redirect */
+    }
     return NextResponse.redirect(src, { status: 307, headers: CACHE_HEADERS });
   }
 
