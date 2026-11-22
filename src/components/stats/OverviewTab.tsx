@@ -478,7 +478,7 @@ const OverviewTab = forwardRef<TabHandle, Props>(function OverviewTab({ supabase
                   </span>
                   {c.image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={c.image_url} alt="" className="h-9 w-9 shrink-0 rounded-xl object-cover" />
+                    <img src={c.image_url} alt="" loading="lazy" decoding="async" className="h-9 w-9 shrink-0 rounded-xl object-cover" />
                   ) : (
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-accent-600 text-white">
                       <UserRound className="h-4 w-4" />

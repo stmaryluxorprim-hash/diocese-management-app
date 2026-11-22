@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Church as ChurchIcon, Plus, ArrowRight, Loader2, Upload, X, Pencil, Save } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { useAuth } from '@/lib/auth-context';
-import { IMMUTABLE_CACHE_SECONDS } from '@/lib/upload';
+import { uploadChurchLogo } from '@/lib/upload';
 import { createClient } from '@/lib/supabase/client';
 import { useDebouncedRealtime } from '@/lib/realtime';
 import { invalidateLookup } from '@/lib/queries';
@@ -138,14 +138,13 @@ function EditChurchModal({ church, onClose, onSaved }: { church: Church; onClose
 
     let logo_url = church.logo_url;
     if (logoFile) {
-      const path = `${Date.now()}-${logoFile.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-      const { error: upErr } = await supabase.storage.from('church-logos').upload(path, logoFile, { cacheControl: IMMUTABLE_CACHE_SECONDS });
-      if (upErr) {
+      try {
+        logo_url = await uploadChurchLogo(supabase, logoFile);
+      } catch {
         setError('تعذر رفع الشعار');
         setSaving(false);
         return;
       }
-      logo_url = supabase.storage.from('church-logos').getPublicUrl(path).data.publicUrl;
     }
 
     const { error: err } = await supabase
@@ -206,14 +205,13 @@ function AddChurchModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 
     let logo_url: string | null = null;
     if (logoFile) {
-      const path = `${Date.now()}-${logoFile.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-      const { error: upErr } = await supabase.storage.from('church-logos').upload(path, logoFile, { cacheControl: IMMUTABLE_CACHE_SECONDS });
-      if (upErr) {
+      try {
+        logo_url = await uploadChurchLogo(supabase, logoFile);
+      } catch {
         setError('تعذر رفع الشعار');
         setSaving(false);
         return;
       }
-      logo_url = supabase.storage.from('church-logos').getPublicUrl(path).data.publicUrl;
     }
 
     const { error: err } = await supabase.from('churches').insert({
