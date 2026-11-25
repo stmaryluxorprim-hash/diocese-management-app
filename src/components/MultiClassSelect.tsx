@@ -50,15 +50,15 @@ export function MultiClassSelect({
     };
   }, [open]);
 
-  // a single option → nothing to choose (mirrors the old disabled <select>)
   const locked = !!disabled;
-  const label = options.length === 1 && value.length === 0 ? options[0].name : classesLabel(value, options, allLabel);
+  const label = classesLabel(value, options, allLabel);
   const active = value.length > 0;
 
   const flip = (cid: string) => {
     const next = toggleClass(value, cid);
-    // picking every option is the same as «all»
-    onChange(next.length === options.length ? [] : next);
+    // picking every option is the same as «all» — except with a single option,
+    // where collapsing would make the tick vanish (the class could never be selected)
+    onChange(options.length > 1 && next.length === options.length ? [] : next);
   };
 
   return (
