@@ -11,12 +11,13 @@ import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import {
   Loader2, Plus, Pencil, Trash2, ChevronUp, ChevronDown, ListChecks, Users, Settings2, Clock, Star, Check,
-  Rocket, Lock, Undo2, Trophy, Shuffle, Eye, EyeOff, CalendarClock, Copy, AlertTriangle, RotateCcw,
+  Rocket, Lock, Undo2, Trophy, Shuffle, Eye, EyeOff, CalendarClock, Copy, AlertTriangle, RotateCcw, ClipboardPaste,
 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { ExamsHeader, StatusBadge, Toast, scopeLabel, fmtDateTime } from '@/components/exams/ExamBits';
 import ExamFormModal from '@/components/exams/ExamFormModal';
 import QuestionFormModal from '@/components/exams/QuestionFormModal';
+import BulkQuestionsModal from '@/components/exams/BulkQuestionsModal';
 import ResultsTab from '@/components/exams/ResultsTab';
 import { useStoreLookups } from '@/components/store/StoreBits';
 import { useAuth } from '@/lib/auth-context';
@@ -47,6 +48,7 @@ export default function ExamPage() {
   const [notFound, setNotFound] = useState(false);
   const [tab, setTab] = useState<Tab>('questions');
   const [qForm, setQForm] = useState<{ open: boolean; q: ExamQuestion | null }>({ open: false, q: null });
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [settings, setSettings] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -228,9 +230,14 @@ export default function ExamPage() {
             </p>
           )}
           {canWrite && (
-            <button id="q-add" type="button" onClick={() => setQForm({ open: true, q: null })} className="btn-primary mb-3 flex w-full items-center justify-center gap-1.5 !from-violet-600 !to-violet-500">
-              <Plus className="h-5 w-5" /> إضافة سؤال
-            </button>
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button id="q-add" type="button" onClick={() => setQForm({ open: true, q: null })} className="btn-primary flex items-center justify-center gap-1.5 !from-violet-600 !to-violet-500">
+                <Plus className="h-5 w-5" /> إضافة سؤال
+              </button>
+              <button id="q-bulk-add" type="button" onClick={() => setBulkOpen(true)} className="btn-secondary flex items-center justify-center gap-1.5 !border-violet-300 !text-violet-700">
+                <ClipboardPaste className="h-5 w-5" /> إضافة أسئلة بالجملة
+              </button>
+            </div>
           )}
           {questions.length === 0 ? (
             <div className="card py-12 text-center text-slate-400">
@@ -322,6 +329,17 @@ export default function ExamPage() {
           onSaved={(saved, addAnother) => {
             setQuestions((l) => (l.some((x) => x.id === saved.id) ? l.map((x) => (x.id === saved.id ? saved : x)) : [...l, saved]));
             if (!addAnother) setQForm({ open: false, q: null });
+          }}
+        />
+      )}
+      {bulkOpen && (
+        <BulkQuestionsModal
+          exam={exam} nextSortOrder={questions.length + 1}
+          onClose={() => setBulkOpen(false)}
+          onSaved={(saved) => {
+            setQuestions((l) => [...l, ...saved.filter((x) => !l.some((y) => y.id === x.id))]);
+            setBulkOpen(false);
+            flash(`تمت إضافة ${saved.length} سؤال`);
           }}
         />
       )}

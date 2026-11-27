@@ -277,6 +277,19 @@ export async function createQuestion(
   return data as ExamQuestion;
 }
 
+/** Insert many questions in ONE request (atomic: all or none). */
+export async function createQuestionsBulk(
+  supabase: SupabaseClient, examId: string, inputs: QuestionInput[], startSortOrder: number
+): Promise<ExamQuestion[]> {
+  if (inputs.length === 0) return [];
+  const { data, error } = await supabase
+    .from('exam_questions')
+    .insert(inputs.map((input, i) => ({ ...input, exam_id: examId, sort_order: startSortOrder + i })))
+    .select('*');
+  if (error) throw error;
+  return ((data ?? []) as ExamQuestion[]).sort((a, b) => a.sort_order - b.sort_order);
+}
+
 export async function updateQuestion(supabase: SupabaseClient, id: string, patch: Partial<QuestionInput & { sort_order: number }>): Promise<ExamQuestion> {
   const { data, error } = await supabase.from('exam_questions').update(patch).eq('id', id).select('*').single();
   if (error) throw error;
